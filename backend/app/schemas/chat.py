@@ -25,6 +25,7 @@ class MessageOut(APIModel):
 class ChatRequest(APIModel):
     content: str
     stream: bool = False
+    tools: bool = False
 
 
 class ChatResponse(APIModel):

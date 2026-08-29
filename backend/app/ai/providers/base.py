@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import AsyncIterator
 
 from app.schemas.ai import AIMessage, AIProviderStatus, AIResponse
+from app.schemas.ai import ToolCall, ToolDeclaration
 
 
 class AIProviderError(RuntimeError):
@@ -30,8 +31,21 @@ class AIProvider(ABC):
         system: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        tools: list[ToolDeclaration] | None = None,
     ) -> AIResponse:
-        """Gera uma resposta completa para o histórico de mensagens."""
+        """Gera uma resposta completa; com `tools`, pode propor chamadas."""
+
+    @abstractmethod
+    def tool_result_message(
+        self,
+        tool_calls: list[ToolCall],
+        results: list["ToolResult"],
+    ) -> list[AIMessage]:
+        """Converte chamadas + resultados em mensagens do histórico (rol=assistant/tool).
+
+        Implementado pelo provedor porque o pareamento de ids é específico do SDK.
+        O Core alimenta o retorno de volta ao `generate` no próximo ciclo.
+        """
 
     @abstractmethod
     async def stream(

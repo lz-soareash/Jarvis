@@ -4,12 +4,37 @@ import pytest
 
 from app.ai.providers.base import AIProviderError
 from app.ai.providers.gemini import GeminiProvider
-from app.schemas.ai import AIMessage
+from app.schemas.ai import AIMessage, ToolCall, ToolDeclaration
+from app.tools.base import ToolResult
+
+
+class FakeFunctionCall:
+    def __init__(self, name, args=None, call_id=None):
+        self.name = name
+        self.args = args or {}
+        self.id = call_id
+
+
+class FakePart:
+    def __init__(self, text=None, function_call=None):
+        self.text = text
+        self.function_call = function_call
+
+
+class FakeContent:
+    def __init__(self, parts):
+        self.parts = parts
+
+
+class FakeCandidate:
+    def __init__(self, parts):
+        self.content = FakeContent(parts)
 
 
 class FakeResponse:
-    def __init__(self, text="resposta mockada"):
+    def __init__(self, text="resposta mockada", candidates=None):
         self.text = text
+        self.candidates = candidates
 
 
 class FakeContentEmbedding:
@@ -30,7 +55,10 @@ class FakeModels:
 
     def generate_content(self, **kwargs):
         self.calls.append(kwargs)
-        return FakeResponse()
+        return FakeResponse(
+            text="resposta mockada",
+            candidates=[FakeCandidate([FakePart(text="resposta mockada")])],
+        )
 
     def generate_content_stream(self, **kwargs):
         self.stream_calls.append(kwargs)
@@ -49,7 +77,10 @@ class FakeModelsNoStream:
 
     def generate_content(self, **kwargs):
         self.calls.append(kwargs)
-        return FakeResponse()
+        return FakeResponse(
+            text="resposta mockada",
+            candidates=[FakeCandidate([FakePart(text="resposta mockada")])],
+        )
 
 
 class FakeClient:
@@ -159,3 +190,69 @@ async def test_provider_healthcheck_swallows_errors():
     status = await provider.health_check()
     assert status.status == "error"
     assert "network down" in (status.detail or "")
+
+
+async def test_generate_proposes_tool_calls():
+    provider, client = make_provider()
+    recorded = {}
+
+    def fake_generate(**kwargs):
+        recorded.update(kwargs)
+        return FakeResponse(
+            candidates=[
+                FakeCandidate(
+                    [FakePart(function_call=FakeFunctionCall("get_current_time", {}, "call-1"))]
+                )
+            ]
+        )
+
+    client.models.generate_content = fake_generate
+    result = await provider.generate(
+        [AIMessage(role="user", content="que horas são?")],
+        tools=[ToolDeclaration(name="get_current_time", description="hora atual")],
+    )
+    assert result.text == ""
+    assert len(result.tool_calls) == 1
+    call = result.tool_calls[0]
+    assert call.name == "get_current_time"
+    assert call.call_id == "call-1"
+    assert call.arguments == {}
+    assert recorded["config"].tools is not None
+
+
+async def test_tool_result_message_pairs_calls_and_results():
+    provider, _ = make_provider()
+    messages = provider.tool_result_message(
+        [ToolCall(name="get_current_time", call_id="call-1")],
+        [ToolResult.success("12:00")],
+    )
+    assert messages[0].role == "assistant"
+    assert messages[0].tool_calls[0].call_id == "call-1"
+    assert messages[1].role == "tool"
+    assert messages[1].tool_name == "get_current_time"
+    assert messages[1].tool_call_id == "call-1"
+    assert messages[1].content == "12:00"
+
+
+async def test_contents_serialize_function_roundtrip():
+    provider, client = make_provider()
+    messages = [
+        AIMessage(role="user", content="que horas são?"),
+        *provider.tool_result_message(
+            [ToolCall(name="get_current_time", arguments={}, call_id="call-9")],
+            [ToolResult.failure("fuso indisponível")],
+        ),
+    ]
+    await provider.generate(
+        messages,
+        tools=[ToolDeclaration(name="get_current_time", description="hora atual")],
+    )
+    contents = client.models.calls[0]["contents"]
+    roles = [c["role"] for c in contents]
+    assert roles == ["user", "model", "user"]
+    model_parts = contents[1]["parts"]
+    assert model_parts[0]["function_call"]["name"] == "get_current_time"
+    assert model_parts[0]["function_call"]["id"] == "call-9"
+    user_parts = contents[2]["parts"]
+    assert user_parts[0]["function_response"]["id"] == "call-9"
+    assert user_parts[0]["function_response"]["response"]["result"] == "ERRO: fuso indisponível"

@@ -13,7 +13,7 @@ from app.schemas.chat import (
     SessionCreate,
     SessionOut,
 )
-from app.services import chat as chat_service
+from app.services import agent, chat as chat_service
 from app.services import summarizer
 from app.services.chat import build_context, sse_event
 
@@ -87,6 +87,10 @@ async def send_message(
         await summarizer.summarize_chunk(db, session_id=session_id, provider=provider)
     except Exception:  # noqa: BLE001 — resumo é best-effort
         logger.exception("Resumo periódico falhou (best-effort)")
+
+    if body.tools:
+        generator = agent.run_agent(session_id, provider, db, body.content)
+        return StreamingResponse(generator, media_type="text/event-stream", headers=SSE_HEADERS)
 
     if body.stream:
         history, system = await build_context(db, session_id, provider, query=body.content)

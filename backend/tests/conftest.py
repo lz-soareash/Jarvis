@@ -18,7 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.schemas.ai import AIProviderStatus, AIResponse
+from app.schemas.ai import AIProviderStatus, AIResponse, AIMessage, ToolCall
 
 
 def _normalize_token(token: str) -> str:
@@ -46,8 +46,9 @@ class FakeProvider:
 
     name = "fake"
 
-    def __init__(self, reply: str = "resposta fake"):
+    def __init__(self, reply: str = "resposta fake", planned_tool_calls: list | None = None):
         self.reply = reply
+        self._planned_tool_calls = list(planned_tool_calls or [])
         self.generate_calls = 0
         self.stream_calls = 0
         self.analyze_calls = 0
@@ -63,7 +64,20 @@ class FakeProvider:
     async def generate(self, messages, **kwargs) -> AIResponse:
         self.generate_calls += 1
         self.last_generate_kwargs = kwargs
+        if self._planned_tool_calls and kwargs.get("tools"):
+            call = self._planned_tool_calls.pop(0)
+            return AIResponse(
+                text="", provider=self.name, model="fake-model", tool_calls=[call]
+            )
         return AIResponse(text=self.reply, provider=self.name, model="fake-model")
+
+    def tool_result_message(self, tool_calls, results):
+        messages = [AIMessage(role="assistant", tool_calls=list(tool_calls))]
+        for call, result in zip(tool_calls, results):
+            messages.append(
+                AIMessage(role="tool", tool_name=call.name, content=result.output)
+            )
+        return messages
 
     async def stream(self, messages, **kwargs):
         self.stream_calls += 1

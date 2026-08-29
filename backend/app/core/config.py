@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     summarize_after_messages: int = 40  # a partir de quantas mensagens resumir
     summary_chunk: int = 20  # mensagens absorvidas por resumo rolante
 
+    # Tool Engine (Fase 3)
+    max_tool_rounds: int = 3  # rodadas máx. de chamadas de ferramenta por turno
+
     log_level: str = "INFO"
 
 

@@ -59,15 +59,28 @@ backend/
 ├── app/
 │   ├── ai/
 │   │   └── providers/       # base.py (AIProvider) + gemini.py
-│   ├── api/                 # rotas (health, chat) — cliente-agnóstico
+│   ├── api/                 # rotas (health, chat, memory) — cliente-agnóstico
 │   ├── core/                # config, logging estruturado, enums (estados/permissões)
 │   ├── db/                  # SQLAlchemy (Base, engine, sessão)
 │   ├── models/              # Session / Message / Memory (SQLAlchemy 2.x)
-│   ├── schemas/             # modelos Pydantic base
-│   ├── services/            # chat, memory (busca semântica/lexical), summarizer
+│   ├── schemas/             # modelos Pydantic base (inclui ToolCall/Declaration)
+│   ├── services/            # chat, memory (busca semântica/lexical), summarizer, agent
+│   ├── tools/               # Tool Engine: base, registry, builtins (tempo, sistema, memória)
 │   └── main.py
 └── tests/                   # pytest (Gemini 100% mockado)
 ```
+
+## Tool Engine (Fase 3)
+
+O modelo **propõe** chamadas de ferramenta (declaradas no registro); o **Core decide e executa**.
+Nunca executa chamadas inventadas — só as registradas. Política de permissão atual:
+
+- `LEVEL_0` — leitura segura (hora, info do sistema, recall de memória) → automática.
+- `LEVEL_1` — ação reversível (gravar memória) → automática.
+- `LEVEL_2+` — recusadas com aviso (a aprovação interativa chega na Fase 4).
+
+Habilite o loop no chat com `"tools": true` (retorna SSE). Ferramentas embutidas: `get_current_time`,
+`get_system_info`, `store_memory`, `recall_memory`.
 
 ## Endpoints
 
@@ -86,6 +99,10 @@ backend/
 | `GET /health/ai` | healthcheck do Gemini (`ok` / `unconfigured` / `error`) |
 | `GET /docs` | OpenAPI (Swagger UI) |
 
+Envie `{"content": "...", "stream": true, "tools": true}` em
+`POST /api/sessions/{id}/messages` para acionar o Tool Engine (SSE com eventos
+`start → tool_start/tool_done → chunk → done`).
+
 - API + frontend: `http://127.0.0.1:8100` (o Atlas segue na 8000, não é alterado).
 - WebSocket reservado na porta `8101` (contrato Core ↔ Local Agent — fase futura).
 
@@ -96,7 +113,7 @@ o chat de stream responde com o evento `error` e o endpoint comum com `503` — 
 
 ## Roadmap (resumo)
 
-0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ·
+0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·
 4. Permissions · 5. Computer · 6. Filesystem · 7. Developer · 8. Mobile/Devices/PWA ·
 9. Atlas · 10. Agent loop · 11. Web · 12. Voz · 13. Visão · 14. Proativo · 15. Remote · 16. V1.
 

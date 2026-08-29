@@ -81,6 +81,14 @@ curl -X POST http://127.0.0.1:8100/api/memories ^
 curl "http://127.0.0.1:8100/api/memories?query=caf%C3%A9"
 ```
 
+Teste rápido do Tool Engine (Fase 3) — precisa de chave para o loop:
+
+```bat
+curl -N -X POST http://127.0.0.1:8100/api/sessions/SEU_ID/messages ^
+  -H "Content-Type: application/json" ^
+  -d "{\"content\":\"guarde que gosto de café\",\"stream\":true,\"tools\":true}"
+```
+
 ## 6. Executar os testes
 
 ```bat
@@ -98,6 +106,7 @@ cd backend
 
 - SQLite criado automaticamente no caminho de `DATABASE_URL` (padrão `backend/data/jarvis.db`) no startup.
 - Fase 1: tabelas `sessions` e `messages` (chat). Fase 2: tabela `memories` (fato/preferência/nota/resumo)
-  mais busca semântica por embeddings e resumo rolante de conversas longas. Tarefas, dispositivos, auditoria
-  e WebSocket (`8101`) entram nas fases seguintes, sempre via SQLAlchemy 2.x — a migração p/ Postgres é troca de URL.
+  mais busca semântica por embeddings e resumo rolante de conversas longas. Fase 3: Tool Engine (registro
+  de ferramentas, function calling no Gemini, loop do agente via SSE) sem novas tabelas. Tarefas, dispositivos,
+  auditoria e WebSocket (`8101`) entram nas fases seguintes — a migração p/ Postgres é troca de URL.
 - Se subir versão com novas colunas, delete o `backend/data/jarvis.db` (dados de dev) ou migre manualmente.
