@@ -6,6 +6,7 @@ from .chat import router as chat_router
 from .health import router as health_router
 from .memory import router as memory_router
 from .permissions import router as permissions_router
+from .system import router as system_router
 
 api_router = APIRouter()
 api_router.include_router(health_router)
@@ -14,3 +15,4 @@ api_router.include_router(memory_router)
 api_router.include_router(approvals_router)
 api_router.include_router(permissions_router)
 api_router.include_router(audit_router)
+api_router.include_router(system_router)

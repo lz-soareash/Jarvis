@@ -44,12 +44,17 @@ _default_registry: ToolRegistry | None = None
 
 def build_default_registry() -> ToolRegistry:
     from .builtins import GetSystemInfo, GetTime, RecallMemory, StoreMemory
+    from .computer import GetSystemStats, KillProcess, ListProcesses, OpenApp
 
     registry = ToolRegistry()
     registry.register(GetTime())
     registry.register(GetSystemInfo())
     registry.register(StoreMemory())
     registry.register(RecallMemory())
+    registry.register(GetSystemStats())
+    registry.register(ListProcesses())
+    registry.register(OpenApp())
+    registry.register(KillProcess())
     return registry
 
 

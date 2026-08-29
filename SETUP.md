@@ -107,6 +107,22 @@ REM trilho de auditoria
 curl http://127.0.0.1:8100/api/audit
 ```
 
+Teste rápido do Computer (Fase 5) — read-only, funciona até sem chave:
+
+```bat
+REM métricas do computador (CPU, memória, disco, boot)
+curl http://127.0.0.1:8100/api/system/stats
+
+REM processos em execução (limit 1-200)
+curl "http://127.0.0.1:8100/api/system/processes?limit=5"
+
+REM catálogo mostra as 4 ferramentas de computador (stats/processos níveis 0, open_app 1, kill_process 3)
+curl http://127.0.0.1:8100/api/permissions
+```
+
+> `kill_process` só executa após aprovação explícita (nível 3, bloqueado por padrão). As rotas
+> `GET /api/system/*` não executam nada destrutivo.
+
 ## 6. Executar os testes
 
 ```bat
@@ -127,6 +143,8 @@ cd backend
   mais busca semântica por embeddings e resumo rolante de conversas longas. Fase 3: Tool Engine (registro
   de ferramentas, function calling no Gemini, loop do agente via SSE) sem novas tabelas. Fase 4:
   Permissions com as tabelas `approval_requests`, `tool_policies` e `audit_logs` (aprovação interativa
-  nível ≥ 2, override de nível por ferramenta e trilho auditável). Tarefas, dispositivos e WebSocket
+  nível ≥ 2, override de nível por ferramenta e trilho auditável). Fase 5: Computer — controle do
+  computador via `SystemController` (PowerShell + stdlib, sem novas tabelas; stats/processos read-only,
+  `open_app` nível 1 e `kill_process` nível 3). Tarefas, dispositivos e WebSocket
   (`8101`) entram nas fases seguintes — a migração p/ Postgres é troca de URL.
 - Se subir versão com novas colunas, delete o `backend/data/jarvis.db` (dados de dev) ou migre manualmente.
