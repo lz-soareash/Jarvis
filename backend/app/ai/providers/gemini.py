@@ -1,4 +1,5 @@
 import asyncio
+import base64
 from typing import AsyncIterator, Callable
 
 from app.core.config import settings
@@ -7,6 +8,15 @@ from app.schemas.ai import AIMessage, AIProviderStatus, AIResponse, ToolCall, To
 from .base import AIProvider, AIProviderError
 
 _ROLE_MAP = {"user": "user", "assistant": "model", "tool": "user"}
+
+
+def _normalize_thought_signature(value):
+    """SDK devolve `thought_signature` como bytes (proto); a API espera base64-string."""
+    if not value:
+        return None
+    if isinstance(value, bytes):
+        return base64.b64encode(value).decode("ascii")
+    return str(value)
 
 
 class GeminiProvider(AIProvider):
@@ -78,38 +88,47 @@ class GeminiProvider(AIProvider):
         )
 
     @staticmethod
-    def _parts(message: AIMessage) -> list[dict]:
-        parts: list[dict] = []
+    def _parts(message: AIMessage) -> list:
+        from google.genai import types
+
+        parts: list = []
         if message.role == "tool":
             if message.content:
                 parts.append(
-                    {
-                        "function_response": {
-                            "name": message.tool_name or "",
-                            "id": message.tool_call_id,
-                            "response": {"result": message.content},
-                        }
-                    }
+                    types.Part(
+                        function_response=types.FunctionResponse(
+                            name=message.tool_name or "",
+                            id=message.tool_call_id,
+                            response={"result": message.content},
+                        )
+                    )
                 )
             return parts
         if message.content:
-            parts.append({"text": message.content})
+            parts.append(types.Part(text=message.content))
         for call in message.tool_calls:
-            parts.append(
-                {
-                    "function_call": {
-                        "name": call.name,
-                        "args": call.arguments or {},
-                        "id": call.call_id,
-                    }
-                }
-            )
+            kwargs: dict = {
+                "function_call": types.FunctionCall(
+                    name=call.name,
+                    args=call.arguments or {},
+                    id=call.call_id,
+                )
+            }
+            if call.thought_signature:
+                try:
+                    # ToolCall guarda base64 (JSON-safe); Part quer bytes (proto).
+                    kwargs["thought_signature"] = base64.b64decode(call.thought_signature)
+                except Exception:  # noqa: BLE001 — assinatura inválida não bloqueia o turno
+                    pass
+            parts.append(types.Part(**kwargs))
         return parts
 
     @staticmethod
-    def _contents(messages: list[AIMessage]) -> list[dict]:
+    def _contents(messages: list[AIMessage]) -> list:
+        from google.genai import types
+
         return [
-            {"role": _ROLE_MAP[m.role], "parts": GeminiProvider._parts(m)}
+            types.Content(role=_ROLE_MAP[m.role], parts=GeminiProvider._parts(m))
             for m in messages
         ]
 
@@ -139,9 +158,24 @@ class GeminiProvider(AIProvider):
                         name=getattr(fc, "name", ""),
                         arguments=args,
                         call_id=getattr(fc, "id", None),
+                        thought_signature=_normalize_thought_signature(
+                            getattr(fc, "thought_signature", None)
+                            or getattr(part, "thought_signature", None)
+                        ),
                     )
                 )
         return text, tool_calls
+
+    @staticmethod
+    def _api_error_message(exc: Exception) -> str:
+        from google.genai.errors import APIError as GenAIAPIError
+
+        if isinstance(exc, GenAIAPIError):
+            code = getattr(exc, "code", None)
+            message = getattr(exc, "message", None) or str(exc)
+            prefix = f"[{code}] " if code else ""
+            return f"Erro da API Gemini {prefix}{message}"
+        return f"{type(exc).__name__}: {exc}"
 
     async def generate(
         self,
@@ -157,12 +191,15 @@ class GeminiProvider(AIProvider):
 
         client = self._get_client()
         config = self._build_config(system, temperature, max_tokens, tools)
-        response = await asyncio.to_thread(
-            client.models.generate_content,
-            model=self.model,
-            contents=self._contents(messages),
-            config=config,
-        )
+        try:
+            response = await asyncio.to_thread(
+                client.models.generate_content,
+                model=self.model,
+                contents=self._contents(messages),
+                config=config,
+            )
+        except Exception as exc:  # noqa: BLE001 — erros da API viram AIProviderError legível
+            raise AIProviderError(self._api_error_message(exc)) from exc
         text, tool_calls = self._parse(response)
         return AIResponse(
             text=text,
@@ -213,19 +250,22 @@ class GeminiProvider(AIProvider):
             yield result.text
             return
 
-        stream = stream_method(
-            model=self.model,
-            contents=self._contents(messages),
-            config=config,
-        )
-        iterator = iter(stream)
-        while True:
-            chunk = await asyncio.to_thread(next, iterator, None)
-            if chunk is None:
-                break
-            text = getattr(chunk, "text", None) or ""
-            if text:
-                yield text
+        try:
+            stream = stream_method(
+                model=self.model,
+                contents=self._contents(messages),
+                config=config,
+            )
+            iterator = iter(stream)
+            while True:
+                chunk = await asyncio.to_thread(next, iterator, None)
+                if chunk is None:
+                    break
+                text = getattr(chunk, "text", None) or ""
+                if text:
+                    yield text
+        except Exception as exc:  # noqa: BLE001 — erros da API viram AIProviderError legível
+            raise AIProviderError(self._api_error_message(exc)) from exc
 
     async def analyze(self, text: str, *, instruction: str | None = None) -> AIResponse:
         return await self.generate([AIMessage(role="user", content=text)], system=instruction)

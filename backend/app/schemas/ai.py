@@ -9,6 +9,7 @@ class ToolCall(APIModel):
     name: str
     arguments: dict = {}
     call_id: str | None = None
+    thought_signature: str | None = None
 
 
 class ToolDeclaration(APIModel):
