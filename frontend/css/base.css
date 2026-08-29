@@ -1,5 +1,5 @@
 /* =============================================================
-   JARVIS — Base (reset, fundo holográfico, scanlines)
+   JARVIS — Base (reset, fundo, estado global, foco, scrollbar)
    ============================================================= */
 *,
 *::before,
@@ -16,54 +16,15 @@ body {
 
 body {
   font-family: var(--font-ui);
-  color: var(--text);
-  background: var(--bg-base);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--color-text);
+  background:
+    radial-gradient(1100px 560px at 50% -12%, rgba(104, 128, 190, 0.16), transparent 62%),
+    var(--color-bg);
   overflow: hidden;
-}
-
-/* Fundo: glow radial + grade em perspectiva */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background:
-    radial-gradient(ellipse at 50% -10%, var(--accent-glow-soft), transparent 55%),
-    radial-gradient(ellipse at 50% 120%, rgba(47, 123, 255, 0.12), transparent 60%);
-}
-
-/* Grade "holográfica" no rodapé */
-body::after {
-  content: "";
-  position: fixed;
-  left: -20%;
-  right: -20%;
-  bottom: 0;
-  height: 34vh;
-  z-index: 0;
-  pointer-events: none;
-  background:
-    linear-gradient(to top, rgba(0, 229, 255, 0.05), transparent),
-    repeating-linear-gradient(to right, rgba(0, 229, 255, 0.05) 0 1px, transparent 1px 42px),
-    repeating-linear-gradient(to top, rgba(0, 229, 255, 0.05) 0 1px, transparent 1px 42px);
-  transform: perspective(420px) rotateX(62deg) translateY(38%);
-  opacity: 0.7;
-  mask-image: linear-gradient(to top, #000 20%, transparent 85%);
-}
-
-/* Scanlines sutis sobre tudo */
-.scanlines {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    to bottom,
-    rgba(255, 255, 255, 0.014) 0 1px,
-    transparent 1px 3px
-  );
-  mix-blend-mode: overlay;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 ul {
@@ -73,18 +34,56 @@ ul {
 button {
   font: inherit;
   cursor: pointer;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+input {
+  font: inherit;
+  color: inherit;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+::selection {
+  background: var(--color-primary-soft);
+  color: var(--color-text);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 229, 255, 0.18);
+  background: var(--color-border-strong);
   border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+@media (max-width: 900px) {
+  body {
+    overflow: hidden;
+  }
 }

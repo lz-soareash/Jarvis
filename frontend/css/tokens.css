@@ -1,42 +1,95 @@
 /* =============================================================
-   JARVIS — Design Tokens (dark cyber / holográfico)
+   JARVIS — Design Tokens (Identidade: "Obsidian + Iris")
+   Design system premium, dark-first. Sem estética cyber/holográfica.
    ============================================================= */
 :root {
-  /* Cor */
-  --bg-base: #05080f;
-  --bg-elev: #0a1220;
-  --bg-panel: rgba(10, 20, 40, 0.55);
+  /* ---------- Cores ---------- */
+  --color-bg: #0b0e14;
+  --color-bg-elev: #0e1219;
+  --color-surface: #12161f;
+  --color-surface-2: #171d28;
+  --color-border: #232b3a;
+  --color-border-strong: #33405a;
 
-  --accent: #00e5ff;
-  --accent-2: #2f7bff;
-  --accent-glow: rgba(0, 229, 255, 0.35);
-  --accent-glow-soft: rgba(47, 123, 255, 0.22);
+  --color-text: #eaeef6;
+  --color-text-secondary: #9aa6ba;
+  --color-text-muted: #6c788c;
 
-  --text: #dcecf7;
-  --text-dim: #7f97ab;
-  --text-faint: #46586a;
+  --color-primary: #6d8dff;
+  --color-primary-hover: #8aa5ff;
+  --color-primary-active: #5470e8;
+  --color-primary-soft: rgba(109, 141, 255, 0.12);
 
-  --border: rgba(0, 229, 255, 0.16);
-  --border-strong: rgba(0, 229, 255, 0.45);
+  --color-secondary: #a78bfa;
+  --color-secondary-soft: rgba(167, 139, 250, 0.12);
 
-  --ok: #2ae29b;
-  --warn: #ffb020;
-  --danger: #ff5c5c;
+  --color-success: #3ddc97;
+  --color-success-soft: rgba(61, 220, 151, 0.12);
+  --color-warning: #f5c451;
+  --color-warning-soft: rgba(245, 196, 81, 0.12);
+  --color-error: #f77f7f;
+  --color-error-soft: rgba(247, 127, 127, 0.12);
 
-  /* Tipografia */
-  --font-ui: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
-  --font-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+  --gradient-brand: linear-gradient(120deg, #8aa5ff 0%, #a78bfa 55%, #7ad0f5 140%);
 
-  /* Espaçamento / forma */
-  --space: 16px;
-  --radius: 14px;
+  /* ---------- Tipografia ---------- */
+  --font-ui: "Segoe UI", system-ui, -apple-system, "Inter", Roboto, Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, "Courier New", monospace;
+
+  --text-2xs: 0.6875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-md: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 1.75rem;
+  --text-display: clamp(1.75rem, 4vw, 2.5rem);
+
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-loose: 1.7;
+
+  /* ---------- Espaçamento (escala 4px) ---------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  /* ---------- Forma ---------- */
   --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-full: 999px;
 
-  /* Breakpoint */
-  --bp: 768px;
+  /* ---------- Sombras ---------- */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 14px 40px rgba(0, 0, 0, 0.46);
+  --focus-ring: 0 0 0 3px rgba(109, 141, 255, 0.3);
 
-  /* Movimento */
-  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* ---------- Movimento ---------- */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast: 140ms;
+  --dur-base: 220ms;
+  --dur-slow: 320ms;
+
+  /* ---------- Z-index ---------- */
+  --z-header: 30;
+  --z-backdrop: 40;
+  --z-drawer: 50;
+  --z-toast: 60;
+
+  /* ---------- Breakpoints ---------- */
+  --bp-desktop: 901px;
+  --bp-tablet: 900px;
+  --bp-mobile: 640px;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -9,6 +9,8 @@ const els = {
   statusText: document.getElementById("status-text"),
   sessionsPanel: document.getElementById("sessions-panel"),
   sessionsList: document.getElementById("sessions-list"),
+  sessionsBackdrop: document.getElementById("sessions-backdrop"),
+  menuToggle: document.getElementById("menu-toggle"),
   newSession: document.getElementById("new-session"),
   chatWindow: document.getElementById("chat-window"),
   emptyState: document.getElementById("empty-state"),
@@ -23,6 +25,20 @@ const els = {
 
 let currentSessionId = null;
 let streaming = false;
+
+/* ---------- drawer de sessões (mobile/tablet, UI-only) ---------- */
+const isDrawerLayout = () => window.matchMedia("(max-width: 900px)").matches;
+
+function toggleDrawer(open) {
+  const will = open !== undefined ? open : !els.sessionsPanel.classList.contains("is-open");
+  els.sessionsPanel.classList.toggle("is-open", will);
+  els.sessionsBackdrop.hidden = !will;
+  els.menuToggle.setAttribute("aria-expanded", String(will));
+}
+
+function closeDrawerOnMobile() {
+  if (isDrawerLayout()) toggleDrawer(false);
+}
 
 /* ---------- helpers ---------- */
 async function apiJSON(path, options = {}) {
@@ -154,6 +170,7 @@ async function createSession() {
     currentSessionId = s.id;
     await openSessionView(s.id);
     await loadSessions();
+    closeDrawerOnMobile();
   } catch (err) {
     console.error("Falha ao criar sessão:", err);
   }
@@ -180,6 +197,7 @@ async function selectSession(id) {
   currentSessionId = id;
   await openSessionView(id);
   await loadSessions();
+  closeDrawerOnMobile();
 }
 
 async function openSessionView(id) {
@@ -403,15 +421,25 @@ async function sendMessage() {
 
 /* ---------- init ---------- */
 function init() {
-  const scan = document.createElement("div");
-  scan.className = "scanlines";
-  document.body.appendChild(scan);
-
   els.inputForm.addEventListener("submit", (e) => {
     e.preventDefault();
     sendMessage();
   });
   els.newSession.addEventListener("click", createSession);
+  els.menuToggle.addEventListener("click", () => toggleDrawer());
+  els.sessionsBackdrop.addEventListener("click", () => toggleDrawer(false));
+
+  document.querySelectorAll(".suggestion").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      els.input.value = chip.dataset.query || "";
+      els.input.focus();
+    });
+  });
+
+  if (isDrawerLayout()) toggleDrawer(false);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") toggleDrawer(false);
+  });
   els.input.focus();
 
   loadStatus();
