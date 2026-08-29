@@ -151,6 +151,101 @@
   margin-top: 6px;
 }
 
+/* card de aprovação (Fase 4 — Permissions) */
+.approval-card {
+  margin-top: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 229, 255, 0.05);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.approval-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.approval-icon {
+  color: var(--warn);
+  font-size: 1rem;
+}
+
+.approval-title {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+
+.approval-risk {
+  font-size: 0.7rem;
+  color: var(--warn);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.approval-args {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  word-break: break-word;
+}
+
+.approval-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.approval-actions button {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.2s var(--ease);
+}
+
+.approval-actions .approval-ok:hover {
+  background: rgba(42, 226, 155, 0.15);
+  border-color: var(--ok);
+}
+
+.approval-actions .approval-no:hover {
+  background: rgba(255, 92, 92, 0.15);
+  border-color: var(--danger);
+}
+
+.approval-status {
+  font-size: 0.74rem;
+  color: var(--text-dim);
+}
+
+.approval-status-ok {
+  color: var(--ok);
+}
+
+.approval-status-no {
+  color: var(--danger);
+}
+
+.approval-status-err {
+  color: var(--danger);
+}
+
+.msg-stream {
+  white-space: pre-wrap;
+}
+
 /* indicador de processamento */
 .typing {
   display: inline-flex;

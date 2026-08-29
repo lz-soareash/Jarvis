@@ -40,6 +40,14 @@ class RiskLevel(str, Enum):
     HIGH = "high"
 
 
+class ApprovalStatus(str, Enum):
+    """Ciclo de vida de um pedido de aprovação (Fase 4 — Permissions)."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    DENIED = "denied"
+
+
 class MemoryKind(str, Enum):
     """Tipos de memória de longo prazo estruturada."""
 

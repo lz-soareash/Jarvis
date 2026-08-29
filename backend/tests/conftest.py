@@ -108,11 +108,21 @@ def client():
 def _clean_db():
     """Isola o banco in-memory compartilhado: limpa as tabelas a cada teste."""
     from app.db.session import SessionLocal
-    from app.models import Memory, Message, Session
+    from app.models import (
+        ApprovalRequest,
+        AuditLog,
+        Memory,
+        Message,
+        Session,
+        ToolPolicy,
+    )
 
     db = SessionLocal()
     try:
         db.rollback()
+        db.query(ApprovalRequest).delete()
+        db.query(AuditLog).delete()
+        db.query(ToolPolicy).delete()
         db.query(Memory).delete()
         db.query(Message).delete()
         db.query(Session).delete()

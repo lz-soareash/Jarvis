@@ -89,6 +89,24 @@ curl -N -X POST http://127.0.0.1:8100/api/sessions/SEU_ID/messages ^
   -d "{\"content\":\"guarde que gosto de café\",\"stream\":true,\"tools\":true}"
 ```
 
+Teste rápido da política de permissões (Fase 4) — sem chave, via API:
+
+```bat
+REM lista os níveis efetivos
+curl http://127.0.0.1:8100/api/permissions
+
+REM exige aprovação para gravar memória (nível 2)
+curl -X PUT http://127.0.0.1:8100/api/permissions/store_memory ^
+  -H "Content-Type: application/json" ^
+  -d "{\"permission_level\":2}"
+
+REM pedidos aguardando decisão
+curl http://127.0.0.1:8100/api/approvals/pending
+
+REM trilho de auditoria
+curl http://127.0.0.1:8100/api/audit
+```
+
 ## 6. Executar os testes
 
 ```bat
@@ -107,6 +125,8 @@ cd backend
 - SQLite criado automaticamente no caminho de `DATABASE_URL` (padrão `backend/data/jarvis.db`) no startup.
 - Fase 1: tabelas `sessions` e `messages` (chat). Fase 2: tabela `memories` (fato/preferência/nota/resumo)
   mais busca semântica por embeddings e resumo rolante de conversas longas. Fase 3: Tool Engine (registro
-  de ferramentas, function calling no Gemini, loop do agente via SSE) sem novas tabelas. Tarefas, dispositivos,
-  auditoria e WebSocket (`8101`) entram nas fases seguintes — a migração p/ Postgres é troca de URL.
+  de ferramentas, function calling no Gemini, loop do agente via SSE) sem novas tabelas. Fase 4:
+  Permissions com as tabelas `approval_requests`, `tool_policies` e `audit_logs` (aprovação interativa
+  nível ≥ 2, override de nível por ferramenta e trilho auditável). Tarefas, dispositivos e WebSocket
+  (`8101`) entram nas fases seguintes — a migração p/ Postgres é troca de URL.
 - Se subir versão com novas colunas, delete o `backend/data/jarvis.db` (dados de dev) ou migre manualmente.

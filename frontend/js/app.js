@@ -203,6 +203,124 @@ async function openSessionView(id) {
 }
 
 /* ---------- envio / SSE ---------- */
+
+function ensureStreamContent(bubble) {
+  let node = bubble.querySelector(".msg-stream");
+  if (!node) {
+    node = document.createElement("div");
+    node.className = "msg-stream";
+    bubble.insertBefore(node, bubble.firstChild);
+  }
+  return node;
+}
+
+const RISK_LABEL = { low: "Risco baixo", medium: "Risco médio", high: "Risco alto" };
+
+function renderApprovalCard(approval, bubble) {
+  const card = document.createElement("div");
+  card.className = "approval-card";
+
+  const head = document.createElement("div");
+  head.className = "approval-head";
+  const icon = document.createElement("span");
+  icon.className = "approval-icon";
+  icon.textContent = "◎";
+  const title = document.createElement("span");
+  title.className = "approval-title";
+  title.textContent = `Permissão: ${approval.tool_name}`;
+  head.append(icon, title);
+  card.appendChild(head);
+
+  const risk = document.createElement("div");
+  risk.className = "approval-risk";
+  risk.textContent = RISK_LABEL[approval.risk] || approval.risk;
+  card.appendChild(risk);
+
+  const keys = Object.keys(approval.arguments || {});
+  if (keys.length) {
+    const args = document.createElement("div");
+    args.className = "approval-args";
+    args.textContent = keys
+      .map((k) => `${k}: ${String(approval.arguments[k])}`)
+      .join(" · ");
+    card.appendChild(args);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "approval-actions";
+  const okBtn = document.createElement("button");
+  okBtn.className = "approval-ok";
+  okBtn.textContent = "Aprovar";
+  const noBtn = document.createElement("button");
+  noBtn.className = "approval-no";
+  noBtn.textContent = "Negar";
+  actions.append(okBtn, noBtn);
+  card.appendChild(actions);
+
+  okBtn.addEventListener("click", () => respondApproval(approval, card, bubble, true));
+  noBtn.addEventListener("click", () => respondApproval(approval, card, bubble, false));
+
+  bubble.appendChild(card);
+  return card;
+}
+
+function setCardStatus(card, text, cls = "") {
+  const actions = card.querySelector(".approval-actions");
+  if (actions) actions.remove();
+  const status = document.createElement("div");
+  status.className = "approval-status" + (cls ? ` ${cls}` : "");
+  status.textContent = text;
+  card.appendChild(status);
+}
+
+async function respondApproval(approval, card, bubble, approved) {
+  if (card.dataset.responded) return;
+  card.dataset.responded = "1";
+  setCardStatus(card, approved ? "Aprovando... aguarde" : "Negando... aguarde");
+
+  try {
+    const res = await fetch(`/api/approvals/${approval.id}/respond`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approved }),
+    });
+    if (!res.ok || !res.body) {
+      let detail = `Erro ${res.status}`;
+      try {
+        const data = await res.json();
+        if (data.detail) detail = data.detail;
+      } catch (_) {}
+      card.dataset.responded = "";
+      setCardStatus(card, detail, "approval-status-err");
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let idx;
+      while ((idx = buffer.indexOf("\n\n")) !== -1) {
+        const block = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        for (const line of block.split("\n")) handleSSELine(line, bubble);
+      }
+    }
+    setCardStatus(
+      card,
+      approved ? "Aprovado · execução concluída" : "Negado",
+      approved ? "approval-status-ok" : "approval-status-no"
+    );
+  } catch (err) {
+    card.dataset.responded = "";
+    setCardStatus(card, `Falha: ${err.message}`, "approval-status-err");
+  }
+}
+
 function handleSSELine(line, bubbleEl) {
   if (!line.startsWith("data: ")) return;
   let event;
@@ -211,19 +329,24 @@ function handleSSELine(line, bubbleEl) {
   } catch (_) {
     return;
   }
+  const content = ensureStreamContent(bubbleEl);
   if (event.type === "chunk") {
-    bubbleEl.textContent += event.text;
+    content.textContent += event.text;
     els.messages.scrollTop = els.messages.scrollHeight;
   } else if (event.type === "done") {
-    let meta = formatTime(event.message.created_at);
+    let meta = formatTime(event.message?.created_at || new Date().toISOString());
     const span = document.createElement("span");
     span.className = "msg-meta";
     span.textContent = meta;
     bubbleEl.appendChild(span);
   } else if (event.type === "error") {
-    bubbleEl.textContent = event.detail || "Erro ao gerar resposta.";
-    if (event.detail) bubbleEl.classList.add("msg-error");
+    content.textContent = event.detail || "Erro ao gerar resposta.";
+    bubbleEl.classList.add("msg-error");
+  } else if (event.type === "approval_request") {
+    renderApprovalCard(event.approval, bubbleEl);
+    els.messages.scrollTop = els.messages.scrollHeight;
   }
+  /* tool_start / tool_done / approval_pending: progresso implícito no card */
 }
 
 async function sendMessage() {
@@ -239,7 +362,7 @@ async function sendMessage() {
     const res = await fetch(`/api/sessions/${currentSessionId}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content, stream: true }),
+      body: JSON.stringify({ content, stream: true, tools: true }),
     });
 
     if (!res.ok || !res.body) {

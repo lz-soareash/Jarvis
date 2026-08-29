@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     # Tool Engine (Fase 3)
     max_tool_rounds: int = 3  # rodadas máx. de chamadas de ferramenta por turno
 
+    # Permissions (Fase 4)
+    approval_ttl_seconds: int = 600  # validade de um pedido de aprovação pendente
+
     log_level: str = "INFO"
 
 

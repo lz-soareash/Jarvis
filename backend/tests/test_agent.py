@@ -1,8 +1,7 @@
-"""Testes do Tool Engine (Fase 3): loop do agente, política e integração com memória."""
+"""Testes do Tool Engine (Fases 3 e 4): loop do agente, política, aprovações e memória."""
 
 import json
 
-import app.services.agent as agent_module
 from app.core.enums import PermissionLevel
 from app.schemas.ai import ToolCall
 from app.tools.base import Tool, ToolResult
@@ -77,17 +76,32 @@ class DangerTool(Tool):
         return ToolResult.success("apagado")
 
 
-def test_agent_blocks_level2_tool(client, fake_ai, monkeypatch):
+def test_agent_requests_approval_for_level2_tool(client, fake_ai, monkeypatch):
+    """Fase 4: nível ≥ 2 NÃO executa — vira pedido de aprovação e pausa o turno."""
+    from app.tools import registry as tool_registry_module
+
     registry = ToolRegistry()
     registry.register(DangerTool())
-    monkeypatch.setattr(agent_module, "get_tool_registry", lambda: registry)
+    monkeypatch.setattr(tool_registry_module, "get_tool_registry", lambda: registry)
 
     plan_call(fake_ai, ToolCall(name="apagar_disco", arguments={}))
     sid = create_session(client)["id"]
     events = send_agent(client, sid, "apague o disco")
-    done = next(e for e in events if e["type"] == "tool_done")
-    assert done["ok"] is False
-    assert "Fase 4" in done["detail"]
+
+    assert [e["type"] for e in events] == [
+        "start",
+        "tool_start",
+        "approval_request",
+        "approval_pending",
+    ]
+    req = next(e for e in events if e["type"] == "approval_request")["approval"]
+    assert req["tool_name"] == "apagar_disco"
+    assert req["status"] == "pending"
+    assert req["risk"] == "low"
+
+    pending = client.get(f"/api/approvals/pending?session_id={sid}").json()
+    assert len(pending) == 1
+    assert pending[0]["id"] == req["id"]
 
 
 def test_agent_unconfigured_emits_error_event(client):

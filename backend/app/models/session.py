@@ -40,6 +40,12 @@ class Session(Base):
         cascade="all, delete-orphan",
         order_by="Memory.created_at",
     )
+    approvals: Mapped[list] = relationship(
+        "ApprovalRequest",
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="ApprovalRequest.created_at",
+    )
 
 
 class Message(Base):

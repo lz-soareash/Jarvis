@@ -59,12 +59,12 @@ backend/
 ├── app/
 │   ├── ai/
 │   │   └── providers/       # base.py (AIProvider) + gemini.py
-│   ├── api/                 # rotas (health, chat, memory) — cliente-agnóstico
+│   ├── api/                 # rotas (health, chat, memory, approvals, permissions, audit)
 │   ├── core/                # config, logging estruturado, enums (estados/permissões)
 │   ├── db/                  # SQLAlchemy (Base, engine, sessão)
-│   ├── models/              # Session / Message / Memory (SQLAlchemy 2.x)
+│   ├── models/              # Session / Message / Memory / governança (SQLAlchemy 2.x)
 │   ├── schemas/             # modelos Pydantic base (inclui ToolCall/Declaration)
-│   ├── services/            # chat, memory (busca semântica/lexical), summarizer, agent
+│   ├── services/            # chat, memory, summarizer, agent, approvals, permissions, audit
 │   ├── tools/               # Tool Engine: base, registry, builtins (tempo, sistema, memória)
 │   └── main.py
 └── tests/                   # pytest (Gemini 100% mockado)
@@ -73,14 +73,25 @@ backend/
 ## Tool Engine (Fase 3)
 
 O modelo **propõe** chamadas de ferramenta (declaradas no registro); o **Core decide e executa**.
-Nunca executa chamadas inventadas — só as registradas. Política de permissão atual:
+Nunca executa chamadas inventadas — só as registradas. Habilite o loop no chat com
+`"tools": true` (retorna SSE). Ferramentas embutidas: `get_current_time`, `get_system_info`,
+`store_memory`, `recall_memory`.
 
-- `LEVEL_0` — leitura segura (hora, info do sistema, recall de memória) → automática.
+## Permissions (Fase 4)
+
+Toda ferramenta tem um nível de permissão declarado; o usuário pode ajustá-lo por ferramenta
+(`PUT /api/permissions/{tool}`), persistindo o override em `tool_policies`:
+
+- `LEVEL_0` — leitura segura (hora, info do sistema, recall) → automática.
 - `LEVEL_1` — ação reversível (gravar memória) → automática.
-- `LEVEL_2+` — recusadas com aviso (a aprovação interativa chega na Fase 4).
+- `LEVEL_2` — alteração → **exige aprovação do usuário**.
+- `LEVEL_3` — potencialmente destrutivo → bloqueado por padrão (só com aprovação explícita).
 
-Habilite o loop no chat com `"tools": true` (retorna SSE). Ferramentas embutidas: `get_current_time`,
-`get_system_info`, `store_memory`, `recall_memory`.
+Fluxo de aprovação: o modelo propõe uma ferramenta nível ≥ 2 → o agente cria um
+`ApprovalRequest`, pausa o turno (`evento approval_pending`) e emite `approval_request`.
+O usuário decide com `POST /api/approvals/{id}/respond` (SSE) — a resposta flui em tempo
+real, aprovados executam e negados voltam ao modelo como recusa. Pedidos expiram em
+`APPROVAL_TTL_SECONDS` (10 min padrão). Tudo fica registrado no trilho `/api/audit`.
 
 ## Endpoints
 
@@ -95,13 +106,18 @@ Habilite o loop no chat com `"tools": true` (retorna SSE). Ferramentas embutidas
 | `POST /api/memories` | cria memória (fact/preference/note; `session_id` opcional) |
 | `GET /api/memories` | lista (filtra por `session_id`/`kind`) ou busca por relevância com `query` |
 | `GET/DELETE /api/memories/{id}` | detalhe / exclusão |
+| `GET /api/approvals/pending` | pedidos de aprovação aguardando decisão |
+| `POST /api/approvals/{id}/respond` | decide (approve/deny) e retoma o turno (SSE) |
+| `GET /api/permissions` | catálogo de ferramentas + nível efetivo |
+| `PUT/DELETE /api/permissions/{tool}` | ajusta / remove override de nível |
+| `GET /api/audit` | trilho de auditoria (execuções e decisões) |
 | `GET /health` | saúde da API + banco (SQLite) |
 | `GET /health/ai` | healthcheck do Gemini (`ok` / `unconfigured` / `error`) |
 | `GET /docs` | OpenAPI (Swagger UI) |
 
 Envie `{"content": "...", "stream": true, "tools": true}` em
 `POST /api/sessions/{id}/messages` para acionar o Tool Engine (SSE com eventos
-`start → tool_start/tool_done → chunk → done`).
+`start → tool_start/tool_done → [approval_request → approval_pending] → chunk → done`).
 
 - API + frontend: `http://127.0.0.1:8100` (o Atlas segue na 8000, não é alterado).
 - WebSocket reservado na porta `8101` (contrato Core ↔ Local Agent — fase futura).
@@ -114,7 +130,7 @@ o chat de stream responde com o evento `error` e o endpoint comum com `503` — 
 ## Roadmap (resumo)
 
 0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·
-4. Permissions · 5. Computer · 6. Filesystem · 7. Developer · 8. Mobile/Devices/PWA ·
+4. Permissions ✔ · 5. Computer · 6. Filesystem · 7. Developer · 8. Mobile/Devices/PWA ·
 9. Atlas · 10. Agent loop · 11. Web · 12. Voz · 13. Visão · 14. Proativo · 15. Remote · 16. V1.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.
