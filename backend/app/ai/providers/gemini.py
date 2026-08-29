@@ -92,14 +92,33 @@ class GeminiProvider(AIProvider):
         temperature: float | None = None,
         max_tokens: int | None = None,
     ) -> AsyncIterator[str]:
-        # Contrato async já definido; streaming token-a-token chega em fase futura.
-        result = await self.generate(
-            messages,
-            system=system,
-            temperature=temperature,
-            max_tokens=max_tokens,
+        """Streaming token-a-token via SDK oficial (com fallback para geração única)."""
+        if not self.is_configured:
+            raise AIProviderError("GEMINI_API_KEY não configurada (arquivo .env)")
+
+        client = self._get_client()
+        config = self._build_config(system, temperature, max_tokens)
+        stream_method = getattr(client.models, "generate_content_stream", None)
+        if stream_method is None:
+            result = await self.generate(
+                messages, system=system, temperature=temperature, max_tokens=max_tokens
+            )
+            yield result.text
+            return
+
+        stream = stream_method(
+            model=self.model,
+            contents=self._contents(messages),
+            config=config,
         )
-        yield result.text
+        iterator = iter(stream)
+        while True:
+            chunk = await asyncio.to_thread(next, iterator, None)
+            if chunk is None:
+                break
+            text = getattr(chunk, "text", None) or ""
+            if text:
+                yield text
 
     async def analyze(self, text: str, *, instruction: str | None = None) -> AIResponse:
         return await self.generate([AIMessage(role="user", content=text)], system=instruction)

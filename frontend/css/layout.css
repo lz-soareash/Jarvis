@@ -1,0 +1,169 @@
+/* =============================================================
+   JARVIS — Layout (HUD, shell, chat, status)
+   ============================================================= */
+.app {
+  position: relative;
+  z-index: 1;
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+
+/* ---- HUD header ---- */
+.hud {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px var(--space);
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(to bottom, rgba(10, 18, 32, 0.9), rgba(5, 8, 15, 0.55));
+  backdrop-filter: blur(10px);
+}
+
+.hud-brand {
+  font-weight: 800;
+  letter-spacing: 0.28em;
+  font-size: 1.05rem;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 12px var(--accent-glow));
+  animation: sheen 6s var(--ease) infinite;
+}
+
+.hud-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.2em;
+  color: var(--text-dim);
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 10px var(--warn);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.dot[data-state="online"] {
+  background: var(--ok);
+  box-shadow: 0 0 10px var(--ok);
+}
+
+.dot[data-state="offline"] {
+  background: var(--danger);
+  box-shadow: 0 0 10px var(--danger);
+}
+
+/* ---- Shell (sidebar + chat) ---- */
+.shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 0;
+}
+
+.sessions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space);
+  padding: var(--space);
+  border-right: 1px solid var(--border);
+  background: var(--bg-panel);
+  backdrop-filter: blur(8px);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.chat-window {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+/* ---- Input bar ---- */
+.inputbar {
+  display: flex;
+  gap: 10px;
+  padding: 14px var(--space);
+  border-top: 1px solid var(--border);
+  background: linear-gradient(to top, rgba(10, 18, 32, 0.9), rgba(5, 8, 15, 0.5));
+  backdrop-filter: blur(10px);
+}
+
+.inputbar input {
+  flex: 1;
+  border: 1px solid var(--border);
+  background: rgba(5, 8, 15, 0.7);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color 0.25s var(--ease), box-shadow 0.25s var(--ease);
+}
+
+.inputbar input:focus {
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 3px var(--accent-glow-soft);
+}
+
+/* ---- Status footer ---- */
+.status-foot {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 8px var(--space);
+  border-top: 1px solid var(--border);
+  background: rgba(5, 8, 15, 0.8);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.16em;
+  color: var(--text-faint);
+}
+
+.status-item b {
+  color: var(--text-dim);
+  font-weight: 600;
+  margin-left: 4px;
+}
+
+.status-ports {
+  margin-left: auto;
+}
+
+/* ---- Responsivo ---- */
+@media (max-width: 768px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sessions {
+    display: none;
+  }
+
+  .status-item.status-ports {
+    display: none;
+  }
+}
+
+@media (min-width: 769px) {
+  .sessions-toggle {
+    display: none;
+  }
+}

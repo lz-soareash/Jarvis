@@ -1,0 +1,50 @@
+/* =============================================================
+   JARVIS — Design Tokens (dark cyber / holográfico)
+   ============================================================= */
+:root {
+  /* Cor */
+  --bg-base: #05080f;
+  --bg-elev: #0a1220;
+  --bg-panel: rgba(10, 20, 40, 0.55);
+
+  --accent: #00e5ff;
+  --accent-2: #2f7bff;
+  --accent-glow: rgba(0, 229, 255, 0.35);
+  --accent-glow-soft: rgba(47, 123, 255, 0.22);
+
+  --text: #dcecf7;
+  --text-dim: #7f97ab;
+  --text-faint: #46586a;
+
+  --border: rgba(0, 229, 255, 0.16);
+  --border-strong: rgba(0, 229, 255, 0.45);
+
+  --ok: #2ae29b;
+  --warn: #ffb020;
+  --danger: #ff5c5c;
+
+  /* Tipografia */
+  --font-ui: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
+
+  /* Espaçamento / forma */
+  --space: 16px;
+  --radius: 14px;
+  --radius-sm: 8px;
+
+  /* Breakpoint */
+  --bp: 768px;
+
+  /* Movimento */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

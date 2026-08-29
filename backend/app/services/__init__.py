@@ -1,0 +1,1 @@
+"""Serviços de domínio — lógica reutilizável desacoplada das rotas."""

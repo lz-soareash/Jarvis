@@ -2,12 +2,15 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app import __version__
 from app.api.router import api_router
-from app.core.config import settings
+from app.core.config import REPO_ROOT, settings
 from app.core.logging import configure_logging
 from app.db.session import init_db
+
+FRONTEND_DIR = REPO_ROOT / "frontend"
 
 configure_logging()
 
@@ -27,16 +30,13 @@ def create_app() -> FastAPI:
     )
     app.include_router(api_router)
 
-    @app.get("/", tags=["meta"])
-    async def root() -> dict:
-        return {
-            "app": settings.app_name,
-            "version": __version__,
-            "status": "online",
-            "docs": "/docs",
-            "health": "/health",
-            "health_ai": "/health/ai",
-        }
+    # Frontend Vanilla/PWA servido pelo próprio Core na mesma porta (8100).
+    if FRONTEND_DIR.is_dir():
+        app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
+    else:
+        @app.get("/", tags=["meta"])
+        async def root() -> dict:
+            return {"app": settings.app_name, "version": __version__, "docs": "/docs"}
 
     return app
 

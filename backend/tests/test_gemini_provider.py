@@ -15,6 +15,22 @@ class FakeResponse:
 class FakeModels:
     def __init__(self):
         self.calls = []
+        self.stream_calls = []
+
+    def generate_content(self, **kwargs):
+        self.calls.append(kwargs)
+        return FakeResponse()
+
+    def generate_content_stream(self, **kwargs):
+        self.stream_calls.append(kwargs)
+        return iter([FakeResponse(text="um "), FakeResponse(text="dois ")])
+
+
+class FakeModelsNoStream:
+    """SDK antigo/simples: apenas geração única (verifica o fallback)."""
+
+    def __init__(self):
+        self.calls = []
 
     def generate_content(self, **kwargs):
         self.calls.append(kwargs)
@@ -22,12 +38,12 @@ class FakeModels:
 
 
 class FakeClient:
-    def __init__(self):
-        self.models = FakeModels()
+    def __init__(self, models=None):
+        self.models = models or FakeModels()
 
 
-def make_provider(api_key="test-key", model="gemini-test"):
-    client = FakeClient()
+def make_provider(api_key="test-key", model="gemini-test", models=None):
+    client = FakeClient(models=models)
     provider = GeminiProvider(api_key=api_key, model=model, client_factory=lambda k: client)
     return provider, client
 
@@ -71,12 +87,21 @@ async def test_analyze_uses_instruction_as_system():
     assert call["config"].system_instruction == "seja objetivo"
 
 
-async def test_stream_yields_generated_text_once():
-    provider, _ = make_provider()
+async def test_stream_falls_back_when_sdk_lacks_streaming():
+    provider, _ = make_provider(models=FakeModelsNoStream())
     chunks = []
     async for chunk in provider.stream([AIMessage(role="user", content="oi")]):
         chunks.append(chunk)
     assert chunks == ["resposta mockada"]
+
+
+async def test_stream_uses_token_streaming_when_available():
+    provider, client = make_provider()
+    chunks = []
+    async for chunk in provider.stream([AIMessage(role="user", content="oi")]):
+        chunks.append(chunk)
+    assert chunks == ["um ", "dois "]
+    assert len(client.models.stream_calls) == 1
 
 
 async def test_health_check_ok_with_client():

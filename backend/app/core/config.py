@@ -2,8 +2,8 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-BACKEND_DIR = Path(__file__).resolve().parents[1]
-REPO_ROOT = BACKEND_DIR.parent
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class Settings(BaseSettings):
@@ -31,6 +31,9 @@ class Settings(BaseSettings):
 
     # Persistência — Local-first (SQLite); Postgres é troca futura de URL.
     database_url: str = "sqlite:///./data/jarvis.db"
+
+    # Chat — janela de contexto enviada ao Gemini por resposta
+    max_context_messages: int = 20
 
     log_level: str = "INFO"
 

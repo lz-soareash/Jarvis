@@ -2,6 +2,7 @@ from pathlib import Path
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.core.config import settings
 
@@ -12,7 +13,9 @@ def _create_engine():
     kwargs: dict = {"pool_pre_ping": True, "future": True}
     url = settings.database_url
     if url.startswith("sqlite"):
-        if url.startswith("sqlite:///"):
+        if url == "sqlite:///:memory:":
+            kwargs["poolclass"] = StaticPool
+        elif url.startswith("sqlite:///"):
             db_path = url.removeprefix("sqlite:///")
             if db_path not in ("", ":memory:"):
                 Path(db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -25,7 +28,9 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expi
 
 
 def init_db() -> None:
-    """Cria as tabelas (não há modelos ainda na Fase 0; vira padrão nas próximas fases)."""
+    """Cria as tabelas declaradas (modelos de domínio)."""
+    from app import models  # noqa: F401 — registra tabelas no metadata
+
     Base.metadata.create_all(bind=engine)
 
 

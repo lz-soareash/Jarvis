@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#05080f" />
+  <meta name="description" content="JARVIS — Personal AI Agent" />
+  <title>JARVIS</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" type="image/svg+xml" href="./icons/favicon.svg" />
+  <link rel="stylesheet" href="./css/tokens.css" />
+  <link rel="stylesheet" href="./css/base.css" />
+  <link rel="stylesheet" href="./css/layout.css" />
+  <link rel="stylesheet" href="./css/components.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="hud">
+      <div class="hud-brand" title="Personal AI Agent">
+        <span class="hud-brand-core">JARVIS</span>
+      </div>
+      <div class="hud-status">
+        <span class="dot" id="status-dot" data-state="connecting"></span>
+        <span id="status-text">CONECTANDO</span>
+      </div>
+    </header>
+
+    <div class="shell">
+      <aside class="sessions" id="sessions-panel">
+        <div class="sessions-head">
+          <button class="btn btn-accent" id="new-session" type="button">Nova sessão</button>
+        </div>
+        <ul class="sessions-list" id="sessions-list"></ul>
+      </aside>
+
+      <main class="chat">
+        <section class="chat-window" id="chat-window" aria-live="polite">
+          <div class="empty" id="empty-state">
+            <div class="orb" aria-hidden="true"></div>
+            <h1 class="empty-title">Como posso ajudar?</h1>
+            <p class="empty-hint">Pergunte, peça algo ou fale sobre seus projetos.</p>
+          </div>
+          <div class="messages" id="messages" hidden></div>
+        </section>
+
+        <form class="inputbar" id="input-form">
+          <input id="input" type="text" placeholder="Digite ou fale com o Jarvis..." autocomplete="off" spellcheck="false" />
+          <button class="btn btn-accent btn-send" id="send-btn" type="submit">Enviar</button>
+        </form>
+      </main>
+    </div>
+
+    <footer class="status-foot">
+      <span class="status-item">ESTADO <b id="agent-state">IDLE</b></span>
+      <span class="status-item">DB <b id="db-state">—</b></span>
+      <span class="status-item">IA <b id="ai-state">—</b></span>
+      <span class="status-item status-ports">API <b>8100</b> · WS <b>8101</b></span>
+    </footer>
+  </div>
+
+  <script src="./js/app.js"></script>
+</body>
+</html>
