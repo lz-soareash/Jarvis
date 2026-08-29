@@ -1,0 +1,1 @@
+"""Camada de IA — abstração de provedores (Gemini é o único nesta fase)."""

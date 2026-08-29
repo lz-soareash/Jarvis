@@ -1,0 +1,1 @@
+"""API REST do JARVIS Core. Cliente-agnóstico (Desktop/Mobile/PWA/remoto)."""

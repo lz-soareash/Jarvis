@@ -1,0 +1,1 @@
+"""Persistência (SQLAlchemy 2.x) — domínio desacoplado do banco."""

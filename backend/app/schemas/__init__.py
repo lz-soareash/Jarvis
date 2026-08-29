@@ -1,0 +1,1 @@
+"""Schemas Pydantic base do domínio JARVIS."""
