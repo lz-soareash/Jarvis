@@ -22,10 +22,12 @@ class GeminiProvider(AIProvider):
         self,
         api_key: str | None = None,
         model: str | None = None,
+        embed_model: str | None = None,
         client_factory: Callable[[str], object] | None = None,
     ):
         self._api_key = api_key if api_key is not None else (settings.gemini_api_key or "")
         self.model = model or settings.gemini_model
+        self.embed_model = embed_model or settings.gemini_embed_model
         self._client_factory = client_factory or self._default_client
         self._client = None
 
@@ -122,6 +124,21 @@ class GeminiProvider(AIProvider):
 
     async def analyze(self, text: str, *, instruction: str | None = None) -> AIResponse:
         return await self.generate([AIMessage(role="user", content=text)], system=instruction)
+
+    async def embed(self, text: str) -> list[float]:
+        if not self.is_configured:
+            raise AIProviderError("GEMINI_API_KEY não configurada (arquivo .env)")
+
+        client = self._get_client()
+        response = await asyncio.to_thread(
+            client.models.embed_content,
+            model=self.embed_model,
+            contents=text,
+        )
+        embeddings = getattr(response, "embeddings", None)
+        if not embeddings or not getattr(embeddings[0], "values", None):
+            raise AIProviderError("Embedding vazio do modelo de vetores")
+        return list(embeddings[0].values)
 
     async def health_check(self) -> AIProviderStatus:
         if not self.is_configured:

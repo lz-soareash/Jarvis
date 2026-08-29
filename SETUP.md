@@ -36,7 +36,10 @@ Edite o `.env` e preencha:
 
 - `GEMINI_API_KEY=` com sua chave do Google AI Studio (obrigatória para o `/health/ai` responder `ok`).
 - As portas: API `8100`, WebSocket `8101`. O Atlas usa a `8000` — o JARVIS não a altera.
-- Opcional: `MAX_CONTEXT_MESSAGES` (janela de mensagens enviadas ao Gemini por resposta; padrão `20`).
+- Opcional: `MAX_CONTEXT_MESSAGES` (janela de mensagens ao Gemini; padrão `20`),
+  `GEMINI_EMBED_MODEL` (embeddings; padrão `text-embedding-004`), `MEMORY_CONTEXT_LIMIT`,
+  `SUMMARIZE_AFTER_MESSAGES` e `SUMMARY_CHUNK` (resumo rolante de conversas longas).
+  Sem chave, a busca de memórias usa fallback lexical local e não há embeddings.
 
 > Nunca versione o `.env` (o `.gitignore` já o exclui). Sem chave, o Core funciona todo,
 > exceto chamadas de IA (devidamente reportado como `unconfigured`).
@@ -68,6 +71,16 @@ curl -N -X POST http://127.0.0.1:8100/api/sessions/SEU_ID/messages ^
   -d "{\"content\":\"oi\",\"stream\":true}"
 ```
 
+Teste rápido da memória (Fase 2):
+
+```bat
+curl -X POST http://127.0.0.1:8100/api/memories ^
+  -H "Content-Type: application/json" ^
+  -d "{\"content\":\"gosto de café\",\"kind\":\"preference\"}"
+
+curl "http://127.0.0.1:8100/api/memories?query=caf%C3%A9"
+```
+
 ## 6. Executar os testes
 
 ```bat
@@ -84,5 +97,7 @@ cd backend
 ## 7. Estrutura do banco
 
 - SQLite criado automaticamente no caminho de `DATABASE_URL` (padrão `backend/data/jarvis.db`) no startup.
-- Fase 1: tabelas `sessions` e `messages` (chat). Modelos de tarefas, dispositivos, auditoria e WebSocket
-  (`8101`) entram nas fases seguintes, sempre via SQLAlchemy 2.x — a migração para PostgreSQL é troca de URL.
+- Fase 1: tabelas `sessions` e `messages` (chat). Fase 2: tabela `memories` (fato/preferência/nota/resumo)
+  mais busca semântica por embeddings e resumo rolante de conversas longas. Tarefas, dispositivos, auditoria
+  e WebSocket (`8101`) entram nas fases seguintes, sempre via SQLAlchemy 2.x — a migração p/ Postgres é troca de URL.
+- Se subir versão com novas colunas, delete o `backend/data/jarvis.db` (dados de dev) ou migre manualmente.

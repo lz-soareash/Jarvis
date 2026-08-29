@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -12,12 +12,19 @@ def utcnow() -> datetime:
 
 
 class Session(Base):
-    """Uma conversa do usuário (memória operacional de sessão)."""
+    """Uma conversa do usuário (memória operacional de sessão).
+
+    `summary` e `summarized_count` alimentam o resumo rolante (Fase 2):
+    quando a conversa cresce além da janela de contexto, os trechos antigos
+    são comprimidos no resumo e o prompt passa a usar resumo + janela recente.
+    """
 
     __tablename__ = "sessions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     title: Mapped[str] = mapped_column(String(200), default="Nova sessão")
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summarized_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
@@ -27,6 +34,11 @@ class Session(Base):
         back_populates="session",
         cascade="all, delete-orphan",
         order_by="Message.id",
+    )
+    memories: Mapped[list["Memory"]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="Memory.created_at",
     )
 
 

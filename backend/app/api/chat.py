@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session as OrmSession
@@ -12,9 +14,12 @@ from app.schemas.chat import (
     SessionOut,
 )
 from app.services import chat as chat_service
-from app.services.chat import build_ai_messages, sse_event
+from app.services import summarizer
+from app.services.chat import build_context, sse_event
 
 from .deps import get_ai_provider
+
+logger = logging.getLogger("jarvis.api")
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
@@ -78,9 +83,16 @@ async def send_message(
 
     chat_service.add_user_message(db, session, body.content)
 
+    try:
+        await summarizer.summarize_chunk(db, session_id=session_id, provider=provider)
+    except Exception:  # noqa: BLE001 — resumo é best-effort
+        logger.exception("Resumo periódico falhou (best-effort)")
+
     if body.stream:
-        history = build_ai_messages(db, session_id)
-        generator = chat_service.stream_reply(session_id, history, provider, db)
+        history, system = await build_context(db, session_id, provider, query=body.content)
+        generator = chat_service.stream_reply(
+            session_id, history, provider, db, system=system or None
+        )
         return StreamingResponse(generator, media_type="text/event-stream", headers=SSE_HEADERS)
 
     if not provider.is_configured:
@@ -90,7 +102,7 @@ async def send_message(
         )
 
     try:
-        reply = await chat_service.generate_reply(db, session_id, provider)
+        reply = await chat_service.generate_reply(db, session_id, provider, query=body.content)
     except AIProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return ChatResponse(session_id=session_id, message=MessageOut.model_validate(reply))

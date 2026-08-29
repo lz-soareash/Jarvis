@@ -40,6 +40,15 @@ class RiskLevel(str, Enum):
     HIGH = "high"
 
 
+class MemoryKind(str, Enum):
+    """Tipos de memória de longo prazo estruturada."""
+
+    FACT = "fact"
+    PREFERENCE = "preference"
+    NOTE = "note"
+    SUMMARY = "summary"
+
+
 class DeviceType(str, Enum):
     """Tipos de dispositivo (Trusted Devices — fases futuras)."""
 

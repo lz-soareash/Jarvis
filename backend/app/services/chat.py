@@ -1,5 +1,4 @@
-"""Serviço de chat: sessões, persistência, contexto básico e resposta da IA."""
-
+"""Serviço de chat: sessões, persistência, contexto (memória + resumo) e resposta."""
 import json
 import logging
 from typing import AsyncIterator
@@ -13,9 +12,17 @@ from app.models import Message, Session, utcnow
 from app.schemas.ai import AIMessage
 from app.schemas.chat import MessageOut, SessionOut
 
+from . import memory as memory_service
+
 logger = logging.getLogger("jarvis.chat")
 
 DEFAULT_TITLE = "Nova sessão"
+
+BASE_SYSTEM_PROMPT = (
+    "Você é o JARVIS, um assistente pessoal de IA executando localmente. "
+    "Responda de forma clara, direta e em português, usando o contexto e as "
+    "memórias fornecidas quando forem úteis. Nunca invente memórias."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -80,22 +87,79 @@ def build_ai_messages(
 ) -> list[AIMessage]:
     """Monta o contexto enviado à IA: a janela das últimas mensagens da sessão.
 
-    Contexto básico da Fase 1 — janela simples e recente. O Context Engine
-    (Fase 2) evoluirá este método sem mudar o contrato aqui.
+    Mensagens já absorvidas pelo resumo rolante (`summarized_count`) ficam de
+    fora — o trecho antigo sobrevive como resumo no prompt sistêmico.
     """
     limit = limit or settings.max_context_messages
     stmt = (
         select(Message)
         .where(Message.session_id == session_id)
-        .order_by(Message.id.desc())
-        .limit(limit)
+        .order_by(Message.id.asc())
     )
-    rows = list(reversed(db.scalars(stmt).all()))
+    rows = list(db.scalars(stmt).all())
+    session = db.get(Session, session_id)
+    start = session.summarized_count if session is not None else 0
+    window = rows[start:][-limit:]
     return [
         AIMessage(role=row.role, content=row.content)
-        for row in rows
+        for row in window
         if row.role in ("user", "assistant")
     ]
+
+
+async def build_system_prompt(
+    db: OrmSession,
+    session_id: str,
+    provider: AIProvider,
+    query: str | None = None,
+) -> str:
+    """Contexto SISTÊMICO injetado na IA: resumo rolante + memórias relevantes.
+
+    Memórias relevantes são buscadas pelo texto da última pergunta (semântico
+    quando há embedding; lexical no fallback). Sem chave, apenas o resumo e o
+    prompt base chegam ao modelo.
+    """
+    session = db.get(Session, session_id)
+    parts = [BASE_SYSTEM_PROMPT]
+
+    if session is not None and session.summary:
+        parts.append(f"[Resumo da conversa até agora]\n{session.summary}")
+
+    try:
+        if query:
+            results = await memory_service.search_memories(
+                db,
+                query=query,
+                session_id=session_id,
+                include_global=True,
+                limit=settings.memory_context_limit,
+                provider=provider,
+            )
+        else:
+            results = [
+                (m, 0.0) for m in memory_service.list_memories(db)[: settings.memory_context_limit]
+            ]
+    except Exception:  # noqa: BLE001 — memória nunca quebra o chat
+        logger.exception("Falha ao montar contexto de memórias")
+        results = []
+
+    if results:
+        lines = "\n".join(f"- ({m.kind}) {m.content}" for m, _ in results)
+        parts.append(f"[Memórias relevantes]\n{lines}")
+
+    return "\n\n".join(parts)
+
+
+async def build_context(
+    db: OrmSession,
+    session_id: str,
+    provider: AIProvider,
+    query: str | None = None,
+) -> tuple[list[AIMessage], str]:
+    """Histórico (janela recente) + prompt sistêmico (memória + resumo)."""
+    history = build_ai_messages(db, session_id)
+    system = await build_system_prompt(db, session_id, provider, query=query)
+    return history, system
 
 
 def list_messages(db: OrmSession, session_id: str) -> list[Message]:
@@ -107,10 +171,15 @@ def list_messages(db: OrmSession, session_id: str) -> list[Message]:
 # Geração de resposta
 # ---------------------------------------------------------------------------
 
-async def generate_reply(db: OrmSession, session_id: str, provider: AIProvider) -> Message:
+async def generate_reply(
+    db: OrmSession,
+    session_id: str,
+    provider: AIProvider,
+    query: str | None = None,
+) -> Message:
     """Resposta completa (não-stream): persiste a resposta do assistente."""
-    history = build_ai_messages(db, session_id)
-    response = await provider.generate(history)
+    history, system = await build_context(db, session_id, provider, query=query)
+    response = await provider.generate(history, system=system)
     message = Message(session_id=session_id, role="assistant", content=response.text)
     db.add(message)
     db.commit()
@@ -127,12 +196,13 @@ async def stream_reply(
     history: list[AIMessage],
     provider: AIProvider,
     db: OrmSession,
+    system: str | None = None,
 ) -> AsyncIterator[str]:
     """Resposta em streaming (SSE), com persistência da resposta ao final."""
     yield sse_event({"type": "start"})
     parts: list[str] = []
     try:
-        async for chunk in provider.stream(history):
+        async for chunk in provider.stream(history, system=system):
             parts.append(chunk)
             yield sse_event({"type": "chunk", "text": chunk})
     except AIProviderError as exc:

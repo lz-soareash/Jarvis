@@ -110,3 +110,29 @@ def test_chat_stream_sse(client, fake_ai):
 def test_send_message_unknown_session_404(client, fake_ai):
     res = client.post("/api/sessions/xyz/messages", json={"content": "oi"})
     assert res.status_code == 404
+
+
+def test_chat_rolling_summary_after_long_conversation(client, fake_ai, monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "summarize_after_messages", 4)
+    monkeypatch.setattr(settings, "summary_chunk", 4)
+
+    session = create_session(client)
+    for i in range(3):
+        res = client.post(
+            f"/api/sessions/{session['id']}/messages",
+            json={"content": f"mensagem {i}", "stream": False},
+        )
+        assert res.status_code == 200, res.text
+
+    assert fake_ai.analyze_calls >= 1
+
+    res = client.post(
+        f"/api/sessions/{session['id']}/messages",
+        json={"content": "continua", "stream": False},
+    )
+    assert res.status_code == 200
+    system = (fake_ai.last_generate_kwargs or {}).get("system") or ""
+    assert "Resumo da conversa" in system
+    assert "resumo fake" in system

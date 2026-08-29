@@ -49,5 +49,9 @@ class AIProvider(ABC):
         """Análise one-shot de um texto (com instrução opcional)."""
 
     @abstractmethod
+    async def embed(self, text: str) -> list[float]:
+        """Gera o vetor semântico (embeddings) do texto — usado pela memória v2."""
+
+    @abstractmethod
     async def health_check(self) -> AIProviderStatus:
         """Verifica a saúde do provedor (sem expor secrets)."""

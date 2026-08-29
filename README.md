@@ -62,9 +62,9 @@ backend/
 │   ├── api/                 # rotas (health, chat) — cliente-agnóstico
 │   ├── core/                # config, logging estruturado, enums (estados/permissões)
 │   ├── db/                  # SQLAlchemy (Base, engine, sessão)
-│   ├── models/              # Session / Message (memória operacional de sessão)
+│   ├── models/              # Session / Message / Memory (SQLAlchemy 2.x)
 │   ├── schemas/             # modelos Pydantic base
-│   ├── services/            # chat: sessões, contexto básico, respostas/SSE
+│   ├── services/            # chat, memory (busca semântica/lexical), summarizer
 │   └── main.py
 └── tests/                   # pytest (Gemini 100% mockado)
 ```
@@ -79,6 +79,9 @@ backend/
 | `GET/DELETE /api/sessions/{id}` | detalhe / exclusão |
 | `GET /api/sessions/{id}/messages` | histórico da sessão |
 | `POST /api/sessions/{id}/messages` | envia mensagem (JSON ou streaming SSE com `stream:true`) |
+| `POST /api/memories` | cria memória (fact/preference/note; `session_id` opcional) |
+| `GET /api/memories` | lista (filtra por `session_id`/`kind`) ou busca por relevância com `query` |
+| `GET/DELETE /api/memories/{id}` | detalhe / exclusão |
 | `GET /health` | saúde da API + banco (SQLite) |
 | `GET /health/ai` | healthcheck do Gemini (`ok` / `unconfigured` / `error`) |
 | `GET /docs` | OpenAPI (Swagger UI) |
@@ -93,7 +96,7 @@ o chat de stream responde com o evento `error` e o endpoint comum com `503` — 
 
 ## Roadmap (resumo)
 
-0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context · 3. Tool Engine ·
+0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ·
 4. Permissions · 5. Computer · 6. Filesystem · 7. Developer · 8. Mobile/Devices/PWA ·
 9. Atlas · 10. Agent loop · 11. Web · 12. Voz · 13. Visão · 14. Proativo · 15. Remote · 16. V1.
 

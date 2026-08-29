@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     # Chat — janela de contexto enviada ao Gemini por resposta
     max_context_messages: int = 20
 
+    # Memória / Contexto (Fase 2)
+    gemini_embed_model: str = "text-embedding-004"
+    memory_context_limit: int = 5  # memórias relevantes injetadas no contexto
+    summarize_after_messages: int = 40  # a partir de quantas mensagens resumir
+    summary_chunk: int = 20  # mensagens absorvidas por resumo rolante
+
     log_level: str = "INFO"
 
 

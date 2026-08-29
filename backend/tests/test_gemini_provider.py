@@ -12,10 +12,21 @@ class FakeResponse:
         self.text = text
 
 
+class FakeContentEmbedding:
+    def __init__(self, values):
+        self.values = values
+
+
+class FakeEmbedResponse:
+    def __init__(self, values):
+        self.embeddings = [FakeContentEmbedding(values)]
+
+
 class FakeModels:
     def __init__(self):
         self.calls = []
         self.stream_calls = []
+        self.embed_calls = []
 
     def generate_content(self, **kwargs):
         self.calls.append(kwargs)
@@ -24,6 +35,10 @@ class FakeModels:
     def generate_content_stream(self, **kwargs):
         self.stream_calls.append(kwargs)
         return iter([FakeResponse(text="um "), FakeResponse(text="dois ")])
+
+    def embed_content(self, **kwargs):
+        self.embed_calls.append(kwargs)
+        return FakeEmbedResponse([0.1, 0.2, 0.3])
 
 
 class FakeModelsNoStream:
@@ -85,6 +100,20 @@ async def test_analyze_uses_instruction_as_system():
     call = client.models.calls[0]
     assert call["contents"][0]["parts"][0]["text"] == "resuma isto"
     assert call["config"].system_instruction == "seja objetivo"
+
+
+async def test_embed_returns_vector():
+    provider, client = make_provider()
+    vec = await provider.embed("oi")
+    assert vec == [0.1, 0.2, 0.3]
+    assert client.models.embed_calls[0]["contents"] == "oi"
+    assert provider.embed_model.startswith("text-embedding")
+
+
+async def test_embed_raises_when_not_configured():
+    provider, _ = make_provider(api_key="")
+    with pytest.raises(AIProviderError):
+        await provider.embed("oi")
 
 
 async def test_stream_falls_back_when_sdk_lacks_streaming():
