@@ -20,7 +20,8 @@ body {
   line-height: var(--leading-normal);
   color: var(--color-text);
   background:
-    radial-gradient(1100px 560px at 50% -12%, rgba(104, 128, 190, 0.16), transparent 62%),
+    radial-gradient(1200px 620px at 50% -14%, rgba(47, 160, 255, 0.2), transparent 62%),
+    radial-gradient(760px 420px at 6% 108%, rgba(28, 86, 190, 0.15), transparent 58%),
     var(--color-bg);
   overflow: hidden;
   -webkit-font-smoothing: antialiased;

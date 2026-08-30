@@ -3,7 +3,7 @@
    (marca, botões, status, empty state, chat, aprovação, sessões)
    ============================================================= */
 
-/* ---------------- Marca ---------------- */
+/* ---------------- Marca (arc-reactor) ---------------- */
 .brand {
   display: flex;
   align-items: center;
@@ -12,23 +12,52 @@
 }
 
 .brand-mark {
+  position: relative;
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
   background:
-    radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.5), transparent 38%),
+    radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.6), transparent 42%),
     var(--gradient-brand);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.35),
-    var(--shadow-sm);
-  color: #0b0e14;
+  box-shadow: var(--arc-glow), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  color: #04101c;
   flex: none;
+}
+
+/* anel de energia girando ao redor do reator */
+.brand-mark::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: var(--radius-full);
+  background: conic-gradient(
+    from 0deg,
+    transparent 0%,
+    transparent 62%,
+    rgba(124, 232, 255, 0.95) 78%,
+    transparent 94%
+  );
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1px));
+  animation: arc-rotate 6s linear infinite;
+}
+
+.brand-mark::after {
+  content: "";
+  position: absolute;
+  inset: -8px;
+  border-radius: var(--radius-full);
+  border: 1px dashed rgba(56, 208, 255, 0.3);
+  animation: arc-rotate 18s linear infinite reverse;
 }
 
 .brand-mark svg {
   display: block;
+  position: relative;
+  z-index: 1;
+  filter: drop-shadow(0 0 4px rgba(4, 16, 28, 0.4));
 }
 
 .brand-text {
@@ -43,6 +72,7 @@
   font-weight: 800;
   letter-spacing: 0.18em;
   color: var(--color-text);
+  text-shadow: 0 0 14px rgba(56, 182, 255, 0.45);
 }
 
 .brand-sub {
@@ -66,13 +96,23 @@
 }
 
 .dot[data-state="online"] {
-  background: var(--color-success);
-  box-shadow: 0 0 0 3px var(--color-success-soft);
+  background: var(--color-arc);
+  animation: dot-pulse 2.6s var(--ease-in-out) infinite;
 }
 
 .dot[data-state="offline"] {
   background: var(--color-error);
   box-shadow: 0 0 0 3px var(--color-error-soft);
+}
+
+@keyframes dot-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 6px rgba(56, 208, 255, 0.75), 0 0 0 3px rgba(56, 208, 255, 0.16);
+  }
+  50% {
+    box-shadow: 0 0 16px rgba(56, 208, 255, 1), 0 0 0 5px rgba(56, 208, 255, 0.24);
+  }
 }
 
 /* ---------------- Botões ---------------- */
@@ -105,14 +145,14 @@
 }
 
 .btn-primary {
-  background: var(--color-primary);
-  color: #0b0e14;
-  box-shadow: var(--shadow-sm);
+  background: var(--gradient-brand);
+  color: #04101c;
+  box-shadow: var(--arc-glow), var(--shadow-sm);
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: var(--color-primary-hover);
-  box-shadow: var(--shadow-md);
+  background: linear-gradient(120deg, #9ff0ff 0%, #55bdff 55%, #4a86ff 140%);
+  box-shadow: var(--arc-glow-strong), var(--shadow-md);
 }
 
 .btn-primary:active:not(:disabled) {
@@ -168,7 +208,7 @@
   background: var(--color-surface-2);
 }
 
-/* ---------------- Empty state ---------------- */
+/* ---------------- Empty state (arc-reactor) ---------------- */
 .empty {
   display: flex;
   flex-direction: column;
@@ -182,25 +222,54 @@
 
 .empty-emblem {
   position: relative;
-  width: 76px;
-  height: 76px;
-  border-radius: 22px;
+  display: grid;
+  place-items: center;
+  width: 84px;
+  height: 84px;
+  border-radius: var(--radius-full);
   background:
-    radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.55), transparent 40%),
-    var(--gradient-brand);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.4),
-    var(--shadow-md);
+    radial-gradient(circle at 50% 38%, rgba(124, 232, 255, 0.95), rgba(58, 168, 255, 0.72) 45%, rgba(13, 38, 78, 0.92) 70%);
+  box-shadow: var(--arc-glow-strong), inset 0 0 22px rgba(56, 208, 255, 0.4);
+  color: #04101c;
   margin-bottom: var(--space-2);
 }
 
+.empty-emblem svg {
+  position: relative;
+  z-index: 1;
+  filter: drop-shadow(0 0 6px rgba(4, 16, 28, 0.55));
+}
+
+/* pulso do núcleo */
+.empty-emblem::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(56, 208, 255, 0.55);
+  animation: emblem-ping 2.8s var(--ease-in-out) infinite;
+}
+
+/* anel externo respirando */
 .empty-emblem::after {
   content: "";
   position: absolute;
-  inset: -8px;
-  border-radius: 28px;
-  border: 1px solid rgba(109, 141, 255, 0.25);
-  animation: emblem-breathe 9s ease-in-out infinite;
+  inset: -13px;
+  border-radius: var(--radius-full);
+  border: 1px dashed rgba(56, 208, 255, 0.32);
+  animation: arc-rotate 22s linear infinite;
+}
+
+@keyframes emblem-ping {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1.07);
+    opacity: 0.35;
+  }
 }
 
 .empty-title {
@@ -274,13 +343,13 @@
 .msg-user {
   align-self: flex-end;
   background: linear-gradient(135deg, var(--color-primary-hover), var(--color-primary-active));
-  color: #081019;
+  color: #04101c;
   border-top-right-radius: 4px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--arc-glow);
 }
 
 .msg-user .msg-meta {
-  color: rgba(8, 16, 25, 0.62);
+  color: rgba(4, 16, 28, 0.62);
 }
 
 .msg-assistant {
@@ -298,11 +367,10 @@
   left: -2px;
   width: 22px;
   height: 22px;
-  border-radius: 7px;
-  background: var(--gradient-brand);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.4),
-    var(--shadow-sm);
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 28%, rgba(255, 255, 255, 0.75), transparent 42%),
+    var(--gradient-brand);
+  box-shadow: var(--arc-glow), inset 0 1px 0 rgba(255, 255, 255, 0.4);
 }
 
 .messages .msg-assistant:first-child {
@@ -334,7 +402,7 @@
   white-space: pre-wrap;
 }
 
-/* Indicador "pensando" */
+/* Indicador "pensando" (núcleo do reator processando) */
 .typing {
   display: inline-flex;
   gap: 5px;
@@ -346,7 +414,8 @@
   width: 7px;
   height: 7px;
   border-radius: var(--radius-full);
-  background: var(--color-text-muted);
+  background: var(--color-arc);
+  box-shadow: 0 0 8px rgba(56, 208, 255, 0.8);
   animation: typing-bounce 1.1s var(--ease-in-out) infinite;
 }
 
@@ -503,13 +572,13 @@
 
 .session-item.active {
   background: var(--color-primary-soft);
-  border-color: rgba(109, 141, 255, 0.45);
+  border-color: rgba(47, 208, 255, 0.5);
   color: var(--color-text);
 }
 
 .session-item.active::before {
-  background: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-primary-soft);
+  background: var(--color-arc);
+  box-shadow: 0 0 8px rgba(56, 208, 255, 0.8);
 }
 
 .session-title {
@@ -570,6 +639,12 @@
   }
 }
 
+@keyframes arc-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes typing-bounce {
   0%,
   60%,
@@ -580,17 +655,5 @@
   30% {
     opacity: 1;
     transform: translateY(-4px);
-  }
-}
-
-@keyframes emblem-breathe {
-  0%,
-  100% {
-    opacity: 0.35;
-    transform: scale(0.97);
-  }
-  50% {
-    opacity: 0.9;
-    transform: scale(1.04);
   }
 }

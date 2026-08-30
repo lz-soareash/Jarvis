@@ -1,36 +1,42 @@
 /* =============================================================
-   JARVIS — Design Tokens (Identidade: "Obsidian + Iris")
-   Design system premium, dark-first. Sem estética cyber/holográfica.
+   JARVIS — Design Tokens (Identidade: "Arc · JARVIS")
+   Dark-first, circuito de safira e ciano. Bomba arc-reactor,
+   brilho azul, sem caos holográfico.
    ============================================================= */
 :root {
   /* ---------- Cores ---------- */
-  --color-bg: #0b0e14;
-  --color-bg-elev: #0e1219;
-  --color-surface: #12161f;
-  --color-surface-2: #171d28;
-  --color-border: #232b3a;
-  --color-border-strong: #33405a;
+  --color-bg: #05080f;
+  --color-bg-elev: #07101d;
+  --color-surface: #0b1524;
+  --color-surface-2: #101d31;
+  --color-border: #1b2a41;
+  --color-border-strong: #2c4363;
 
-  --color-text: #eaeef6;
-  --color-text-secondary: #9aa6ba;
-  --color-text-muted: #6c788c;
+  --color-text: #e8f4ff;
+  --color-text-secondary: #9fb6d9;
+  --color-text-muted: #5f7396;
 
-  --color-primary: #6d8dff;
-  --color-primary-hover: #8aa5ff;
-  --color-primary-active: #5470e8;
-  --color-primary-soft: rgba(109, 141, 255, 0.12);
+  --color-primary: #2fd0ff;
+  --color-primary-hover: #63e0ff;
+  --color-primary-active: #18a9e6;
+  --color-primary-soft: rgba(47, 208, 255, 0.12);
 
-  --color-secondary: #a78bfa;
-  --color-secondary-soft: rgba(167, 139, 250, 0.12);
+  --color-secondary: #4d8dff;
+  --color-secondary-soft: rgba(77, 141, 255, 0.14);
 
-  --color-success: #3ddc97;
-  --color-success-soft: rgba(61, 220, 151, 0.12);
-  --color-warning: #f5c451;
-  --color-warning-soft: rgba(245, 196, 81, 0.12);
-  --color-error: #f77f7f;
-  --color-error-soft: rgba(247, 127, 127, 0.12);
+  --color-success: #2fe6a5;
+  --color-success-soft: rgba(47, 230, 165, 0.12);
+  --color-warning: #ffc25e;
+  --color-warning-soft: rgba(255, 194, 94, 0.12);
+  --color-error: #ff7a8f;
+  --color-error-soft: rgba(255, 122, 143, 0.12);
 
-  --gradient-brand: linear-gradient(120deg, #8aa5ff 0%, #a78bfa 55%, #7ad0f5 140%);
+  --gradient-brand: linear-gradient(120deg, #7ce8ff 0%, #3aa8ff 55%, #2f6bff 140%);
+
+  /* Referências "arc" (reator / brilho de energia) */
+  --color-arc: #7ce8ff;
+  --arc-glow: 0 0 18px rgba(56, 182, 255, 0.4);
+  --arc-glow-strong: 0 0 34px rgba(56, 208, 255, 0.55);
 
   /* ---------- Tipografia ---------- */
   --font-ui: "Segoe UI", system-ui, -apple-system, "Inter", Roboto, Arial, sans-serif;
@@ -68,10 +74,10 @@
   --radius-full: 999px;
 
   /* ---------- Sombras ---------- */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
-  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.3);
-  --shadow-lg: 0 14px 40px rgba(0, 0, 0, 0.46);
-  --focus-ring: 0 0 0 3px rgba(109, 141, 255, 0.3);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.38);
+  --shadow-lg: 0 14px 40px rgba(0, 0, 0, 0.5);
+  --focus-ring: 0 0 0 3px rgba(47, 208, 255, 0.3);
 
   /* ---------- Movimento ---------- */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
