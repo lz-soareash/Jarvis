@@ -106,14 +106,50 @@ class FakeModelsApiError:
         )
 
 
+class FakeModelsRetrying:
+    """Falha com 429 por `failures` chamadas; o resto responde normal."""
+
+    def __init__(self, failures=1):
+        self.failures = failures
+        self.calls = []
+
+    def generate_content(self, **kwargs):
+        self.calls.append(kwargs)
+        if len(self.calls) <= self.failures:
+            from google.genai.errors import ServerError
+
+            payload = {
+                "error": {
+                    "code": 429,
+                    "status": "RESOURCE_EXHAUSTED",
+                    "message": "Quota exceeded. Please retry in 0.05s.",
+                    "details": [
+                        {
+                            "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                            "retryDelay": "0.05s",
+                        }
+                    ],
+                }
+            }
+            error = ServerError(429, payload)
+            error.response_json = payload
+            raise error
+        return FakeResponse(
+            text="resposta após retry",
+            candidates=[FakeCandidate([FakePart(text="resposta após retry")])],
+        )
+
+
 class FakeClient:
     def __init__(self, models=None):
         self.models = models or FakeModels()
 
 
-def make_provider(api_key="test-key", model="gemini-test", models=None):
+def make_provider(api_key="test-key", model="gemini-test", models=None, max_retries=None):
     client = FakeClient(models=models)
-    provider = GeminiProvider(api_key=api_key, model=model, client_factory=lambda k: client)
+    provider = GeminiProvider(
+        api_key=api_key, model=model, client_factory=lambda k: client, max_retries=max_retries
+    )
     return provider, client
 
 
@@ -149,11 +185,26 @@ async def test_generate_raises_when_not_configured():
 
 
 async def test_generate_converts_api_error_to_provider_error():
-    provider, _ = make_provider(models=FakeModelsApiError())
+    provider, _ = make_provider(models=FakeModelsApiError(), max_retries=0)
     with pytest.raises(AIProviderError) as exc_info:
         await provider.generate([AIMessage(role="user", content="oi")])
     assert "503" in str(exc_info.value)
     assert "high demand" in str(exc_info.value)
+
+
+async def test_generate_retries_on_quota_and_succeeds():
+    provider, client = make_provider(models=FakeModelsRetrying(failures=2), max_retries=5)
+    result = await provider.generate([AIMessage(role="user", content="oi")])
+    assert result.text == "resposta após retry"
+    assert len(client.models.calls) == 3
+
+
+async def test_generate_gives_up_after_max_retries():
+    provider, client = make_provider(models=FakeModelsRetrying(failures=99), max_retries=2)
+    with pytest.raises(AIProviderError) as exc_info:
+        await provider.generate([AIMessage(role="user", content="oi")])
+    assert "429" in str(exc_info.value)
+    assert len(client.models.calls) == 3
 
 
 async def test_analyze_uses_instruction_as_system():

@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import re
 from typing import AsyncIterator, Callable
 
 from app.core.config import settings
@@ -19,6 +20,22 @@ def _normalize_thought_signature(value):
     return str(value)
 
 
+def _parse_duration(value) -> float | None:
+    """Converte durações da API (`16.1s`, `500ms`, `2m`) em segundos."""
+    if not isinstance(value, str):
+        return None
+    match = re.fullmatch(r"([\d.]+)\s*(ms|s|m)?", value.strip().lower())
+    if not match:
+        return None
+    amount = float(match.group(1))
+    unit = match.group(2)
+    if unit == "ms":
+        return amount / 1000.0
+    if unit == "m":
+        return amount * 60.0
+    return amount
+
+
 class GeminiProvider(AIProvider):
     """Implementação concreta do Google Gemini via google-genai (SDK oficial).
 
@@ -33,11 +50,13 @@ class GeminiProvider(AIProvider):
         api_key: str | None = None,
         model: str | None = None,
         embed_model: str | None = None,
+        max_retries: int | None = None,
         client_factory: Callable[[str], object] | None = None,
     ):
         self._api_key = api_key if api_key is not None else (settings.gemini_api_key or "")
         self.model = model or settings.gemini_model
         self.embed_model = embed_model or settings.gemini_embed_model
+        self.max_retries = max_retries if max_retries is not None else settings.ai_max_retries
         self._client_factory = client_factory or self._default_client
         self._client = None
 
@@ -177,6 +196,48 @@ class GeminiProvider(AIProvider):
             return f"Erro da API Gemini {prefix}{message}"
         return f"{type(exc).__name__}: {exc}"
 
+    @staticmethod
+    def _retry_wait(exc: Exception) -> float | None:
+        """Atraso que a API pede antes de uma nova tentativa (retryDelay/Retry-After)."""
+        payload = getattr(exc, "response_json", None)
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if isinstance(error, dict):
+            for detail in error.get("details") or []:
+                if isinstance(detail, dict):
+                    parsed = _parse_duration(detail.get("retryDelay"))
+                    if parsed is not None:
+                        return parsed
+        response = getattr(exc, "response", None)
+        headers = getattr(response, "headers", None)
+        if headers is not None and hasattr(headers, "get") and headers.get("retry-after"):
+            try:
+                return float(headers["retry-after"])
+            except (TypeError, ValueError):
+                pass
+        match = re.search(r"retry in ([\d.]+)\s*s", str(exc), re.IGNORECASE)
+        if match:
+            return float(match.group(1))
+        return _parse_duration(str(exc))
+
+    async def _call_with_retry(self, call, retryable_codes=(429, 502, 503, 504)) -> object:
+        attempts = 0
+        while True:
+            try:
+                return await call()
+            except Exception as exc:  # noqa: BLE001 — decide entre aguardar ou propagar
+                from google.genai.errors import APIError as GenAIAPIError
+
+                wait = self._retry_wait(exc)
+                if wait is None:
+                    code = getattr(exc, "code", None) if isinstance(exc, GenAIAPIError) else None
+                    if code not in retryable_codes:
+                        raise AIProviderError(self._api_error_message(exc)) from exc
+                    wait = min(1.5 * (2 ** attempts), 20.0)
+                if attempts >= self.max_retries:
+                    raise AIProviderError(self._api_error_message(exc)) from exc
+                await asyncio.sleep(min(max(wait, 0.05), 30.0))
+                attempts += 1
+
     async def generate(
         self,
         messages: list[AIMessage],
@@ -191,15 +252,17 @@ class GeminiProvider(AIProvider):
 
         client = self._get_client()
         config = self._build_config(system, temperature, max_tokens, tools)
-        try:
-            response = await asyncio.to_thread(
+        contents = self._contents(messages)
+
+        async def _call():
+            return await asyncio.to_thread(
                 client.models.generate_content,
                 model=self.model,
-                contents=self._contents(messages),
+                contents=contents,
                 config=config,
             )
-        except Exception as exc:  # noqa: BLE001 — erros da API viram AIProviderError legível
-            raise AIProviderError(self._api_error_message(exc)) from exc
+
+        response = await self._call_with_retry(_call)
         text, tool_calls = self._parse(response)
         return AIResponse(
             text=text,

@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     # IA (Google Gemini) — segredo mantido fora de logs/repr.
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.6-flash"
+    ai_max_retries: int = 3  # tentativas extra em 429/5xx (respeita o retryDelay da API)
 
     # Persistência — Local-first (SQLite); Postgres é troca futura de URL.
     database_url: str = "sqlite:///./data/jarvis.db"
