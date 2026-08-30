@@ -20,6 +20,8 @@ const els = {
   sendBtn: document.getElementById("send-btn"),
   voiceBtn: document.getElementById("voice-btn"),
   ttsToggle: document.getElementById("tts-toggle"),
+  wakeBtn: document.getElementById("wake-btn"),
+  composerHint: document.getElementById("composer-hint"),
   agentState: document.getElementById("agent-state"),
   dbState: document.getElementById("db-state"),
   aiState: document.getElementById("ai-state"),
@@ -105,38 +107,43 @@ function formatTime(iso) {
   return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
 
-/* ---------- voz (Fase 6) — Web Speech API, 100% no navegador ---------- */
+/* ---------- voz (Fase 6/6b) — Web Speech API, 100% no navegador ----------
+   Modo manual: botão de microfone preenche o campo (envio manual).
+   Mãos-livres: escuta contínua por "Jarvis" como palavra-chave; ao ouvir,
+   captura o comando seguinte e envia sozinho. */
 const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
 const voiceSupported = Boolean(SpeechRecognitionAPI);
 const ttsSupported = typeof window.speechSynthesis !== "undefined";
+const WAKE_REARM_DELAY = 450;
+const CAPTURE_PAUSE = 300;
+const SESSION_SWITCH_GUARD = 350;
 
 let recognition = null;
 let listening = false;
+let manualDictation = false;
+let handsFree = false;
+let commanding = false;
+let sessionStartTs = 0;
+let wakeTimer = null;
+let submitTimer = null;
 let voiceEnabled = localStorage.getItem("jarvis.tts") === "1";
 
-function initVoice() {
-  if (!voiceSupported) return;
-  const rec = new SpeechRecognitionAPI();
-  rec.lang = navigator.language || "pt-BR";
-  rec.interimResults = true;
-  rec.continuous = true;
-  rec.onresult = (e) => {
-    let final = "";
-    for (let i = e.resultIndex; i < e.results.length; i += 1) {
-      if (e.results[i].isFinal) final += e.results[i][0].transcript;
-    }
-    if (final) {
-      els.input.value = final.trim();
-      els.input.scrollLeft = els.input.scrollWidth;
-    }
-  };
-  rec.onend = () => setListeningVisual(false);
-  rec.onerror = () => setListeningVisual(false);
-  recognition = rec;
+const hintDefault = els.composerHint ? els.composerHint.textContent : "";
+
+function clearTimer(t) {
+  if (t) clearTimeout(t);
+  return null;
+}
+
+function wakeKeyword(text) {
+  const words = text.trim().split(/\s+/);
+  const idx = words.findIndex((w) => w.toLowerCase().replace(/[.,!;?]+$/g, "") === "jarvis");
+  return idx === -1 ? null : idx;
 }
 
 function setListeningVisual(on) {
   listening = on;
+  if (!els.voiceBtn) return;
   els.voiceBtn.classList.toggle("is-listening", on);
   els.voiceBtn.setAttribute("aria-pressed", String(on));
   els.voiceBtn.setAttribute("aria-label", on ? "Parar de falar" : "Falar com o Jarvis");
@@ -144,22 +151,226 @@ function setListeningVisual(on) {
   els.inputForm.classList.toggle("is-listening", on);
 }
 
+function setWakeVisual(mode) {
+  if (!els.wakeBtn) return;
+  const on = mode !== "off";
+  els.wakeBtn.classList.toggle("is-on", on);
+  els.wakeBtn.classList.toggle("is-speaking", mode === "speaking");
+  els.wakeBtn.setAttribute("aria-pressed", String(on));
+  els.wakeBtn.title =
+    mode === "speaking"
+      ? "Falando ao Jarvis..."
+      : mode === "armed"
+        ? "Ouvindo: diga olá Jarvis..."
+        : "Mãos-livres (diga olá Jarvis)";
+  els.inputForm.classList.toggle("is-listening", mode === "speaking");
+  if (els.composerHint) {
+    els.composerHint.classList.toggle("is-armed", mode === "armed");
+    els.composerHint.classList.toggle("is-speaking-v", mode === "speaking");
+    els.composerHint.textContent =
+      mode === "armed"
+        ? "Ouvindo: diga olá Jarvis..."
+        : mode === "speaking"
+          ? "Fale seu comando..."
+          : hintDefault;
+  }
+}
+
+function buildRecognizer() {
+  const rec = new SpeechRecognitionAPI();
+  rec.lang = navigator.language || "pt-BR";
+  rec.interimResults = true;
+  rec.continuous = true;
+
+  rec.onresult = (e) => {
+    let final = "";
+    let interim = "";
+    for (let i = e.resultIndex; i < e.results.length; i += 1) {
+      const r = e.results[i];
+      if (r.isFinal) final += r[0].transcript;
+      else interim += r[0].transcript;
+    }
+    const text = (final || interim).trim();
+    if (!text) return;
+
+    if (manualDictation) {
+      els.input.value = text;
+      els.input.scrollLeft = els.input.scrollWidth;
+      return;
+    }
+    if (!handsFree) return;
+
+    if (commanding) {
+      els.input.value = text;
+      els.input.scrollLeft = els.input.scrollWidth;
+      scheduleCommandSubmit();
+      return;
+    }
+
+    const k = wakeKeyword(final);
+    if (k === null) return;
+    const pieces = final.trim().split(/\s+/);
+    const command = pieces.slice(k + 1).join(" ").trim();
+    commanding = true;
+    setWakeVisual("speaking");
+    if (command) {
+      els.input.value = command;
+      els.input.scrollLeft = els.input.scrollWidth;
+      scheduleCommandSubmit();
+    } else {
+      startCaptureSession();
+    }
+  };
+
+  rec.onend = () => {
+    if (Date.now() - sessionStartTs < SESSION_SWITCH_GUARD) return;
+    if (manualDictation) {
+      manualDictation = false;
+      setListeningVisual(false);
+      if (handsFree) scheduleWakeRearm();
+      return;
+    }
+    if (commanding) {
+      commanding = false;
+      scheduleCommandSubmit();
+      return;
+    }
+    if (handsFree) scheduleWakeRearm();
+  };
+
+  rec.onerror = (e) => {
+    if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+      disableHandsFree(true);
+      return;
+    }
+    if (e.error === "no-speech") {
+      if (commanding) {
+        commanding = false;
+        scheduleCommandSubmit();
+        return;
+      }
+      if (handsFree) scheduleWakeRearm();
+      return;
+    }
+    if (handsFree && !commanding) scheduleWakeRearm();
+  };
+
+  return rec;
+}
+
+function startSession(cfg) {
+  try {
+    if (recognition) recognition.stop();
+  } catch (_) {}
+  recognition = buildRecognizer();
+  recognition.continuous = !!cfg.continuous;
+  recognition.interimResults = !!cfg.interim;
+  sessionStartTs = Date.now();
+  try {
+    recognition.start();
+  } catch (_) {
+    disableHandsFree(true);
+  }
+}
+
+function scheduleCommandSubmit() {
+  submitTimer = clearTimer(submitTimer);
+  submitTimer = setTimeout(() => {
+    submitTimer = null;
+    const text = els.input.value.trim();
+    if (text) {
+      if (streaming) return;
+      sendMessage();
+      return;
+    }
+    if (handsFree) scheduleWakeRearm();
+  }, CAPTURE_PAUSE);
+}
+
+function scheduleWakeRearm() {
+  wakeTimer = clearTimer(wakeTimer);
+  wakeTimer = setTimeout(() => {
+    wakeTimer = null;
+    if (!handsFree || manualDictation || commanding) return;
+    if (streaming) {
+      scheduleWakeRearm();
+      return;
+    }
+    setWakeVisual("armed");
+    startSession({ continuous: true, interim: false });
+  }, WAKE_REARM_DELAY);
+}
+
+function startCaptureSession() {
+  startSession({ continuous: false, interim: true });
+}
+
+function setHandsFreePersist() {
+  localStorage.setItem("jarvis.handsfree", handsFree ? "1" : "0");
+}
+
+function disableHandsFree(permissionDenied) {
+  handsFree = false;
+  commanding = false;
+  wakeTimer = clearTimer(wakeTimer);
+  submitTimer = clearTimer(submitTimer);
+  try {
+    if (recognition) recognition.stop();
+  } catch (_) {}
+  setWakeVisual("off");
+  setListeningVisual(false);
+  if (!permissionDenied) setHandsFreePersist();
+  else console.warn("Microfone sem permissão — modo mãos-livres desativado.");
+}
+
+function toggleHandsFree() {
+  if (!voiceSupported) return;
+  if (handsFree) {
+    disableHandsFree(false);
+    return;
+  }
+  if (streaming) return;
+  handsFree = true;
+  manualDictation = false;
+  commanding = false;
+  submitTimer = clearTimer(submitTimer);
+  els.input.value = "";
+  setListeningVisual(false);
+  setWakeVisual("armed");
+  setHandsFreePersist();
+  startSession({ continuous: true, interim: false });
+}
+
 function toggleVoice() {
   if (!voiceSupported) return;
-  if (!recognition) initVoice();
-  if (listening) {
-    recognition.stop();
+  if (manualDictation) {
+    manualDictation = false;
+    try {
+      if (recognition) recognition.stop();
+    } catch (_) {}
     setListeningVisual(false);
+    if (handsFree) scheduleWakeRearm();
     return;
   }
   if (streaming) return;
   els.input.value = "";
+  manualDictation = true;
+  wakeTimer = clearTimer(wakeTimer);
+  submitTimer = clearTimer(submitTimer);
+  commanding = false;
+  setListeningVisual(true);
+  startSession({ continuous: true, interim: true });
+}
+
+function stopVoiceTransients() {
+  manualDictation = false;
+  commanding = false;
+  wakeTimer = clearTimer(wakeTimer);
+  submitTimer = clearTimer(submitTimer);
   try {
-    recognition.start();
-    setListeningVisual(true);
-  } catch (_) {
-    setListeningVisual(false);
-  }
+    if (recognition) recognition.stop();
+  } catch (_) {}
+  setListeningVisual(false);
 }
 
 function speak(text) {
@@ -459,10 +670,7 @@ async function sendMessage() {
   const content = els.input.value.trim();
   if (!content || streaming || !currentSessionId) return;
 
-  if (listening) {
-    recognition.stop();
-    setListeningVisual(false);
-  }
+  stopVoiceTransients();
   if (ttsSupported && voiceEnabled) window.speechSynthesis.cancel();
 
   els.input.value = "";
@@ -510,6 +718,7 @@ async function sendMessage() {
   } finally {
     setTyping(false);
     loadSessions();
+    if (handsFree) scheduleWakeRearm();
   }
 }
 
@@ -522,15 +731,17 @@ function init() {
   els.newSession.addEventListener("click", createSession);
   els.menuToggle.addEventListener("click", () => toggleDrawer());
   els.sessionsBackdrop.addEventListener("click", () => toggleDrawer(false));
-  els.voiceBtn.addEventListener("click", toggleVoice);
-  els.ttsToggle.addEventListener("click", toggleTts);
+  if (els.voiceBtn) els.voiceBtn.addEventListener("click", toggleVoice);
+  if (els.ttsToggle) els.ttsToggle.addEventListener("click", toggleTts);
+  if (els.wakeBtn) els.wakeBtn.addEventListener("click", toggleHandsFree);
 
-  if (voiceSupported) els.voiceBtn.hidden = false;
-  if (ttsSupported) {
+  if (voiceSupported && els.voiceBtn) els.voiceBtn.hidden = false;
+  if (ttsSupported && els.ttsToggle) {
     els.ttsToggle.hidden = false;
     syncTtsToggle();
   }
-  initVoice();
+  if (voiceSupported && els.wakeBtn) els.wakeBtn.hidden = false;
+  if (localStorage.getItem("jarvis.handsfree") === "1") toggleHandsFree();
   if ("speechSynthesis" in window) window.speechSynthesis.getVoices(); // pré-carrega vozes (Chrome)
 
   document.querySelectorAll(".suggestion").forEach((chip) => {

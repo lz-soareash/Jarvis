@@ -128,6 +128,8 @@ curl http://127.0.0.1:8100/api/permissions
 Nenhuma dependência nem mudança no servidor. No frontend (`http://127.0.0.1:8100/`):
 
 - **Microfone (ditar):** o botão aparece no composer em Chromium/Safari (Web Speech API).
+- **Mãos-livres (diga "Olá Jarvis"):** o botão de barras de energia liga a escuta contínua;
+  ao ouvir "Jarvis" o JARVIS captura o comando seguinte e envia sozinho.
 - **Alto-falante (ler respostas):** o botão de voz liga/desliga a leitura em voz alta das
   respostas do JARVIS; preferência salva em `localStorage`.
 - Navegadores sem suporte simplesmente não exibem os botões.

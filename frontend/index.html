@@ -110,6 +110,17 @@
                 <path d="M18.5 5.5a9 9 0 0 1 0 13"/>
               </svg>
             </button>
+            <button class="wake-toggle" id="wake-btn" type="button"
+                aria-label="Modo mãos-livres (diga olá Jarvis)" aria-pressed="false" title="Mãos-livres" hidden>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 12h2v2H4z"/>
+                <path d="M8 8h2v8H8z"/>
+                <path d="M12 4h2v16h-2z"/>
+                <path d="M16 8h2v8h-2z"/>
+                <path d="M20 12h2v2h-2z"/>
+              </svg>
+            </button>
             <button class="btn btn-primary btn-send" id="send-btn" type="submit" aria-label="Enviar mensagem">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -118,7 +129,7 @@
               Enviar
             </button>
           </div>
-          <p class="composer-hint">
+          <p class="composer-hint" id="composer-hint">
             O JARVIS pode consultar o sistema e executar ações reais com sua aprovação.
           </p>
         </form>

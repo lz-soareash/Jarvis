@@ -309,6 +309,73 @@
   box-shadow: var(--arc-glow);
 }
 
+.wake-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  flex: none;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
+}
+
+.wake-toggle:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+  background: var(--color-surface-2);
+}
+
+.wake-toggle.is-on {
+  color: var(--color-arc);
+  border-color: rgba(47, 208, 255, 0.45);
+  background: var(--color-primary-soft);
+  box-shadow: var(--arc-glow);
+}
+
+.wake-toggle.is-on::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(56, 208, 255, 0.5);
+  animation: voice-pulse 2s var(--ease-out) infinite;
+}
+
+.wake-toggle.is-on::after {
+  content: "";
+  position: absolute;
+  inset: -12px;
+  border-radius: var(--radius-full);
+  border: 1px dashed rgba(56, 208, 255, 0.28);
+  animation: arc-rotate 10s linear infinite;
+}
+
+.wake-toggle.is-speaking {
+  color: #04101c;
+  background: var(--color-arc);
+  border-color: var(--color-arc);
+  box-shadow: 0 0 0 3px rgba(56, 208, 255, 0.25), var(--arc-glow-strong);
+}
+
+.composer-hint.is-armed {
+  color: var(--color-arc);
+  text-shadow: 0 0 12px rgba(56, 208, 255, 0.5);
+}
+
+.composer-hint.is-speaking-v {
+  color: var(--color-arc);
+  text-shadow: 0 0 12px rgba(56, 208, 255, 0.7);
+}
+
 /* ---------------- Empty state (arc-reactor) ---------------- */
 .empty {
   display: flex;

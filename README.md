@@ -118,6 +118,10 @@ Controle por voz do navegador — **100% na Web Speech API** (nenhuma dependênc
 - **TTS (ler respostas):** botão de alto-falante liga/desliga a leitura das respostas do JARVIS
   em voz alta (voz `pt` preferida, velocidade/pitch calibrados). O estado fica em `localStorage`
   (`jarvis.tts`) e é reaplicado sozinho a cada sessão.
+- **Mãos-livres (palavra de ativação):** o botão de barras de energia ativa a escuta contínua.
+  Ao ouvir o comando "Jarvis" (ex.: "Olá Jarvis"), o JARVIS captura o que vier em seguida e
+  envia sozinho. A palavra pode vir junto (ex.: "Jarvis, que horas são?") ou separada. Fica em
+  `localStorage` (`jarvis.handsfree`) e se rearma sozinho após cada resposta.
 - Privacidade: o áudio nunca sai do seu navegador (o processamento local do navegador envia as
   transcrições ao serviço de voz da própria engine — nenhum áudio passa pelo nosso backend).
 
