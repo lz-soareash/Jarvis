@@ -45,7 +45,7 @@ O `GeminiProvider` é a única implementação atual. O resto do sistema nunca d
 | Schemas | Pydantic v2 + pydantic-settings |
 | Persistência | SQLAlchemy 2.x + SQLite (migrável para PostgreSQL trocando a URL) |
 | IA | google-genai (Gemini) |
-| Frontend | HTML + CSS + JS Vanilla (PWA: manifest + service worker) |
+| Frontend | HTML + CSS + JS Vanilla (PWA: manifest + service worker) + Web Speech API (voz local) |
 | Testes | pytest (+ pytest-asyncio, TestClient) |
 
 Sem Docker/Redis/Celery nesta fase (não há necessidade real ainda).
@@ -108,6 +108,19 @@ O usuário decide com `POST /api/approvals/{id}/respond` (SSE) — a resposta fl
 real, aprovados executam e negados voltam ao modelo como recusa. Pedidos expiram em
 `APPROVAL_TTL_SECONDS` (10 min padrão). Tudo fica registrado no trilho `/api/audit`.
 
+## Voz (Fase 6)
+
+Controle por voz do navegador — **100% na Web Speech API** (nenhuma dependência ou backend):
+
+- **STT (ditar):** botão de microfone no composer (Chromium/Safari). Ao falar, a transcrição
+  preenche o campo; quando ativo, o campo ganha um anel pulsante de energia. Detecção de
+  recurso: o botão só aparece se o navegador tiver `SpeechRecognition`.
+- **TTS (ler respostas):** botão de alto-falante liga/desliga a leitura das respostas do JARVIS
+  em voz alta (voz `pt` preferida, velocidade/pitch calibrados). O estado fica em `localStorage`
+  (`jarvis.tts`) e é reaplicado sozinho a cada sessão.
+- Privacidade: o áudio nunca sai do seu navegador (o processamento local do navegador envia as
+  transcrições ao serviço de voz da própria engine — nenhum áudio passa pelo nosso backend).
+
 ## Endpoints
 
 | Rota | Descrição |
@@ -147,7 +160,8 @@ o chat de stream responde com o evento `error` e o endpoint comum com `503` — 
 ## Roadmap (resumo)
 
 0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·
-4. Permissions ✔ · 5. Computer ✔ · 6. Filesystem · 7. Developer · 8. Mobile/Devices/PWA ·
-9. Atlas · 10. Agent loop · 11. Web · 12. Voz · 13. Visão · 14. Proativo · 15. Remote · 16. V1.
+4. Permissions ✔ · 5. Computer ✔ · 6. Voz (STT/TTS no navegador) ✔ · 7. Filesystem · 8. Developer ·
+9. Mobile/Devices/PWA · 10. Atlas · 11. Agent loop · 12. Web · 13. Visão · 14. Proativo ·
+15. Remote · 16. V1.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

@@ -123,7 +123,16 @@ curl http://127.0.0.1:8100/api/permissions
 > `kill_process` só executa após aprovação explícita (nível 3, bloqueado por padrão). As rotas
 > `GET /api/system/*` não executam nada destrutivo.
 
-## 6. Executar os testes
+## 6. Recursos de voz (Fase 6 — só no navegador)
+
+Nenhuma dependência nem mudança no servidor. No frontend (`http://127.0.0.1:8100/`):
+
+- **Microfone (ditar):** o botão aparece no composer em Chromium/Safari (Web Speech API).
+- **Alto-falante (ler respostas):** o botão de voz liga/desliga a leitura em voz alta das
+  respostas do JARVIS; preferência salva em `localStorage`.
+- Navegadores sem suporte simplesmente não exibem os botões.
+
+## 7. Executar os testes
 
 ```bat
 cd backend
@@ -136,7 +145,7 @@ cd backend
   portanto **nunca** fazem chamadas reais à API nem tocam seu banco de dados real.
 - Config do pytest em `backend/pytest.ini` (`asyncio_mode=auto` para testes async).
 
-## 7. Estrutura do banco
+## 8. Estrutura do banco
 
 - SQLite criado automaticamente no caminho de `DATABASE_URL` (padrão `backend/data/jarvis.db`) no startup.
 - Fase 1: tabelas `sessions` e `messages` (chat). Fase 2: tabela `memories` (fato/preferência/nota/resumo)

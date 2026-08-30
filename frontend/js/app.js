@@ -18,6 +18,8 @@ const els = {
   inputForm: document.getElementById("input-form"),
   input: document.getElementById("input"),
   sendBtn: document.getElementById("send-btn"),
+  voiceBtn: document.getElementById("voice-btn"),
+  ttsToggle: document.getElementById("tts-toggle"),
   agentState: document.getElementById("agent-state"),
   dbState: document.getElementById("db-state"),
   aiState: document.getElementById("ai-state"),
@@ -101,6 +103,91 @@ function formatTime(iso) {
   const d = new Date(iso);
   if (isNaN(d)) return "";
   return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
+
+/* ---------- voz (Fase 6) — Web Speech API, 100% no navegador ---------- */
+const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+const voiceSupported = Boolean(SpeechRecognitionAPI);
+const ttsSupported = typeof window.speechSynthesis !== "undefined";
+
+let recognition = null;
+let listening = false;
+let voiceEnabled = localStorage.getItem("jarvis.tts") === "1";
+
+function initVoice() {
+  if (!voiceSupported) return;
+  const rec = new SpeechRecognitionAPI();
+  rec.lang = navigator.language || "pt-BR";
+  rec.interimResults = true;
+  rec.continuous = true;
+  rec.onresult = (e) => {
+    let final = "";
+    for (let i = e.resultIndex; i < e.results.length; i += 1) {
+      if (e.results[i].isFinal) final += e.results[i][0].transcript;
+    }
+    if (final) {
+      els.input.value = final.trim();
+      els.input.scrollLeft = els.input.scrollWidth;
+    }
+  };
+  rec.onend = () => setListeningVisual(false);
+  rec.onerror = () => setListeningVisual(false);
+  recognition = rec;
+}
+
+function setListeningVisual(on) {
+  listening = on;
+  els.voiceBtn.classList.toggle("is-listening", on);
+  els.voiceBtn.setAttribute("aria-pressed", String(on));
+  els.voiceBtn.setAttribute("aria-label", on ? "Parar de falar" : "Falar com o Jarvis");
+  els.voiceBtn.title = on ? "Parar" : "Falar";
+  els.inputForm.classList.toggle("is-listening", on);
+}
+
+function toggleVoice() {
+  if (!voiceSupported) return;
+  if (!recognition) initVoice();
+  if (listening) {
+    recognition.stop();
+    setListeningVisual(false);
+    return;
+  }
+  if (streaming) return;
+  els.input.value = "";
+  try {
+    recognition.start();
+    setListeningVisual(true);
+  } catch (_) {
+    setListeningVisual(false);
+  }
+}
+
+function speak(text) {
+  if (!ttsSupported || !voiceEnabled || !text) return;
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = navigator.language || "pt-BR";
+  const voice = window.speechSynthesis
+    .getVoices()
+    .find((v) => v.lang && v.lang.toLowerCase().startsWith("pt"));
+  if (voice) utter.voice = voice;
+  utter.rate = 1.04;
+  utter.pitch = 0.95;
+  window.speechSynthesis.speak(utter);
+}
+
+function syncTtsToggle() {
+  els.ttsToggle.classList.toggle("is-on", voiceEnabled);
+  els.ttsToggle.setAttribute("aria-pressed", String(voiceEnabled));
+  els.ttsToggle.title = voiceEnabled ? "Silenciar respostas" : "Ler respostas em voz alta";
+}
+
+function toggleTts() {
+  if (!ttsSupported) return;
+  voiceEnabled = !voiceEnabled;
+  localStorage.setItem("jarvis.tts", voiceEnabled ? "1" : "0");
+  if (!voiceEnabled) window.speechSynthesis.cancel();
+  syncTtsToggle();
 }
 
 /* ---------- status (health) ---------- */
@@ -357,6 +444,7 @@ function handleSSELine(line, bubbleEl) {
     span.className = "msg-meta";
     span.textContent = meta;
     bubbleEl.appendChild(span);
+    if (event.message?.content) speak(event.message.content);
   } else if (event.type === "error") {
     content.textContent = event.detail || "Erro ao gerar resposta.";
     bubbleEl.classList.add("msg-error");
@@ -370,6 +458,12 @@ function handleSSELine(line, bubbleEl) {
 async function sendMessage() {
   const content = els.input.value.trim();
   if (!content || streaming || !currentSessionId) return;
+
+  if (listening) {
+    recognition.stop();
+    setListeningVisual(false);
+  }
+  if (ttsSupported && voiceEnabled) window.speechSynthesis.cancel();
 
   els.input.value = "";
   appendMessageDOM("user", content, formatTime(new Date().toISOString()));
@@ -428,6 +522,16 @@ function init() {
   els.newSession.addEventListener("click", createSession);
   els.menuToggle.addEventListener("click", () => toggleDrawer());
   els.sessionsBackdrop.addEventListener("click", () => toggleDrawer(false));
+  els.voiceBtn.addEventListener("click", toggleVoice);
+  els.ttsToggle.addEventListener("click", toggleTts);
+
+  if (voiceSupported) els.voiceBtn.hidden = false;
+  if (ttsSupported) {
+    els.ttsToggle.hidden = false;
+    syncTtsToggle();
+  }
+  initVoice();
+  if ("speechSynthesis" in window) window.speechSynthesis.getVoices(); // pré-carrega vozes (Chrome)
 
   document.querySelectorAll(".suggestion").forEach((chip) => {
     chip.addEventListener("click", () => {

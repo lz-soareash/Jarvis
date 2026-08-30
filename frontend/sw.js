@@ -2,7 +2,7 @@
    JARVIS — Service Worker (PWA local-first)
    Cache-first para estáticos; rede sempre para a API.
    ============================================================= */
-const CACHE = "jarvis-v3";
+const CACHE = "jarvis-v4";
 const STATIC_ASSETS = [
   "./",
   "./index.html",
