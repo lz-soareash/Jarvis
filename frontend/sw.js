@@ -3,7 +3,7 @@
    Navegação sempre na rede (HTML sempre atual); estáticos cache-first;
    API sempre na rede.
    ============================================================= */
-const CACHE = "jarvis-v7";
+const CACHE = "jarvis-v8";
 const STATIC_ASSETS = [
   "./",
   "./index.html",
@@ -12,8 +12,8 @@ const STATIC_ASSETS = [
   "./css/tokens.css",
   "./css/base.css",
   "./css/layout.css",
-  "./css/components.css",
-  "./js/app.js",
+  "./css/components.css?v=8",
+  "./js/app.js?v=8",
 ];
 
 self.addEventListener("install", (event) => {
