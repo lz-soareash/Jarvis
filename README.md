@@ -76,7 +76,9 @@ backend/
 O modelo **propõe** chamadas de ferramenta (declaradas no registro); o **Core decide e executa**.
 Nunca executa chamadas inventadas — só as registradas. Habilite o loop no chat com
 `"tools": true` (retorna SSE). Ferramentas embutidas: `get_current_time`, `get_system_info`,
-`store_memory`, `recall_memory`, `get_system_stats`, `list_processes`, `open_app`, `kill_process`.
+`store_memory`, `recall_memory`, `get_system_stats`, `list_processes`, `open_app`, `kill_process`
+(Fase 3/5), `list_dir`/`read_file`/`write_file`/`make_dir`/`delete_path` (Fase 7) e
+`dev_list_tools`/`dev_get_tool_schema`/`dev_get_config`/`dev_diagnostics` (Fase 8).
 
 ## Computer (Fase 5)
 
@@ -118,6 +120,23 @@ permitido. Ferramentas (em `app/tools/filesystem.py`) por nível de permissão:
 - `list_dir` / `read_file` — **nível 0** (somente leitura, automáticas).
 - `write_file` / `make_dir` — **nível 2** (exigem aprovação).
 - `delete_path` — **nível 3** (bloqueado por padrão, só com aprovação explícita).
+
+## Developer Tools (Fase 8)
+
+Ferramentas internas de **desenvolvimento e inspeção** via Tool Engine — somente operações
+**predefinidas** pelo próprio Core, sem execução arbitrária:
+
+- `dev_list_tools` (nível 0) — catálogo das ferramentas registradas, com nível efetivo, risco e
+  flags de confirmação/bloqueio (reflete overrides persistidos).
+- `dev_get_tool_schema` (nível 0) — inspeciona o schema de parâmetros de uma ferramenta.
+- `dev_get_config` (nível 1, risco médio) — configuração de runtime, com **segredos sempre
+  mascarados** (chaves/tokens/senhas); aceita filtro por seção (ex.: `tts_`).
+- `dev_diagnostics` (nível 0) — versões (Python/sistema/app), contagens e estado interno
+  permitido (cache de TTS, modelo de IA configurado, estados do agente).
+
+**Separação arquitetural preservada:** o Core **nunca** executa shell, terminal, subprocessos ou
+código arbitrário nesta fase (regra assegurada por teste). A execução no sistema operacional
+continua sendo papel do futuro **Local Agent**, isolado do Core e com suas próprias políticas.
 
 ## Voz (Fase 6/6b)
 
@@ -202,7 +221,7 @@ o chat de stream responde com o evento `error` e o endpoint comum com `503` — 
 
 0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·
 4. Permissions ✔ · 5. Computer ✔ · 6. Voz (STT/TTS no navegador) ✔ · 6b. Voz (UX de fala: fila,
-sanitização, provedores, SPEAKING) ✔ · 7. Filesystem ✔ · 8. Developer ·
+sanitização, provedores, SPEAKING) ✔ · 7. Filesystem ✔ · 8. Developer ✔ ·
 9. Mobile/Devices/PWA · 10. Atlas · 11. Agent loop · 12. Web · 13. Visão · 14. Proativo ·
 15. Remote · 16. V1.
 
