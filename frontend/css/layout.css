@@ -120,7 +120,7 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  scroll-behavior: smooth;
 }
 
 /* ---------------- Composer ----------------

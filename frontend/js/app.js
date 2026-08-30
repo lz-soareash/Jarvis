@@ -75,7 +75,7 @@ function appendMessageDOM(role, content, meta = "") {
     msg.appendChild(time);
   }
   els.messages.appendChild(msg);
-  els.messages.scrollTop = els.messages.scrollHeight;
+  scrollChatToBottom();
   return msg;
 }
 
@@ -101,6 +101,10 @@ function setTyping(on) {
   }
 }
 
+function scrollChatToBottom() {
+  if (els.chatWindow) els.chatWindow.scrollTop = els.chatWindow.scrollHeight;
+}
+
 function formatTime(iso) {
   const d = new Date(iso);
   if (isNaN(d)) return "";
@@ -119,6 +123,8 @@ const CAPTURE_PAUSE = 300;
 const SESSION_SWITCH_GUARD = 350;
 
 let recognition = null;
+let recActive = false;
+let pendingStart = null;
 let listening = false;
 let manualDictation = false;
 let handsFree = false;
@@ -126,9 +132,35 @@ let commanding = false;
 let sessionStartTs = 0;
 let wakeTimer = null;
 let submitTimer = null;
+let micHintTimer = null;
 let voiceEnabled = localStorage.getItem("jarvis.tts") === "1";
 
 const hintDefault = els.composerHint ? els.composerHint.textContent : "";
+
+function showMicHint(msg) {
+  if (!els.composerHint) return;
+  els.composerHint.classList.add("is-err");
+  els.composerHint.textContent = msg;
+  clearTimer(micHintTimer);
+  micHintTimer = setTimeout(() => {
+    micHintTimer = null;
+    els.composerHint.classList.remove("is-err");
+    els.composerHint.textContent = hintDefault;
+  }, 9000);
+}
+
+function handleMicBlocked() {
+  recActive = false;
+  pendingStart = null;
+  handsFree = false;
+  commanding = false;
+  setWakeVisual("off");
+  setListeningVisual(false);
+  showMicHint(
+    "Microfone bloqueado: habilitar em Privacidade > Microfone (Windows) e no site do navegador."
+  );
+  console.warn("[voz] permissão de microfone negada");
+}
 
 function clearTimer(t) {
   if (t) clearTimeout(t);
@@ -165,6 +197,8 @@ function setWakeVisual(mode) {
         : "Mãos-livres (diga olá Jarvis)";
   els.inputForm.classList.toggle("is-listening", mode === "speaking");
   if (els.composerHint) {
+    clearTimer(micHintTimer);
+    els.composerHint.classList.remove("is-err");
     els.composerHint.classList.toggle("is-armed", mode === "armed");
     els.composerHint.classList.toggle("is-speaking-v", mode === "speaking");
     els.composerHint.textContent =
@@ -178,7 +212,8 @@ function setWakeVisual(mode) {
 
 function buildRecognizer() {
   const rec = new SpeechRecognitionAPI();
-  rec.lang = navigator.language || "pt-BR";
+  const navLang = (navigator.language || "pt-BR").toLowerCase();
+  rec.lang = navLang.startsWith("pt") || navLang.startsWith("en") ? navigator.language : "pt-BR";
   rec.interimResults = true;
   rec.continuous = true;
 
@@ -223,6 +258,13 @@ function buildRecognizer() {
   };
 
   rec.onend = () => {
+    recActive = false;
+    if (pendingStart) {
+      const cfg = pendingStart;
+      pendingStart = null;
+      beginSession(cfg);
+      return;
+    }
     if (Date.now() - sessionStartTs < SESSION_SWITCH_GUARD) return;
     if (manualDictation) {
       manualDictation = false;
@@ -239,11 +281,13 @@ function buildRecognizer() {
   };
 
   rec.onerror = (e) => {
-    if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-      disableHandsFree(true);
+    const err = e.error || "";
+    recActive = false;
+    if (err === "not-allowed" || err === "service-not-allowed") {
+      handleMicBlocked();
       return;
     }
-    if (e.error === "no-speech") {
+    if (err === "no-speech") {
       if (commanding) {
         commanding = false;
         scheduleCommandSubmit();
@@ -252,25 +296,43 @@ function buildRecognizer() {
       if (handsFree) scheduleWakeRearm();
       return;
     }
+    if (err === "language-not-supported") {
+      showMicHint("Reconhecimento de voz indisponível para o idioma atual neste navegador.");
+      return;
+    }
+    if (err === "aborted") return; // cancelamento interno (troca de sessão)
+    console.warn("[voz] erro de reconhecimento:", err);
     if (handsFree && !commanding) scheduleWakeRearm();
   };
 
   return rec;
 }
 
-function startSession(cfg) {
-  try {
-    if (recognition) recognition.stop();
-  } catch (_) {}
+function beginSession(cfg) {
   recognition = buildRecognizer();
   recognition.continuous = !!cfg.continuous;
   recognition.interimResults = !!cfg.interim;
   sessionStartTs = Date.now();
   try {
     recognition.start();
+    recActive = true;
   } catch (_) {
-    disableHandsFree(true);
+    recActive = false;
+    handleMicBlocked();
   }
+}
+
+function startSession(cfg) {
+  if (recActive) {
+    // Chromium só permite um reconhecimento ativo por vez: encerra o atual e
+    // inicia o novo no onend (evita falha em cascata de stop→start imediato).
+    pendingStart = cfg;
+    try {
+      if (recognition) recognition.stop();
+    } catch (_) {}
+    return;
+  }
+  beginSession(cfg);
 }
 
 function scheduleCommandSubmit() {
@@ -309,30 +371,32 @@ function setHandsFreePersist() {
   localStorage.setItem("jarvis.handsfree", handsFree ? "1" : "0");
 }
 
-function disableHandsFree(permissionDenied) {
+function disableHandsFree() {
   handsFree = false;
   commanding = false;
+  pendingStart = null;
   wakeTimer = clearTimer(wakeTimer);
   submitTimer = clearTimer(submitTimer);
   try {
-    if (recognition) recognition.stop();
+    if (recognition && recActive) recognition.stop();
   } catch (_) {}
   setWakeVisual("off");
   setListeningVisual(false);
-  if (!permissionDenied) setHandsFreePersist();
-  else console.warn("Microfone sem permissão — modo mãos-livres desativado.");
+  setHandsFreePersist();
 }
 
 function toggleHandsFree() {
   if (!voiceSupported) return;
   if (handsFree) {
-    disableHandsFree(false);
+    disableHandsFree();
     return;
   }
   if (streaming) return;
   handsFree = true;
   manualDictation = false;
   commanding = false;
+  pendingStart = null;
+  wakeTimer = clearTimer(wakeTimer);
   submitTimer = clearTimer(submitTimer);
   els.input.value = "";
   setListeningVisual(false);
@@ -345,8 +409,9 @@ function toggleVoice() {
   if (!voiceSupported) return;
   if (manualDictation) {
     manualDictation = false;
+    pendingStart = null;
     try {
-      if (recognition) recognition.stop();
+      if (recognition && recActive) recognition.stop();
     } catch (_) {}
     setListeningVisual(false);
     if (handsFree) scheduleWakeRearm();
@@ -355,6 +420,7 @@ function toggleVoice() {
   if (streaming) return;
   els.input.value = "";
   manualDictation = true;
+  pendingStart = null;
   wakeTimer = clearTimer(wakeTimer);
   submitTimer = clearTimer(submitTimer);
   commanding = false;
@@ -365,10 +431,11 @@ function toggleVoice() {
 function stopVoiceTransients() {
   manualDictation = false;
   commanding = false;
+  pendingStart = null;
   wakeTimer = clearTimer(wakeTimer);
   submitTimer = clearTimer(submitTimer);
   try {
-    if (recognition) recognition.stop();
+    if (recognition && recActive) recognition.stop();
   } catch (_) {}
   setListeningVisual(false);
 }
@@ -585,7 +652,7 @@ async function openSessionView(id) {
     for (const m of messages) {
       appendMessageDOM(m.role === "user" ? "user" : "assistant", m.content, formatTime(m.created_at));
     }
-    els.messages.scrollTop = els.messages.scrollHeight;
+    scrollChatToBottom();
   } catch (err) {
     console.error("Falha ao abrir sessão:", err);
   }
@@ -721,7 +788,7 @@ function handleSSELine(line, bubbleEl) {
   const content = ensureStreamContent(bubbleEl);
   if (event.type === "chunk") {
     content.textContent += event.text;
-    els.messages.scrollTop = els.messages.scrollHeight;
+    scrollChatToBottom();
   } else if (event.type === "done") {
     let meta = formatTime(event.message?.created_at || new Date().toISOString());
     const span = document.createElement("span");
@@ -734,7 +801,7 @@ function handleSSELine(line, bubbleEl) {
     bubbleEl.classList.add("msg-error");
   } else if (event.type === "approval_request") {
     renderApprovalCard(event.approval, bubbleEl);
-    els.messages.scrollTop = els.messages.scrollHeight;
+    scrollChatToBottom();
   }
   /* tool_start / tool_done / approval_pending: progresso implícito no card */
 }
@@ -797,6 +864,7 @@ async function sendMessage() {
 
 /* ---------- init ---------- */
 function init() {
+  console.info("[voz] STT:", voiceSupported, "| TTS local:", ttsSupported);
   els.inputForm.addEventListener("submit", (e) => {
     e.preventDefault();
     sendMessage();
