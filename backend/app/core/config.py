@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     # Permissions (Fase 4)
     approval_ttl_seconds: int = 600  # validade de um pedido de aprovação pendente
 
+    # Filesystem (Fase 7) — raiz-sandbox das ferramentas de arquivos
+    files_root: str = "~"
+
     log_level: str = "INFO"
 
 

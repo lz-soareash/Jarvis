@@ -45,6 +45,7 @@ _default_registry: ToolRegistry | None = None
 def build_default_registry() -> ToolRegistry:
     from .builtins import GetSystemInfo, GetTime, RecallMemory, StoreMemory
     from .computer import GetSystemStats, KillProcess, ListProcesses, OpenApp
+    from .filesystem import DeletePath, ListDir, MakeDir, ReadFile, WriteFile
 
     registry = ToolRegistry()
     registry.register(GetTime())
@@ -55,6 +56,11 @@ def build_default_registry() -> ToolRegistry:
     registry.register(ListProcesses())
     registry.register(OpenApp())
     registry.register(KillProcess())
+    registry.register(ListDir())
+    registry.register(ReadFile())
+    registry.register(WriteFile())
+    registry.register(MakeDir())
+    registry.register(DeletePath())
     return registry
 
 
