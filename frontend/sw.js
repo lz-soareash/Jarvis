@@ -3,7 +3,7 @@
    Navegação sempre na rede (HTML sempre atual); estáticos cache-first;
    API sempre na rede.
    ============================================================= */
-const CACHE = "jarvis-v6";
+const CACHE = "jarvis-v7";
 const STATIC_ASSETS = [
   "./",
   "./index.html",

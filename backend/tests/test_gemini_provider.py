@@ -272,6 +272,21 @@ async def test_provider_healthcheck_swallows_errors():
     status = await provider.health_check()
     assert status.status == "error"
     assert "network down" in (status.detail or "")
+    assert status.code is None
+
+
+async def test_healthcheck_marks_quota_error():
+    provider, client = make_provider()
+
+    def explode(**kwargs):
+        exc = RuntimeError("RESOURCE_EXHAUSTED: quota exceeded")
+        exc.code = 429
+        raise exc
+
+    client.models.generate_content = explode
+    status = await provider.health_check()
+    assert status.status == "error"
+    assert status.code == "quota"
 
 
 async def test_generate_proposes_tool_calls():

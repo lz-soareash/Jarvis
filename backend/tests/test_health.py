@@ -34,3 +34,11 @@ def test_health_ai_unconfigured_without_key(client):
     data = response.json()
     assert data["status"] == "unconfigured"
     assert data["provider"] == "gemini"
+
+
+def test_health_ai_is_cached(client):
+    # O resultado é cacheado (30s) para não queimar quota a cada recarga de página.
+    first = client.get("/health/ai")
+    second = client.get("/health/ai")
+    assert first.status_code == 200 and second.status_code == 200
+    assert first.json() == second.json()

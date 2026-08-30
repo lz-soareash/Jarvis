@@ -377,4 +377,12 @@ class GeminiProvider(AIProvider):
                 provider=self.name,
                 model=self.model,
                 detail=f"{type(exc).__name__}: {exc}",
+                code=self._quota_code(exc),
             )
+
+    @staticmethod
+    def _quota_code(exc: Exception) -> str | None:
+        code = getattr(exc, "code", None)
+        if code == 429 or "RESOURCE_EXHAUSTED" in str(exc) or "quota" in str(exc).lower():
+            return "quota"
+        return None

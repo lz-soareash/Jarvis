@@ -406,14 +406,19 @@ async function loadStatus() {
   try {
     const [health, ai] = await Promise.all([apiJSON("/health"), apiJSON("/health/ai")]);
     els.dbState.textContent = health.database === "ok" ? "OK" : "ERRO";
-    els.aiState.textContent =
-      ai.status === "ok" ? ai.provider.toUpperCase() : ai.status.toUpperCase();
+    els.statusDot.dataset.state = "online";
     if (ai.status === "ok") {
-      els.statusDot.dataset.state = "online";
+      els.aiState.textContent = ai.provider.toUpperCase();
       els.statusText.textContent = "ONLINE · IA PRONTA";
-    } else {
-      els.statusDot.dataset.state = "online";
+    } else if (ai.status === "unconfigured") {
+      els.aiState.textContent = "—";
       els.statusText.textContent = "ONLINE · SEM CHAVE IA";
+    } else if (ai.code === "quota") {
+      els.aiState.textContent = "QUOTA";
+      els.statusText.textContent = "ONLINE · QUOTA IA EXCEDIDA";
+    } else {
+      els.aiState.textContent = "ERRO";
+      els.statusText.textContent = "ONLINE · IA INDISPONÍVEL";
     }
   } catch (_) {
     els.statusDot.dataset.state = "offline";

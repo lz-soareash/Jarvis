@@ -42,3 +42,4 @@ class AIProviderStatus(APIModel):
     provider: str
     model: str | None = None
     detail: str | None = None
+    code: str | None = None

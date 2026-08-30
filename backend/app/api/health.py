@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
@@ -10,6 +11,9 @@ from app.schemas.health import AIHealthResponse, HealthResponse
 from .deps import get_ai_provider
 
 router = APIRouter(tags=["health"])
+
+_AI_CACHE_TTL = 30.0
+_ai_health_cache: tuple[float, AIHealthResponse] | None = None
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -30,5 +34,11 @@ async def health() -> HealthResponse:
 async def health_ai(
     provider: AIProvider = Depends(get_ai_provider),
 ) -> AIHealthResponse:
+    global _ai_health_cache
+    now = time.monotonic()
+    if _ai_health_cache is not None and now - _ai_health_cache[0] < _AI_CACHE_TTL:
+        return _ai_health_cache[1]
     result = await provider.health_check()
-    return AIHealthResponse(**result.model_dump())
+    response = AIHealthResponse(**result.model_dump())
+    _ai_health_cache = (now, response)
+    return response
