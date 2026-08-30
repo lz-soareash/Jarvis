@@ -1,8 +1,9 @@
 /* =============================================================
    JARVIS — Service Worker (PWA local-first)
-   Cache-first para estáticos; rede sempre para a API.
+   Navegação sempre na rede (HTML sempre atual); estáticos cache-first;
+   API sempre na rede.
    ============================================================= */
-const CACHE = "jarvis-v4";
+const CACHE = "jarvis-v5";
 const STATIC_ASSETS = [
   "./",
   "./index.html",
@@ -42,6 +43,24 @@ self.addEventListener("fetch", (event) => {
 
   // API: sempre rede (nunca servir dado de chat desatualizado).
   if (url.pathname.startsWith("/api")) return;
+
+  // Navegação: rede primeiro, cache como fallback (HTML sempre atualizado).
+  if (request.mode === "navigate") {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE).then((cache) => cache.put(request, clone));
+          }
+          return response;
+        })
+        .catch(() =>
+          caches.match(request).then((cached) => cached || caches.match("./index.html"))
+        )
+    );
+    return;
+  }
 
   event.respondWith(
     caches.match(request).then((cached) => {
