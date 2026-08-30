@@ -373,18 +373,87 @@ function stopVoiceTransients() {
   setListeningVisual(false);
 }
 
-function speak(text) {
-  if (!ttsSupported || !voiceEnabled || !text) return;
+/* Voz neural (backend /api/tts via Edge) com fallback para a voz local do navegador. */
+let neuralTts = false;
+let neuralTtsProbeDone = false;
+let currentAudio = null;
+
+async function probeNeural() {
+  if (neuralTtsProbeDone) return neuralTts;
+  neuralTtsProbeDone = true;
+  try {
+    const res = await fetch("/api/tts/ping");
+    neuralTts = res.ok;
+  } catch (_) {
+    neuralTts = false;
+  }
+  return neuralTts;
+}
+
+function stopSpeech() {
+  try {
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+  } catch (_) {}
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.src = "";
+    currentAudio = null;
+  }
+}
+
+function pickVoice() {
+  const voices = window.speechSynthesis.getVoices();
+  let pool = voices.filter((v) => v.lang && v.lang.toLowerCase().startsWith("pt"));
+  if (!pool.length) pool = voices;
+  if (!pool.length) return null;
+  const score = (v) => {
+    const name = (v.name || "").toLowerCase();
+    let s = 0;
+    if (name.includes("natural")) s += 10;
+    if (name.includes("neural")) s += 8;
+    if (name.includes("online")) s += 8;
+    if (name.includes("electra")) s -= 6;
+    if (name.includes("zira") || name.includes("david")) s -= 4;
+    return s;
+  };
+  return [...pool].sort((a, b) => score(b) - score(a))[0];
+}
+
+function speakLocal(text) {
+  if (!ttsSupported) return;
   window.speechSynthesis.cancel();
   const utter = new SpeechSynthesisUtterance(text);
-  utter.lang = navigator.language || "pt-BR";
-  const voice = window.speechSynthesis
-    .getVoices()
-    .find((v) => v.lang && v.lang.toLowerCase().startsWith("pt"));
+  utter.lang = (pickVoice()?.lang) || navigator.language || "pt-BR";
+  const voice = pickVoice();
   if (voice) utter.voice = voice;
-  utter.rate = 1.04;
-  utter.pitch = 0.95;
+  utter.rate = 1.0;
+  utter.pitch = 1.0;
   window.speechSynthesis.speak(utter);
+}
+
+function speakNeural(text) {
+  stopSpeech();
+  const audio = new Audio(`/api/tts?text=${encodeURIComponent(text)}`);
+  currentAudio = audio;
+  audio.onerror = () => {
+    if (currentAudio !== audio) return;
+    currentAudio = null;
+    speakLocal(text);
+  };
+  audio.play().catch(() => {
+    if (currentAudio !== audio) return;
+    currentAudio = null;
+    speakLocal(text);
+  });
+}
+
+async function speak(text) {
+  if (!voiceEnabled || !text) return;
+  if ((await probeNeural())) {
+    speakNeural(text);
+    return;
+  }
+  speakLocal(text);
 }
 
 function syncTtsToggle() {
@@ -394,10 +463,9 @@ function syncTtsToggle() {
 }
 
 function toggleTts() {
-  if (!ttsSupported) return;
   voiceEnabled = !voiceEnabled;
   localStorage.setItem("jarvis.tts", voiceEnabled ? "1" : "0");
-  if (!voiceEnabled) window.speechSynthesis.cancel();
+  if (!voiceEnabled) stopSpeech();
   syncTtsToggle();
 }
 
@@ -676,7 +744,7 @@ async function sendMessage() {
   if (!content || streaming || !currentSessionId) return;
 
   stopVoiceTransients();
-  if (ttsSupported && voiceEnabled) window.speechSynthesis.cancel();
+  if (voiceEnabled) stopSpeech();
 
   els.input.value = "";
   appendMessageDOM("user", content, formatTime(new Date().toISOString()));
@@ -741,7 +809,7 @@ function init() {
   if (els.wakeBtn) els.wakeBtn.addEventListener("click", toggleHandsFree);
 
   if (voiceSupported && els.voiceBtn) els.voiceBtn.hidden = false;
-  if (ttsSupported && els.ttsToggle) {
+  if (els.ttsToggle) {
     els.ttsToggle.hidden = false;
     syncTtsToggle();
   }

@@ -6,3 +6,4 @@ pydantic-settings>=2.4
 SQLAlchemy>=2.0.30
 python-dotenv>=1.0
 google-genai>=1.0
+edge-tts>=7.0

@@ -123,16 +123,19 @@ curl http://127.0.0.1:8100/api/permissions
 > `kill_process` só executa após aprovação explícita (nível 3, bloqueado por padrão). As rotas
 > `GET /api/system/*` não executam nada destrutivo.
 
-## 6. Recursos de voz (Fase 6 — só no navegador)
+## 6. Recursos de voz (Fase 6)
 
-Nenhuma dependência nem mudança no servidor. No frontend (`http://127.0.0.1:8100/`):
+No frontend (`http://127.0.0.1:8100/`):
 
 - **Microfone (ditar):** o botão aparece no composer em Chromium/Safari (Web Speech API).
 - **Mãos-livres (diga "Olá Jarvis"):** o botão de barras de energia liga a escuta contínua;
   ao ouvir "Jarvis" o JARVIS captura o comando seguinte e envia sozinho.
 - **Alto-falante (ler respostas):** o botão de voz liga/desliga a leitura em voz alta das
   respostas do JARVIS; preferência salva em `localStorage`.
-- Navegadores sem suporte simplesmente não exibem os botões.
+
+O TTS usa **vozes neurais da Microsoft Edge** (serviço `/api/tts`, dependência `edge-tts` incluída
+em `requirements.txt`). Ele precisa de acesso a internet; se falhar, o frontend volta sozinho para
+a voz local `pt` do navegador. A escuta (STT) continua 100% no navegador.
 
 ## 7. Executar os testes
 

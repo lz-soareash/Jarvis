@@ -110,20 +110,25 @@ real, aprovados executam e negados voltam ao modelo como recusa. Pedidos expiram
 
 ## Voz (Fase 6)
 
-Controle por voz do navegador — **100% na Web Speech API** (nenhuma dependência ou backend):
+Controle por voz do navegador — **STT 100% no navegador** (Web Speech API) e **TTS neural**
+(backend `/api/tts`, vozes Microsoft Edge) com **fallback automático** para a voz local do
+navegador quando o serviço externo estiver fora:
 
 - **STT (ditar):** botão de microfone no composer (Chromium/Safari). Ao falar, a transcrição
   preenche o campo; quando ativo, o campo ganha um anel pulsante de energia. Detecção de
   recurso: o botão só aparece se o navegador tiver `SpeechRecognition`.
 - **TTS (ler respostas):** botão de alto-falante liga/desliga a leitura das respostas do JARVIS
-  em voz alta (voz `pt` preferida, velocidade/pitch calibrados). O estado fica em `localStorage`
+  em voz alta. Voz neural `pt-BR-FranciscaNeural` (padrão, com alternativas em `pt-BR-Antonio`,
+  `pt-PT-Raquel` e `en-US-Aria`) gerada no backend via `edge-tts`; se o serviço externo falhar,
+  cai automaticamente para a voz local `pt` do navegador. O estado fica em `localStorage`
   (`jarvis.tts`) e é reaplicado sozinho a cada sessão.
 - **Mãos-livres (palavra de ativação):** o botão de barras de energia ativa a escuta contínua.
   Ao ouvir o comando "Jarvis" (ex.: "Olá Jarvis"), o JARVIS captura o que vier em seguida e
   envia sozinho. A palavra pode vir junto (ex.: "Jarvis, que horas são?") ou separada. Fica em
   `localStorage` (`jarvis.handsfree`) e se rearma sozinho após cada resposta.
-- Privacidade: o áudio nunca sai do seu navegador (o processamento local do navegador envia as
-  transcrições ao serviço de voz da própria engine — nenhum áudio passa pelo nosso backend).
+- Privacidade: a escuta (STT) acontece no seu navegador — as transcrições do microfone vão ao
+  serviço de voz da engine do navegador, nunca ao nosso backend. Apenas o **texto** da resposta
+  é enviado ao `/api/tts` para virar áudio (voz neural via Microsoft Edge).
 
 ## Endpoints
 
@@ -146,7 +151,9 @@ Controle por voz do navegador — **100% na Web Speech API** (nenhuma dependênc
 | `GET /api/system/stats` | CPU, memória, disco e boot (somente leitura) |
 | `GET /api/system/processes` | processos em execução (`limit` 1-200) |
 | `GET /health` | saúde da API + banco (SQLite) |
-| `GET /health/ai` | healthcheck do Gemini (`ok` / `unconfigured` / `error`) |
+| `GET /health/ai` | healthcheck do Gemini (`ok` / `unconfigured` / `error` + `code`) |
+| `GET /api/tts/ping` | disponibilidade da voz neural (Edge TTS) |
+| `GET /api/tts?text=...` | MP3 falado (`audio/mpeg`; `voice` opcional) |
 | `GET /docs` | OpenAPI (Swagger UI) |
 
 Envie `{"content": "...", "stream": true, "tools": true}` em
