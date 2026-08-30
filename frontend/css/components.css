@@ -105,6 +105,24 @@
   box-shadow: 0 0 0 3px var(--color-error-soft);
 }
 
+.dot.is-speaking {
+  background: #7cffa9;
+  box-shadow: 0 0 0 3px rgba(124, 255, 169, 0.28);
+  animation: speak-pulse 0.9s var(--ease-in-out) infinite;
+}
+
+@keyframes speak-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 6px rgba(124, 255, 169, 0.8), 0 0 0 3px rgba(124, 255, 169, 0.18);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 18px rgba(124, 255, 169, 1), 0 0 0 6px rgba(124, 255, 169, 0.3);
+    transform: scale(1.25);
+  }
+}
+
 @keyframes dot-pulse {
   0%,
   100% {

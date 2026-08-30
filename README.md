@@ -108,7 +108,18 @@ O usuário decide com `POST /api/approvals/{id}/respond` (SSE) — a resposta fl
 real, aprovados executam e negados voltam ao modelo como recusa. Pedidos expiram em
 `APPROVAL_TTL_SECONDS` (10 min padrão). Tudo fica registrado no trilho `/api/audit`.
 
-## Voz (Fase 6)
+## Filesystem (Fase 7)
+
+Acesso a arquivos em sandbox com root configurável (`config.files_root`, padrão `~`):
+o `SystemController` de filesystem (`app/filesystem/controller.py`) **rejeita** caminhos
+absolutos e escapes `..`, garantindo que o JARVIS nunca acesse arquivos fora do diretório
+permitido. Ferramentas (em `app/tools/filesystem.py`) por nível de permissão:
+
+- `list_dir` / `read_file` — **nível 0** (somente leitura, automáticas).
+- `write_file` / `make_dir` — **nível 2** (exigem aprovação).
+- `delete_path` — **nível 3** (bloqueado por padrão, só com aprovação explícita).
+
+## Voz (Fase 6/6b)
 
 Controle por voz do navegador — **STT 100% no navegador** (Web Speech API) e **TTS neural**
 (backend `/api/tts`, vozes Microsoft Edge) com **fallback automático** para a voz local do
@@ -118,17 +129,35 @@ navegador quando o serviço externo estiver fora:
   preenche o campo; quando ativo, o campo ganha um anel pulsante de energia. Detecção de
   recurso: o botão só aparece se o navegador tiver `SpeechRecognition`.
 - **TTS (ler respostas):** botão de alto-falante liga/desliga a leitura das respostas do JARVIS
-  em voz alta. Voz neural `pt-BR-FranciscaNeural` (padrão, com alternativas em `pt-BR-Antonio`,
-  `pt-PT-Raquel` e `en-US-Aria`) gerada no backend via `edge-tts`; se o serviço externo falhar,
-  cai automaticamente para a voz local `pt` do navegador. O estado fica em `localStorage`
-  (`jarvis.tts`) e é reaplicado sozinho a cada sessão.
+  em voz alta. Voz neural `pt-BR-AntonioNeural` (perfil **Antonio**, padrão — masculino, calmo,
+  natural; alternativas em `pt-BR`/`pt-PT`/`en-US`) gerada no backend via `edge-tts`; se o
+  serviço externo falhar, cai automaticamente para a voz local `pt` do navegador. O estado fica
+  em `localStorage` (`jarvis.tts`) e é reaplicado sozinho a cada sessão.
+- **SpeechManager (Fase 6b — UX de fala):** o frontend (`js/speech.js`) prepara cada resposta
+  pelo novo `GET /api/tts/speech`, que devolve o `speech_text` limpo e formatado **sem alterar o
+  texto visual** (`display_text`), sugerindo também os blocos de fala (`utterances`). Uma
+  **fila** reproduz um bloco por vez (nunca dois ao mesmo tempo), é **interruptível**
+  (enviar novo comando cancela a fala) e expõe o estado **SPEAKING** (ponto de status pulsa em
+  verde + hint "JARVIS falando..."). Falha de TTS **nunca** derruba o JARVIS (usa fallback e
+  segue silenciosamente).
+- **Sanitização + formatação de fala (backend `app/speech/`+`app/services/tts.py`):** o texto
+  falado remove/padroniza **Markdown** (`*`, `#`, `_`), **código** ("Encontrei um trecho de
+  código..."), **URLs** ("há um link disponível na tela"), **JSON/HTML** e **emojis**; converte
+  **números para palavras em pt-BR** (decimais, porcentagens, unidades/temperaturas), mantém
+  siglas legíveis e protege marcas/versões ("Windows 11", "Ryzen 5 5600G"). A classificação de
+  **contexto** (NORMAL/CASUAL/INFORMATION/CONFIRMATION/ALERT/ERROR/SYSTEM/URGENT) permite
+  modular a entonação. O `display_text` na tela permanece 100% intacto.
+- **Provedor de voz substituível:** `app/services/tts_providers/` (ABC `TTSProvider` + `edge.py`
+  + `registry.py`) e cache LRU de áudio (`config.tts_cache_size`). Troque a voz/provedor via
+  variáveis `TTS_*` em `config` (`tts_voice`, `tts_rate`, `tts_pitch`, `tts_volume`,
+  `tts_timeout`, `tts_fallback_attempts`).
 - **Mãos-livres (palavra de ativação):** o botão de barras de energia ativa a escuta contínua.
   Ao ouvir o comando "Jarvis" (ex.: "Olá Jarvis"), o JARVIS captura o que vier em seguida e
   envia sozinho. A palavra pode vir junto (ex.: "Jarvis, que horas são?") ou separada. Fica em
   `localStorage` (`jarvis.handsfree`) e se rearma sozinho após cada resposta.
 - Privacidade: a escuta (STT) acontece no seu navegador — as transcrições do microfone vão ao
   serviço de voz da engine do navegador, nunca ao nosso backend. Apenas o **texto** da resposta
-  é enviado ao `/api/tts` para virar áudio (voz neural via Microsoft Edge).
+  é enviado ao `/api/tts`/`/api/tts/speech` para virar áudio (voz neural via Microsoft Edge).
 
 ## Endpoints
 
@@ -153,6 +182,7 @@ navegador quando o serviço externo estiver fora:
 | `GET /health` | saúde da API + banco (SQLite) |
 | `GET /health/ai` | healthcheck do Gemini (`ok` / `unconfigured` / `error` + `code`) |
 | `GET /api/tts/ping` | disponibilidade da voz neural (Edge TTS) |
+| `GET /api/tts/speech?text=...&split=` | prepara fala: `display_text` (intacto) + `speech_text` + `context` + `utterances` |
 | `GET /api/tts?text=...` | MP3 falado (`audio/mpeg`; `voice` opcional) |
 | `GET /docs` | OpenAPI (Swagger UI) |
 
@@ -171,7 +201,8 @@ o chat de stream responde com o evento `error` e o endpoint comum com `503` — 
 ## Roadmap (resumo)
 
 0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·
-4. Permissions ✔ · 5. Computer ✔ · 6. Voz (STT/TTS no navegador) ✔ · 7. Filesystem · 8. Developer ·
+4. Permissions ✔ · 5. Computer ✔ · 6. Voz (STT/TTS no navegador) ✔ · 6b. Voz (UX de fala: fila,
+sanitização, provedores, SPEAKING) ✔ · 7. Filesystem ✔ · 8. Developer ·
 9. Mobile/Devices/PWA · 10. Atlas · 11. Agent loop · 12. Web · 13. Visão · 14. Proativo ·
 15. Remote · 16. V1.
 

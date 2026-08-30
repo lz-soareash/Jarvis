@@ -440,100 +440,57 @@ function stopVoiceTransients() {
   setListeningVisual(false);
 }
 
-/* Voz neural (backend /api/tts via Edge) com fallback para a voz local do navegador. */
-let neuralTts = false;
-let neuralTtsProbeDone = false;
-let currentAudio = null;
+/* ---------- Voz neural (Fase 6b): SpeechManager ----------
+   Fila de fala + interrupção + estado SPEAKING via módulo speech.js.
+   `voiceEnabled` é mantido como fonte de verdade para o toggle. */
+const speech = window.SpeechManager ? new window.SpeechManager() : null;
 
-async function probeNeural() {
-  if (neuralTtsProbeDone) return neuralTts;
-  neuralTtsProbeDone = true;
-  try {
-    const res = await fetch("/api/tts/ping");
-    neuralTts = res.ok;
-  } catch (_) {
-    neuralTts = false;
-  }
-  return neuralTts;
-}
-
-function stopSpeech() {
-  try {
-    if (window.speechSynthesis) window.speechSynthesis.cancel();
-  } catch (_) {}
-  if (currentAudio) {
-    currentAudio.pause();
-    currentAudio.src = "";
-    currentAudio = null;
-  }
-}
-
-function pickVoice() {
-  const voices = window.speechSynthesis.getVoices();
-  let pool = voices.filter((v) => v.lang && v.lang.toLowerCase().startsWith("pt"));
-  if (!pool.length) pool = voices;
-  if (!pool.length) return null;
-  const score = (v) => {
-    const name = (v.name || "").toLowerCase();
-    let s = 0;
-    if (name.includes("natural")) s += 10;
-    if (name.includes("neural")) s += 8;
-    if (name.includes("online")) s += 8;
-    if (name.includes("electra")) s -= 6;
-    if (name.includes("zira") || name.includes("david")) s -= 4;
-    return s;
-  };
-  return [...pool].sort((a, b) => score(b) - score(a))[0];
-}
-
-function speakLocal(text) {
-  if (!ttsSupported) return;
-  window.speechSynthesis.cancel();
-  const utter = new SpeechSynthesisUtterance(text);
-  utter.lang = (pickVoice()?.lang) || navigator.language || "pt-BR";
-  const voice = pickVoice();
-  if (voice) utter.voice = voice;
-  utter.rate = 1.0;
-  utter.pitch = 1.0;
-  window.speechSynthesis.speak(utter);
-}
-
-function speakNeural(text) {
-  stopSpeech();
-  const audio = new Audio(`/api/tts?text=${encodeURIComponent(text)}`);
-  currentAudio = audio;
-  audio.onerror = () => {
-    if (currentAudio !== audio) return;
-    currentAudio = null;
-    speakLocal(text);
-  };
-  audio.play().catch(() => {
-    if (currentAudio !== audio) return;
-    currentAudio = null;
-    speakLocal(text);
-  });
-}
-
-async function speak(text) {
-  if (!voiceEnabled || !text) return;
-  if ((await probeNeural())) {
-    speakNeural(text);
-    return;
-  }
-  speakLocal(text);
+function getVoiceEnabled() {
+  return speech ? speech.enabled : voiceEnabled;
 }
 
 function syncTtsToggle() {
-  els.ttsToggle.classList.toggle("is-on", voiceEnabled);
-  els.ttsToggle.setAttribute("aria-pressed", String(voiceEnabled));
-  els.ttsToggle.title = voiceEnabled ? "Silenciar respostas" : "Ler respostas em voz alta";
+  const on = getVoiceEnabled();
+  els.ttsToggle.classList.toggle("is-on", on);
+  els.ttsToggle.setAttribute("aria-pressed", String(on));
+  els.ttsToggle.title = on ? "Silenciar respostas" : "Ler respostas em voz alta";
 }
 
 function toggleTts() {
-  voiceEnabled = !voiceEnabled;
-  localStorage.setItem("jarvis.tts", voiceEnabled ? "1" : "0");
-  if (!voiceEnabled) stopSpeech();
+  if (speech) {
+    speech.setEnabled(!speech.enabled);
+  } else {
+    voiceEnabled = !voiceEnabled;
+    localStorage.setItem("jarvis.tts", voiceEnabled ? "1" : "0");
+    if (!voiceEnabled) stopSpeech();
+  }
   syncTtsToggle();
+}
+
+function stopSpeech() {
+  if (speech) speech.cancel();
+}
+
+async function speak(text) {
+  if (!getVoiceEnabled() || !text || !speech) return;
+  await speech.speak(text);
+}
+
+/* Indica visualmente quando o JARVIS está falando (estado SPEAKING). */
+function bindSpeakingState() {
+  if (!speech) return;
+  speech.onStateChange = (state) => {
+    els.statusDot.classList.toggle("is-speaking", state === "speaking");
+    if (els.composerHint) {
+      els.composerHint.classList.toggle("is-speaking-v", state === "speaking");
+      if (state === "speaking" && !manualDictation && !handsFree) {
+        els.composerHint.textContent = "JARVIS falando...";
+      } else if (state === "idle") {
+        els.composerHint.classList.remove("is-speaking-v");
+        els.composerHint.textContent = hintDefault;
+      }
+    }
+  };
 }
 
 /* ---------- status (health) ---------- */
@@ -811,7 +768,7 @@ async function sendMessage() {
   if (!content || streaming || !currentSessionId) return;
 
   stopVoiceTransients();
-  if (voiceEnabled) stopSpeech();
+  if (getVoiceEnabled()) stopSpeech();
 
   els.input.value = "";
   appendMessageDOM("user", content, formatTime(new Date().toISOString()));
@@ -884,6 +841,7 @@ function init() {
   if (voiceSupported && els.wakeBtn) els.wakeBtn.hidden = false;
   if (localStorage.getItem("jarvis.handsfree") === "1") toggleHandsFree();
   if ("speechSynthesis" in window) window.speechSynthesis.getVoices(); // pré-carrega vozes (Chrome)
+  bindSpeakingState();
 
   document.querySelectorAll(".suggestion").forEach((chip) => {
     chip.addEventListener("click", () => {

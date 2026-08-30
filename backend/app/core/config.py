@@ -51,6 +51,25 @@ class Settings(BaseSettings):
     # Filesystem (Fase 7) — raiz-sandbox das ferramentas de arquivos
     files_root: str = "~"
 
+    # Voz & Fala (Fase 6b) — configuração centralizada do TTS
+    # Provedor ativo (edge por padrão; outros via tts_providers).
+    tts_provider: str = "edge"
+    # Voz equivalente ao perfil "Antonio" (pt-BR masculino, natural).
+    tts_voice: str = "pt-BR-AntonioNeural"
+    tts_language: str = "pt-BR"
+    # Velocidade (taxa) em %; leve redução para tom calmo (padrão -5%).
+    tts_rate: str = "-5%"
+    # Tom (pitch) em Hz; levemente grave.
+    tts_pitch: str = "-2Hz"
+    # Volume em % (0 a +100). 100% = sem alteração relativa.
+    tts_volume: str = "+0%"
+    # Tempo limite (s) de conexão/leitura de um provedor externo.
+    tts_timeout: int = 20
+    # Cache de áudio: tamanho máximo de entradas em memória (0 desativa).
+    tts_cache_size: int = 128
+    # Fallback: se o provider principal falhar, tenta novamente N vezes.
+    tts_fallback_attempts: int = 1
+
     log_level: str = "INFO"
 
 
