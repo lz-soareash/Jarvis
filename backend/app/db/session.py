@@ -32,6 +32,26 @@ def init_db() -> None:
     from app import models  # noqa: F401 — registra tabelas no metadata
 
     Base.metadata.create_all(bind=engine)
+    _ensure_schema()
+
+def _ensure_schema() -> None:
+    """Migrações idempotentes de schema para bancos já existentes.
+
+    `create_all` não altera tabelas já criadas; colunas adicionadas depois da
+    primeira execução precisam de um ALTER TABLE manual. Vamos apenas
+    adicionar colunas quando estiverem ausentes (SQLite PRAGMA + ALTER).
+    """
+    try:
+        with engine.connect() as conn:
+            cols = {
+                row[1]
+                for row in conn.execute(text("PRAGMA table_info(messages)")).fetchall()
+            }
+            if "metadata_json" not in cols:
+                conn.execute(text("ALTER TABLE messages ADD COLUMN metadata_json TEXT"))
+                conn.commit()
+    except Exception:  # pragma: no cover — plataformas/estados sem suporte não bloqueiam
+        pass
 
 
 def check_database() -> bool:

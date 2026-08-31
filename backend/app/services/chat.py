@@ -71,6 +71,34 @@ def _autotitle(db: OrmSession, session: Session, content: str) -> None:
         db.commit()
 
 
+def add_atlas_reply(
+    db: OrmSession,
+    session_id: str,
+    content: str,
+    meta: dict,
+) -> Message:
+    """Persiste a resposta do Atlas como mensagem do assistente (+ metadados).
+
+    `meta` vira o `metadata_json` da mensagem — origem/fontes/proposals do Atlas
+    ficam preservados sem alterar a experiência de chat do usuário.
+    """
+    import json
+
+    session = db.get(Session, session_id)
+    message = Message(
+        session_id=session_id,
+        role="assistant",
+        content=content,
+        metadata_json=json.dumps(meta, ensure_ascii=False, default=str),
+    )
+    db.add(message)
+    if session is not None:
+        session.updated_at = utcnow()
+    db.commit()
+    db.refresh(message)
+    return message
+
+
 def add_user_message(db: OrmSession, session: Session, content: str) -> Message:
     _autotitle(db, session, content)
     message = Message(session_id=session.id, role="user", content=content)

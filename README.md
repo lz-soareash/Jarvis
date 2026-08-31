@@ -193,7 +193,29 @@ Frontend é um **PWA instalável** e o Core reconhece a **classe de dispositivo*
 - **Detecção de dispositivo** (`app/services/device.py`): normaliza o `User-Agent` em
   `DeviceType` (`desktop`/`mobile`/`web`) mais a flag `touch`. Rastreadores/CLI caem em `web`.
   Sem fingerprint nem persistência — apenas para a UI/se cliente ajustar a experiência.
-  Disponível em `GET /api/device/info` e, de forma compacta, no campo `device` de `GET /health`.
+   Disponível em `GET /api/device/info` e, de forma compacta, no campo `device` de `GET /health`.
+
+## Atlas (Fase 10)
+
+O **Atlas** é o projeto Django "Knowledge Operating System + AI Assistant" (em
+`D:\dowloads\Atlas`) consumido pelo JARVIS como **serviço externo** via HTTP/JWT —
+fonte de inteligência e orquestração de conhecimento. Cliente dedicado em
+`app/services/atlas_client.py` com cache de token (login + refresh), isolamento de
+falhas e **nenhum segredo em logs**.
+
+- **Delegação automática**: em `POST /api/sessions/{id}/messages`, quando
+  `ATLAS_ENABLED=true` o Core envia o histórico ao `POST /api/assistant/chat/` do
+  Atlas (provê resposta + `sources` + `classification` + `proposals` + `agent_run`).
+  Se o Atlas estiver **desabilitado, não configurado, ou indisponível**, o fluxo cai
+  automaticamente para o **Gemini local** (fallback) sem tocar a experiência do chat.
+- **Transparência**: a resposta do Atlas (que não é SSE) é reemitida como SSE pelo
+  Core (`start → chunk → done`) e persiste com `source=atlas` + metadados no campo
+  `metadata` da mensagem.
+- **`GET /api/atlas/status`**: estado atual (habilitado/configurado/base_url — sem
+  segredos). **`GET /api/atlas/health`**: healthcheck real (503 se desabilitado/não
+  configurado/indisponível; 401 se credenciais inválidas).
+- **Config**: `ATLAS_ENABLED`, `ATLAS_BASE_URL` (padrão `http://127.0.0.1:8000`),
+  `ATLAS_EMAIL`, `ATLAS_PASSWORD`, `ATLAS_TIMEOUT` — ver `.env.example`.
 
 ## Endpoints
 
@@ -221,6 +243,8 @@ Frontend é um **PWA instalável** e o Core reconhece a **classe de dispositivo*
 | `GET /api/tts/speech?text=...&split=` | prepara fala: `display_text` (intacto) + `speech_text` + `context` + `utterances` |
 | `GET /api/tts?text=...` | MP3 falado (`audio/mpeg`; `voice` opcional) |
 | `GET /api/device/info` | tipo de dispositivo detectado (`device` + `touch`) |
+| `GET /api/atlas/status` | estado do Atlas (habilitado/configurado/base_url) |
+| `GET /api/atlas/health` | healthcheck do Atlas (login real) — veja acima |
 | `GET /health` | saúde da API + banco (SQLite) e device detectado pelo User-Agent |
 | `GET /docs` | OpenAPI (Swagger UI) |
 
@@ -241,7 +265,7 @@ o chat de stream responde com o evento `error` e o endpoint comum com `503` — 
 0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·
 4. Permissions ✔ · 5. Computer ✔ · 6. Voz (STT/TTS no navegador) ✔ · 6b. Voz (UX de fala: fila,
 sanitização, provedores, SPEAKING) ✔ · 7. Filesystem ✔ · 8. Developer ✔ · 9. Mobile/Devices/PWA ✔ ·
-10. Atlas · 11. Agent loop · 12. Web · 13. Visão · 14. Proativo · 15. Remote (inclui Wake-on-LAN —
+10. Atlas ✔ · 11. Agent loop · 12. Web · 13. Visão · 14. Proativo · 15. Remote (inclui Wake-on-LAN —
 ligar o PC pelo celular exige WoL + ponto de entrada sempre-on; só nesta fase) · 16. V1.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

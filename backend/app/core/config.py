@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     # Filesystem (Fase 7) — raiz-sandbox das ferramentas de arquivos
     files_root: str = "~"
 
+    # Atlas (Fase 10) — camada externa de inteligência (Django separado).
+    atlas_enabled: bool = False
+    atlas_base_url: str = "http://127.0.0.1:8000"
+    atlas_email: str = ""
+    atlas_password: str = ""
+    atlas_timeout: float = 30.0  # s — timeout de conexão/leitura com o Atlas
+
     # Voz & Fala (Fase 6b) — configuração centralizada do TTS
     # Provedor ativo (edge por padrão; outros via tts_providers).
     tts_provider: str = "edge"

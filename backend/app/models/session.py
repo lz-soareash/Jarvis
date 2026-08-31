@@ -57,6 +57,9 @@ class Message(Base):
     session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), index=True)
     role: Mapped[str] = mapped_column(String(20))
     content: Mapped[str] = mapped_column(Text)
+    # Metadados opcionais da resposta (Fase 10): { "source": "atlas", ... }.
+    # Guarda origem (atlas/local) e, quando aplicável, fontes/proposals do Atlas.
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     session: Mapped[Session] = relationship(back_populates="messages")
