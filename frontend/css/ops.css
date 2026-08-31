@@ -10,6 +10,18 @@
   flex-direction: column;
 }
 
+/* O atributo `hidden` do HTML usa display:none, mas regras com `display`
+   (Layout: .shell grid / .ops flex) o sobrescrevem. Garantimos explicitamente
+   que o item oculto saia do layout — a aba Central e o chat se alternam. */
+.ops[hidden],
+#ops-view[hidden] {
+  display: none;
+}
+
+.shell[hidden] {
+  display: none;
+}
+
 .ops-scroll {
   flex: 1 1 auto;
   min-height: 0;
