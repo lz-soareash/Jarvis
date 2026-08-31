@@ -104,12 +104,13 @@ def test_agent_requests_approval_for_level2_tool(client, fake_ai, monkeypatch):
     assert pending[0]["id"] == req["id"]
 
 
-def test_agent_unconfigured_emits_error_event(client):
-    # Sem override -> provider default sem chave (conftest).
+def test_agent_unconfigured_uses_deterministic_fallback(client):
+    # Sem override -> AI Router: Gemini sem chave, agente usa fallback determinístico.
     sid = create_session(client)["id"]
     events = send_agent(client, sid, "oi")
-    assert [e["type"] for e in events] == ["start", "error"]
-    assert "GEMINI_API_KEY" in events[-1]["detail"]
+    types = [e["type"] for e in events]
+    assert "error" not in types
+    assert "done" in types  # respondeu com fallback determinístico (sem erro 503)
 
 
 def test_store_memory_tool_persists_memory(client, fake_ai):

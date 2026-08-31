@@ -106,20 +106,23 @@ def client():
 
 @pytest.fixture(autouse=True)
 def _clean_db():
-    """Isola o banco in-memory compartilhado: limpa as tabelas a cada teste."""
-    from app.db.session import SessionLocal
+    """Isola o banco in-memory compartilhado: cria tabelas e limpa a cada teste."""
+    from app.db.session import SessionLocal, init_db
     from app.models import (
         ApprovalRequest,
         AuditLog,
+        ExecutionEvent,
         Memory,
         Message,
         Session,
         ToolPolicy,
     )
 
+    init_db()  # garante o schema (inclusive quando o teste não usa o TestClient)
     db = SessionLocal()
     try:
         db.rollback()
+        db.query(ExecutionEvent).delete()
         db.query(ApprovalRequest).delete()
         db.query(AuditLog).delete()
         db.query(ToolPolicy).delete()

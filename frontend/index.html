@@ -18,6 +18,7 @@
   <link rel="stylesheet" href="./css/base.css" />
   <link rel="stylesheet" href="./css/layout.css" />
   <link rel="stylesheet" href="./css/components.css?v=12" />
+  <link rel="stylesheet" href="./css/ops.css?v=1" />
 </head>
 <body>
   <div class="app">
@@ -53,6 +54,11 @@
         Instalar
       </button>
 
+      <nav class="hud-tabs" aria-label="Seções do JARVIS">
+        <button class="hud-tab is-active" id="tab-chat" type="button">Chat</button>
+        <button class="hud-tab" id="tab-ops" type="button">Central</button>
+      </nav>
+
       <div class="hud-status" role="status">
         <span class="dot" id="status-dot" data-state="connecting"></span>
         <span id="status-text">Conectando</span>
@@ -62,7 +68,6 @@
     <div class="shell">
       <button class="scrim" id="sessions-backdrop" type="button"
           aria-label="Fechar sessões" tabindex="-1" hidden></button>
-
       <aside class="sessions" id="sessions-panel" aria-label="Sessões">
         <div class="sessions-head">
           <button class="btn btn-primary" id="new-session" type="button">
@@ -150,6 +155,57 @@
       </main>
     </div>
 
+    <section class="ops" id="ops-view" hidden aria-label="Central de Operações">
+      <div class="ops-scroll">
+        <div class="ops-head">
+          <h2 class="ops-title">Central de Operações</h2>
+          <button class="btn" id="ops-refresh" type="button">Atualizar</button>
+        </div>
+
+        <div class="ops-grid">
+          <div class="ops-card" id="ops-ai">
+            <h3 class="ops-card-title">AI Core</h3>
+            <div class="ops-body" id="ops-ai-body">…</div>
+          </div>
+
+          <div class="ops-card" id="ops-providers">
+            <h3 class="ops-card-title">Provedores de IA</h3>
+            <div class="ops-body" id="ops-providers-body">…</div>
+          </div>
+
+          <div class="ops-card" id="ops-system">
+            <h3 class="ops-card-title">Sistema</h3>
+            <div class="ops-body" id="ops-system-body">…</div>
+          </div>
+
+          <div class="ops-card" id="ops-memory">
+            <h3 class="ops-card-title">Memória</h3>
+            <div class="ops-body" id="ops-memory-body">…</div>
+          </div>
+
+          <div class="ops-card" id="ops-tools">
+            <h3 class="ops-card-title">Tools</h3>
+            <div class="ops-body" id="ops-tools-body">…</div>
+          </div>
+
+          <div class="ops-card" id="ops-tasks">
+            <h3 class="ops-card-title">Tarefas &amp; Auditoria</h3>
+            <div class="ops-body" id="ops-tasks-body">…</div>
+          </div>
+
+          <div class="ops-card" id="ops-atlas">
+            <h3 class="ops-card-title">Atlas</h3>
+            <div class="ops-body" id="ops-atlas-body">…</div>
+          </div>
+        </div>
+
+        <div class="ops-card ops-card--wide" id="ops-events">
+          <h3 class="ops-card-title">Eventos recentes</h3>
+          <div class="ops-body" id="ops-events-body">…</div>
+        </div>
+      </div>
+    </section>
+
     <footer class="status-foot">
       <span class="status-item">Estado <b id="agent-state">idle</b></span>
       <span class="status-item">DB <b id="db-state">—</b></span>
@@ -159,6 +215,7 @@
   </div>
 
   <script src="./js/speech.js?v=12"></script>
+  <script src="./js/ops.js?v=1"></script>
   <script src="./js/app.js?v=12"></script>
 </body>
 </html>

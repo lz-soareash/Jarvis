@@ -18,6 +18,11 @@ class AIProvider(ABC):
 
     name: str = "base"
 
+    # Capacidades do provedor, consultadas pelo AI Router. Um provedor pode
+    # declarar um subconjunto: generate/stream/analyze (chat), embed (vetores),
+    # tools (propor chamadas de ferramenta). Default: tudo.
+    capabilities: set[str] = {"generate", "stream", "analyze", "embed", "tools"}
+
     @property
     @abstractmethod
     def is_configured(self) -> bool:

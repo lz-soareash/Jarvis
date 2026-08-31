@@ -3,14 +3,27 @@ from app.core.config import settings
 from .base import AIProvider, AIProviderError
 from .gemini import GeminiProvider
 
-__all__ = ["AIProvider", "AIProviderError", "GeminiProvider", "get_default_provider"]
+from app.ai.registry import get_ai_router, AIProviderRouter  # noqa: E402
 
-_default_provider: AIProvider | None = None
+__all__ = [
+    "AIProvider",
+    "AIProviderError",
+    "GeminiProvider",
+    "get_default_provider",
+    "get_default_router",
+]
+
+
+def get_default_router() -> AIProviderRouter:
+    """Singleton do AI Router configurado a partir do settings."""
+    return get_ai_router()
 
 
 def get_default_provider() -> AIProvider:
-    """Singleton do provedor padrão (Gemini), construído a partir do settings."""
-    global _default_provider
-    if _default_provider is None:
-        _default_provider = GeminiProvider()
-    return _default_provider
+    """Provedor padrão — resolvido pelo AI Router (Fase 11).
+
+    Retorna o primeiro provedor configurado para a tarefa de geração; sem nada
+    configurado, devolve o último candidato registrado (o chamador recebe
+    `is_configured` False e decide o erro). O Gemini deixou de ser obrigatório.
+    """
+    return get_ai_router().resolve(task="generate")

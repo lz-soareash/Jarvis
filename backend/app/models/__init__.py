@@ -2,6 +2,7 @@
 
 from app.models.governance import ApprovalRequest, AuditLog, ToolPolicy
 from app.models.memory import Memory
+from app.models.ops import ExecutionEvent
 from app.models.session import Message, Session, utcnow
 
 __all__ = [
@@ -11,5 +12,6 @@ __all__ = [
     "ApprovalRequest",
     "AuditLog",
     "ToolPolicy",
+    "ExecutionEvent",
     "utcnow",
 ]

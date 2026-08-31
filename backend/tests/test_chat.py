@@ -61,14 +61,17 @@ def test_chat_non_stream_persists_and_responds(client, fake_ai):
     assert [m["role"] for m in messages] == ["user", "assistant"]
 
 
-def test_chat_without_ai_key_503(client):
-    # Sem override -> provider default com GEMINI_API_KEY vazia (conftest).
+def test_chat_without_ai_key_uses_deterministic_fallback(client):
+    # Sem override -> AI Router: Gemini sem chave, fallback determinístico responde.
     session = create_session(client)
     res = client.post(
         f"/api/sessions/{session['id']}/messages",
         json={"content": "oi", "stream": False},
     )
-    assert res.status_code == 503
+    assert res.status_code == 200
+    body = res.json()
+    assert body["message"]["role"] == "assistant"
+    assert body["message"]["content"]  # resposta determinística (não vazia)
 
 
 def test_chat_auto_title_from_first_message(client, fake_ai):

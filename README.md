@@ -9,7 +9,8 @@ para múltiplos dispositivos e um futuro modo remoto.
 
 ## Regras fundamentais
 
-- IA exclusivamente **Google Gemini** (nunca OpenAI).
+- IA **padrão**: Google Gemini (nunca OpenAI); **fallback determinístico local** quando
+  o Gemini não está configurado ou indisponível (Fase 11 — safety fallback).
 - `GEMINI_API_KEY` nunca sai do backend (nunca no frontend/mobile/agente).
 - A IA **não executa** nada: ela apenas *sugere* `tool + params`. A execução passa
   obrigatoriamente pelo Tool Engine e pelo Permission System (implementados em fases futuras).
@@ -55,18 +56,21 @@ Sem Docker/Redis/Celery nesta fase (não há necessidade real ainda).
 ```
 frontend/                  # interface concha: HTML + CSS + JS Vanilla + PWA
 └── (index.html, sw.js, manifest.webmanifest, css/, js/, icons/)
+    # js/ops.js + css/ops.css: Central de Operações (aba do SPA) — Fase 11
 backend/
 ├── app/
 │   ├── ai/
-│   │   └── providers/       # base.py (AIProvider) + gemini.py
-│   ├── api/                 # rotas (health, chat, memory, approvals, permissions, audit, system)
-│   ├── computer/            # SystemController (stats, processos, abrir/encerrar apps) — Fase 5
-│   ├── core/                # config, logging estruturado, enums (estados/permissões)
-│   ├── db/                  # SQLAlchemy (Base, engine, sessão)
-│   ├── models/              # Session / Message / Memory / governança (SQLAlchemy 2.x)
-│   ├── schemas/             # modelos Pydantic base (inclui ToolCall/Declaration)
-│   ├── services/            # chat, memory, summarizer, agent, approvals, permissions, audit
-│   ├── tools/               # Tool Engine: base, registry, builtins (tempo, sistema, memória, computador)
+│   │   ├── core.py                # AI Core (Fase 11) — orquestra provedor + caminho + observabilidade
+│   │   ├── registry.py            # AI Router (Fase 11) — seleção/fallback de provedores
+│   │   └── providers/             # base.py (AIProvider) + gemini.py + deterministic.py (safety fallback)
+│   ├── api/                       # rotas (health, chat, memory, approvals, permissions, audit, system, ops)
+│   ├── computer/                  # SystemController (stats, processos, abrir/encerrar apps) — Fase 5
+│   ├── core/                      # config, logging estruturado, enums (estados/permissões)
+│   ├── db/                        # SQLAlchemy (Base, engine, sessão)
+│   ├── models/                    # Session / Message / Memory / ExecutionEvent / governança (SQLAlchemy 2.x)
+│   ├── schemas/                   # modelos Pydantic base (inclui ToolCall/Declaration, ops)
+│   ├── services/                  # chat, memory, summarizer, agent, approvals, permissions, audit, ops, atlas
+│   ├── tools/                     # Tool Engine: base, registry, builtins (tempo, sistema, memória, computador)
 │   └── main.py
 └── tests/                   # pytest (Gemini 100% mockado)
 ```
@@ -217,6 +221,27 @@ falhas e **nenhum segredo em logs**.
 - **Config**: `ATLAS_ENABLED`, `ATLAS_BASE_URL` (padrão `http://127.0.0.1:8000`),
   `ATLAS_EMAIL`, `ATLAS_PASSWORD`, `ATLAS_TIMEOUT` — ver `.env.example`.
 
+## AI Core + Central de Operações (Fase 11)
+
+O **AI Core** (`app/ai/core.py`) orquestra cada turno do chat e o **AI Router**
+(`app/ai/registry.py`) escolhe o provedor:
+
+- **AI Router**: resolve o primeiro provedor **configurado** que atende à tarefa
+  (`generate`/`embed`), com fallback automático. A ordem vem de `AI_PROVIDER_ORDER`
+  (padrão `gemini,deterministic`). O **Gemini deixou de ser obrigatório**.
+- **DeterministicProvider** (`app/ai/providers/deterministic.py`) — *safety fallback*
+  local: responde de forma previsível e offline (horário, data, aritmética segura
+  via AST, saudação). Sem LLM generativo e **sem** capacidade `tools`/`embed`.
+  A arquitetura já prevê registrar um **LLM local real** no futuro, sem refatorar
+  o Core.
+- **Observabilidade**: cada turno registra `execution_events` (tabela SQLite) —
+  `chat.started`, `provider.selected`, `path.selected`, `chat.completed`,
+  `chat.failed` — sempre **sanitizado** (nunca conteúdo de mensagens, tokens,
+  chaves ou secrets). Fonte da Central de Operações.
+- **Central de Operações** (aba do SPA): `GET /api/ops/overview` (AI Core,
+  provedores, memória, tarefas, tools, Atlas), `GET /api/ops/providers`,
+  `GET /api/ops/providers/{name}/health`, `GET /api/ops/events`.
+
 ## Endpoints
 
 | Rota | Descrição |
@@ -238,13 +263,17 @@ falhas e **nenhum segredo em logs**.
 | `GET /api/system/stats` | CPU, memória, disco e boot (somente leitura) |
 | `GET /api/system/processes` | processos em execução (`limit` 1-200) |
 | `GET /health` | saúde da API + banco (SQLite) |
-| `GET /health/ai` | healthcheck do Gemini (`ok` / `unconfigured` / `error` + `code`) |
+| `GET /health/ai` | healthcheck do provedor ativo via AI Router (`ok`/`unconfigured`/`error` + `code`) |
 | `GET /api/tts/ping` | disponibilidade da voz neural (Edge TTS) |
 | `GET /api/tts/speech?text=...&split=` | prepara fala: `display_text` (intacto) + `speech_text` + `context` + `utterances` |
 | `GET /api/tts?text=...` | MP3 falado (`audio/mpeg`; `voice` opcional) |
 | `GET /api/device/info` | tipo de dispositivo detectado (`device` + `touch`) |
 | `GET /api/atlas/status` | estado do Atlas (habilitado/configurado/base_url) |
 | `GET /api/atlas/health` | healthcheck do Atlas (login real) — veja acima |
+| `GET /api/ops/overview` | Central de Operações: AI Core, provedores, memória, tarefas, tools, Atlas |
+| `GET /api/ops/providers` | estado dos provedores de IA do AI Router |
+| `GET /api/ops/providers/{name}/health` | healthcheck ao vivo de um provedor |
+| `GET /api/ops/events` | eventos observáveis recentes (sanitizados; `session_id`/`event_type`/`limit`) |
 | `GET /health` | saúde da API + banco (SQLite) e device detectado pelo User-Agent |
 | `GET /docs` | OpenAPI (Swagger UI) |
 
@@ -258,14 +287,16 @@ Envie `{"content": "...", "stream": true, "tools": true}` em
 ## Executar
 
 Ver `SETUP.md` para o passo a passo completo (venv, `.env`, testes). Sem `GEMINI_API_KEY`,
-o chat de stream responde com o evento `error` e o endpoint comum com `503` — o Core segue funcional.
+o **AI Router** usa o **fallback determinístico** (modo de segurança) e o chat segue
+respondendo (horário/data/aritmética/saudação) — o Core nunca fica sem resposta.
 
 ## Roadmap (resumo)
 
 0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·
 4. Permissions ✔ · 5. Computer ✔ · 6. Voz (STT/TTS no navegador) ✔ · 6b. Voz (UX de fala: fila,
 sanitização, provedores, SPEAKING) ✔ · 7. Filesystem ✔ · 8. Developer ✔ · 9. Mobile/Devices/PWA ✔ ·
-10. Atlas ✔ · 11. Agent loop · 12. Web · 13. Visão · 14. Proativo · 15. Remote (inclui Wake-on-LAN —
-ligar o PC pelo celular exige WoL + ponto de entrada sempre-on; só nesta fase) · 16. V1.
+10. Atlas ✔ · 11. AI Core + Central de Operações ✔ · 12. Agent loop · 13. Web · 14. Visão ·
+15. Proativo · 16. Remote (inclui Wake-on-LAN — ligar o PC pelo celular exige WoL + ponto de
+entrada sempre-on; só nesta fase) · 17. V1.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

@@ -33,8 +33,17 @@ class Settings(BaseSettings):
     # Persistência — Local-first (SQLite); Postgres é troca futura de URL.
     database_url: str = "sqlite:///./data/jarvis.db"
 
-    # Chat — janela de contexto enviada ao Gemini por resposta
+    # Chat — janela de contexto enviada ao modelo por resposta
     max_context_messages: int = 20
+
+    # AI Core / AI Router (Fase 11) — seleção de provedores e fallback.
+    # Ordem de prioridade dos provedores (primeiro = preferido), separada por
+    # vírgula. Nomes conhecidos: gemini, deterministic. Desconhecidos são
+    # ignorados com aviso.
+    ai_provider_order: str = "gemini,deterministic"
+    # Fallback de segurança determinístico (sem API externa). Habilitado, o
+    # JARVIS responde tarefas simples mesmo sem GEMINI_API_KEY (nunca 503 sozinho).
+    ai_deterministic_enabled: bool = True
 
     # Memória / Contexto (Fase 2)
     gemini_embed_model: str = "text-embedding-004"

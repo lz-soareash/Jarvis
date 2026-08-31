@@ -27,13 +27,13 @@ def test_health_reports_ok(client):
 
 
 def test_health_ai_unconfigured_without_key(client):
-    # Sem GEMINI_API_KEY no ambiente de teste, o provider reporta "unconfigured"
-    # sem realizar nenhuma chamada à API real.
+    # Sem GEMINI_API_KEY no ambiente de teste, o AI Router usa o fallback
+    # determinístico (safety) — sem realizar nenhuma chamada à API real.
     response = client.get("/health/ai")
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "unconfigured"
-    assert data["provider"] == "gemini"
+    assert data["status"] == "ok"
+    assert data["provider"] == "deterministic"
 
 
 def test_health_ai_is_cached(client):
