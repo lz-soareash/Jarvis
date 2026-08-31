@@ -241,6 +241,7 @@ o chat de stream responde com o evento `error` e o endpoint comum com `503` — 
 0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·
 4. Permissions ✔ · 5. Computer ✔ · 6. Voz (STT/TTS no navegador) ✔ · 6b. Voz (UX de fala: fila,
 sanitização, provedores, SPEAKING) ✔ · 7. Filesystem ✔ · 8. Developer ✔ · 9. Mobile/Devices/PWA ✔ ·
-10. Atlas · 11. Agent loop · 12. Web · 13. Visão · 14. Proativo · 15. Remote · 16. V1.
+10. Atlas · 11. Agent loop · 12. Web · 13. Visão · 14. Proativo · 15. Remote (inclui Wake-on-LAN —
+ligar o PC pelo celular exige WoL + ponto de entrada sempre-on; só nesta fase) · 16. V1.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.
