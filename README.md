@@ -178,6 +178,23 @@ navegador quando o serviço externo estiver fora:
   serviço de voz da engine do navegador, nunca ao nosso backend. Apenas o **texto** da resposta
   é enviado ao `/api/tts`/`/api/tts/speech` para virar áudio (voz neural via Microsoft Edge).
 
+## Dispositivos & PWA (Fase 9)
+
+Frontend é um **PWA instalável** e o Core reconhece a **classe de dispositivo**:
+
+- **Ícones raster reais** (`frontend/icons/`): `icon-192.png`, `icon-512.png` (purpose `any`),
+  `icon-maskable-512.png` (seguro para máscaras de icone do Android) e `apple-touch-icon.png`
+  (iOS) — gerados a partir da marca, sem dependências. `manifest.webmanifest` completo
+  (`id`, `launch_handler`, `display_override`, `categories`) e meta tags PWA de iOS
+  (`apple-mobile-web-app-*`) + `apple-touch-icon` no `index.html`.
+- **Botão "Instalar"**: o header mostra um botão quando o navegador dispara
+  `beforeinstallprompt`; ao tocar, abre o prompt nativo de instalação do PWA
+  (`js/app.js`) e some após instalado (`appinstalled`).
+- **Detecção de dispositivo** (`app/services/device.py`): normaliza o `User-Agent` em
+  `DeviceType` (`desktop`/`mobile`/`web`) mais a flag `touch`. Rastreadores/CLI caem em `web`.
+  Sem fingerprint nem persistência — apenas para a UI/se cliente ajustar a experiência.
+  Disponível em `GET /api/device/info` e, de forma compacta, no campo `device` de `GET /health`.
+
 ## Endpoints
 
 | Rota | Descrição |
@@ -203,6 +220,8 @@ navegador quando o serviço externo estiver fora:
 | `GET /api/tts/ping` | disponibilidade da voz neural (Edge TTS) |
 | `GET /api/tts/speech?text=...&split=` | prepara fala: `display_text` (intacto) + `speech_text` + `context` + `utterances` |
 | `GET /api/tts?text=...` | MP3 falado (`audio/mpeg`; `voice` opcional) |
+| `GET /api/device/info` | tipo de dispositivo detectado (`device` + `touch`) |
+| `GET /health` | saúde da API + banco (SQLite) e device detectado pelo User-Agent |
 | `GET /docs` | OpenAPI (Swagger UI) |
 
 Envie `{"content": "...", "stream": true, "tools": true}` em
@@ -221,8 +240,7 @@ o chat de stream responde com o evento `error` e o endpoint comum com `503` — 
 
 0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·
 4. Permissions ✔ · 5. Computer ✔ · 6. Voz (STT/TTS no navegador) ✔ · 6b. Voz (UX de fala: fila,
-sanitização, provedores, SPEAKING) ✔ · 7. Filesystem ✔ · 8. Developer ✔ ·
-9. Mobile/Devices/PWA · 10. Atlas · 11. Agent loop · 12. Web · 13. Visão · 14. Proativo ·
-15. Remote · 16. V1.
+sanitização, provedores, SPEAKING) ✔ · 7. Filesystem ✔ · 8. Developer ✔ · 9. Mobile/Devices/PWA ✔ ·
+10. Atlas · 11. Agent loop · 12. Web · 13. Visão · 14. Proativo · 15. Remote · 16. V1.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

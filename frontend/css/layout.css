@@ -63,6 +63,27 @@
   white-space: nowrap;
 }
 
+.btn-install {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-arc);
+  padding: 6px 12px;
+  border: 1px solid var(--color-arc);
+  border-radius: var(--radius-md);
+  background: var(--color-primary-soft);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.btn-install:hover {
+  background: var(--color-arc);
+  color: var(--color-bg);
+}
+
 /* ---------------- Shell ---------------- */
 .shell {
   display: grid;

@@ -25,7 +25,10 @@ const els = {
   agentState: document.getElementById("agent-state"),
   dbState: document.getElementById("db-state"),
   aiState: document.getElementById("ai-state"),
+  installBtn: document.getElementById("install-btn"),
 };
+
+let deferredInstallPrompt = null;
 
 let currentSessionId = null;
 let streaming = false;
@@ -864,6 +867,26 @@ function init() {
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
     navigator.serviceWorker.register("./sw.js").catch((err) => console.warn("SW:", err));
   }
+
+  /* PWA — botão de instalação (beforeinstallprompt). */
+  window.addEventListener("beforeinstallprompt", (event) => {
+    event.preventDefault();
+    deferredInstallPrompt = event;
+    if (els.installBtn) els.installBtn.hidden = false;
+  });
+  if (els.installBtn) {
+    els.installBtn.addEventListener("click", async () => {
+      if (!deferredInstallPrompt) return;
+      deferredInstallPrompt.prompt();
+      await deferredInstallPrompt.userChoice;
+      deferredInstallPrompt = null;
+      els.installBtn.hidden = true;
+    });
+  }
+  window.addEventListener("appinstalled", () => {
+    deferredInstallPrompt = null;
+    if (els.installBtn) els.installBtn.hidden = true;
+  });
 }
 
 init();

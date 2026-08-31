@@ -1,12 +1,13 @@
 import time
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 
 from app.ai.providers.base import AIProvider
 from app.core.config import settings
 from app.db.session import check_database
 from app.schemas.health import AIHealthResponse, HealthResponse
+from app.services.device import detect_device
 
 from .deps import get_ai_provider
 
@@ -17,7 +18,9 @@ _ai_health_cache: tuple[float, AIHealthResponse] | None = None
 
 
 @router.get("/health", response_model=HealthResponse)
-async def health() -> HealthResponse:
+async def health(
+    user_agent: str | None = Header(default=None, alias="User-Agent"),
+) -> HealthResponse:
     return HealthResponse(
         status="ok",
         app=settings.app_name,
@@ -27,6 +30,7 @@ async def health() -> HealthResponse:
         api_port=settings.port,
         ws_port=settings.ws_port,
         time=datetime.now(timezone.utc),
+        device=detect_device(user_agent),
     )
 
 

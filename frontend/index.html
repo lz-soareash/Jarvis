@@ -6,13 +6,18 @@
   <meta name="theme-color" content="#05080f" />
   <meta name="description" content="JARVIS — Personal AI Agent" />
   <meta name="color-scheme" content="dark" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="JARVIS" />
   <title>JARVIS</title>
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="./icons/favicon.svg" />
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
   <link rel="stylesheet" href="./css/tokens.css" />
   <link rel="stylesheet" href="./css/base.css" />
   <link rel="stylesheet" href="./css/layout.css" />
-  <link rel="stylesheet" href="./css/components.css?v=11" />
+  <link rel="stylesheet" href="./css/components.css?v=12" />
 </head>
 <body>
   <div class="app">
@@ -38,6 +43,15 @@
           </span>
         </div>
       </div>
+
+      <button class="btn-install" id="install-btn" type="button" hidden aria-label="Instalar o JARVIS">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v12m0 0 4-4m-4 4-4-4"/>
+          <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
+        </svg>
+        Instalar
+      </button>
 
       <div class="hud-status" role="status">
         <span class="dot" id="status-dot" data-state="connecting"></span>
@@ -144,7 +158,7 @@
     </footer>
   </div>
 
-  <script src="./js/speech.js?v=11"></script>
-  <script src="./js/app.js?v=11"></script>
+  <script src="./js/speech.js?v=12"></script>
+  <script src="./js/app.js?v=12"></script>
 </body>
 </html>
