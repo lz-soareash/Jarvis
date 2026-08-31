@@ -7,3 +7,6 @@ SQLAlchemy>=2.0.30
 python-dotenv>=1.0
 google-genai>=1.0
 edge-tts>=7.0
+# Local LLM (Fase 11 ext) — wheels CPU pré-compilados
+# pip install --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu/ llama-cpp-python
+llama-cpp-python>=0.3

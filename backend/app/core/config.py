@@ -38,12 +38,22 @@ class Settings(BaseSettings):
 
     # AI Core / AI Router (Fase 11) — seleção de provedores e fallback.
     # Ordem de prioridade dos provedores (primeiro = preferido), separada por
-    # vírgula. Nomes conhecidos: gemini, deterministic. Desconhecidos são
-    # ignorados com aviso.
-    ai_provider_order: str = "gemini,deterministic"
+    # vírgula. Nomes conhecidos: local, gemini, deterministic. Desconhecidos
+    # são ignorados com aviso.
+    ai_provider_order: str = "local,gemini,deterministic"
     # Fallback de segurança determinístico (sem API externa). Habilitado, o
     # JARVIS responde tarefas simples mesmo sem GEMINI_API_KEY (nunca 503 sozinho).
     ai_deterministic_enabled: bool = True
+
+    # Local LLM (Fase 11 — extensão) — motor linguístico local generativo.
+    # O provider local é o principal; Gemini é opcional; deterministic é
+    # safety fallback.
+    ai_local_llm_enabled: bool = True
+    ai_local_llm_model_path: str = ""  # vazio → resolve em runtime
+    ai_local_llm_embed_path: str = ""  # vazio → resolve em runtime
+    ai_local_llm_n_ctx: int = 2048
+    ai_local_llm_n_threads: int = 6  # 5600G: 6c/12t, threads físicas
+    ai_local_llm_temperature: float = 0.7
 
     # Memória / Contexto (Fase 2)
     gemini_embed_model: str = "text-embedding-004"

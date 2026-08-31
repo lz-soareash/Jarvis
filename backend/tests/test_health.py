@@ -26,9 +26,16 @@ def test_health_reports_ok(client):
     assert data["env"] == "test"
 
 
-def test_health_ai_unconfigured_without_key(client):
-    # Sem GEMINI_API_KEY no ambiente de teste, o AI Router usa o fallback
-    # determinístico (safety) — sem realizar nenhuma chamada à API real.
+def test_health_ai_unconfigured_without_key(client, monkeypatch):
+    # Sem GEMINI_API_KEY no ambiente de teste e com o Fallback determinístico,
+    # a Central reporta o determinístico como active provider quando o Local LLM
+    # está desabilitado (isolando o teste do modelo baixado no disco).
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "ai_local_llm_enabled", False)
+    from app.ai.registry import reset_ai_router
+
+    reset_ai_router()
     response = client.get("/health/ai")
     assert response.status_code == 200
     data = response.json()

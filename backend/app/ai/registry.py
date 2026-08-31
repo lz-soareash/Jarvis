@@ -16,6 +16,7 @@ from app.core.config import settings
 from .providers.base import AIProvider, AIProviderStatus
 from .providers.deterministic import DeterministicProvider
 from .providers.gemini import GeminiProvider
+from .providers.local_llm import LocalLLMProvider
 
 logger = logging.getLogger("jarvis.ai.router")
 
@@ -25,6 +26,7 @@ TASK_EMBED = "embed"
 
 # Nome -> fábrica de provedores conhecidos (novos provedores entram aqui).
 _PROVIDER_FACTORIES: dict[str, callable] = {
+    "local": LocalLLMProvider,
     "gemini": GeminiProvider,
     "deterministic": DeterministicProvider,
 }
@@ -79,6 +81,22 @@ class AIProviderRouter:
         if self._providers:
             return self._providers[0]
         raise RuntimeError("Nenhum provedor de IA registrado no AI Router")
+
+    def fallback_for(
+        self, provider: AIProvider, task: str = TASK_GENERATE
+    ) -> AIProvider | None:
+        """Próximo provedor configurado (≠ `provider`) que atende à tarefa.
+
+        Usado pelo AI Core para failover de resiliência: quando o provedor
+        primário falha (ex.: quota/429) e há um backup configurado, cai nele em
+        vez de retornar erro — o determinístico é o backup típico.
+        """
+        for p in self._providers:
+            if p is provider:
+                continue
+            if self.supports(p, task) and p.is_configured:
+                return p
+        return None
 
     def preferencia_estado(self, provider: AIProvider, task: str = TASK_GENERATE) -> dict:
         """Rotula o provedor quanto à sua posição na prioridade configurada."""
@@ -141,15 +159,19 @@ def build_default_router() -> AIProviderRouter:
         provider = factory()
         if isinstance(provider, DeterministicProvider) and not settings.ai_deterministic_enabled:
             continue  # fallback determinístico desabilitado por configuração
+        if isinstance(provider, LocalLLMProvider) and not settings.ai_local_llm_enabled:
+            continue  # LLM local desabilitado por configuração
         providers.append(provider)
         seen.add(name)
 
     # Garante que provedores conhecidos não citados na ordem entram no fim
-    # (fallback residencial), e que o determinístico só entra se habilitado.
+    # (fallback residencial), e que local/determinístico só entram se habilitados.
     for name, factory in _PROVIDER_FACTORIES.items():
         if name in seen:
             continue
         if name == "deterministic" and not settings.ai_deterministic_enabled:
+            continue
+        if name == "local" and not settings.ai_local_llm_enabled:
             continue
         if name in _PROVIDER_FACTORIES:
             providers.append(factory())

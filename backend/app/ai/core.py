@@ -13,6 +13,7 @@ turno o Core:
 Esses eventos (tabela `execution_events`) alimentam a Central de Operações.
 """
 
+import inspect
 import json
 import logging
 import time
@@ -86,6 +87,15 @@ async def handle_message(
         model=getattr(provider, "model", None),
         status="fallback" if fallback else "primary",
     )
+    if provider.name == "local":
+        ops.record_event(
+            db,
+            session_id=session_id,
+            event_type=ops.EVENT_LOCAL_STARTED,
+            provider=provider.name,
+            model=getattr(provider, "model", None),
+            status="started",
+        )
 
     await _run_summary_best_effort(db, session_id, provider)
 
@@ -116,12 +126,13 @@ async def handle_message(
             provider=provider.name,
             meta=ops.json_safe_meta(path="agent"),
         )
-        generator = _observed(
-            agent.run_agent(session_id, provider, db, content),
+        generator = _sse_with_fallback(
+            lambda p: agent.run_agent(session_id, p, db, content),
             db,
             session_id,
             "agent",
             provider=provider,
+            router=router,
         )
         return CoreTurn(kind="agent", provider=provider, generator=generator)
 
@@ -133,15 +144,13 @@ async def handle_message(
             provider=provider.name,
             meta=ops.json_safe_meta(path="stream"),
         )
-        history, system = await build_context(db, session_id, provider, query=content)
-        generator = _observed(
-            chat_service.stream_reply(
-                session_id, history, provider, db, system=system or None
-            ),
+        generator = _sse_with_fallback(
+            lambda p: _stream_for(p, db, session_id, content),
             db,
             session_id,
             "stream",
             provider=provider,
+            router=router,
         )
         return CoreTurn(kind="stream", provider=provider, generator=generator)
 
@@ -171,6 +180,61 @@ async def handle_message(
     try:
         reply = await chat_service.generate_reply(db, session_id, provider, query=content)
     except AIProviderError as exc:
+        # Failover de resiliência: tenta o próximo provider configurado.
+        fallback = router.fallback_for(provider, task="generate")
+        if fallback is not None and fallback is not provider:
+            ops.record_event(
+                db,
+                session_id=session_id,
+                event_type=ops.EVENT_FALLBACK,
+                provider=fallback.name,
+                status="fallback",
+                meta=ops.json_safe_meta(
+                    path="reply",
+                    from_provider=provider.name,
+                    error=type(exc).__name__,
+                ),
+            )
+            logger.warning("Fallback (reply): %s -> %s", provider.name, fallback.name)
+            fb_start = time.perf_counter()
+            try:
+                reply = await chat_service.generate_reply(
+                    db, session_id, fallback, query=content
+                )
+            except AIProviderError as fb_exc:
+                fb_latency = int((time.perf_counter() - fb_start) * 1000)
+                ops.record_event(
+                    db,
+                    session_id=session_id,
+                    event_type=ops.EVENT_FAILED,
+                    provider=fallback.name,
+                    status="failed",
+                    latency_ms=fb_latency,
+                    meta=ops.json_safe_meta(
+                        path="reply", error=type(fb_exc).__name__
+                    ),
+                )
+                _record_local_stage(
+                    db, session_id, fallback, completed=False, latency_ms=fb_latency
+                )
+                return CoreTurn(
+                    kind="provider_error", provider=provider, error=str(fb_exc)
+                )
+            fb_latency = int((time.perf_counter() - fb_start) * 1000)
+            ops.record_event(
+                db,
+                session_id=session_id,
+                event_type=ops.EVENT_COMPLETED,
+                provider=fallback.name,
+                status="ok",
+                latency_ms=fb_latency,
+                meta=ops.json_safe_meta(path="reply"),
+            )
+            _record_local_stage(
+                db, session_id, fallback, completed=True, latency_ms=fb_latency
+            )
+            return CoreTurn(kind="reply", provider=fallback, message=reply)
+
         latency = int((time.perf_counter() - start) * 1000)
         ops.record_event(
             db,
@@ -181,7 +245,9 @@ async def handle_message(
             latency_ms=latency,
             meta=ops.json_safe_meta(path="reply", error=type(exc).__name__),
         )
+        _record_local_stage(db, session_id, provider, completed=False, latency_ms=latency)
         return CoreTurn(kind="provider_error", provider=provider, error=str(exc))
+
     latency = int((time.perf_counter() - start) * 1000)
     ops.record_event(
         db,
@@ -192,6 +258,7 @@ async def handle_message(
         latency_ms=latency,
         meta=ops.json_safe_meta(path="reply"),
     )
+    _record_local_stage(db, session_id, provider, completed=True, latency_ms=latency)
     return CoreTurn(kind="reply", provider=provider, message=reply)
 
 
@@ -225,6 +292,9 @@ async def _observed(
             latency_ms=latency,
             meta=ops.json_safe_meta(path=path, error=type(exc).__name__),
         )
+        _record_local_stage(
+            db, session_id, provider, completed=False, latency_ms=latency
+        )
         raise
     latency = int((time.perf_counter() - start) * 1000)
     ops.record_event(
@@ -236,6 +306,105 @@ async def _observed(
         latency_ms=latency,
         meta=ops.json_safe_meta(path=path),
     )
+    _record_local_stage(db, session_id, provider, completed=True, latency_ms=latency)
+
+
+def _record_local_stage(
+    db: OrmSession,
+    session_id: str,
+    provider: AIProvider,
+    *,
+    completed: bool,
+    latency_ms: int | None = None,
+) -> None:
+    """Espelha o ciclo do modelo local em eventos observáveis dedicados."""
+    if provider.name != "local":
+        return
+    ops.record_event(
+        db,
+        session_id=session_id,
+        event_type=(
+            ops.EVENT_LOCAL_COMPLETED if completed else ops.EVENT_LOCAL_FAILED
+        ),
+        provider=provider.name,
+        model=getattr(provider, "model", None),
+        status="ok" if completed else "failed",
+        latency_ms=latency_ms,
+    )
+
+
+async def _stream_for(provider: AIProvider, db: OrmSession, session_id: str, content: str):
+    history, system = await build_context(db, session_id, provider, query=content)
+    return chat_service.stream_reply(
+        session_id, history, provider, db, system=system or None
+    )
+
+
+async def _sse_with_fallback(
+    make_generator,
+    db: OrmSession,
+    session_id: str,
+    path: str,
+    *,
+    provider: AIProvider,
+    router,
+):
+    """Emite um SSE do provider primário; se ele falhar antes de responder
+    (`{"type":"error"}` sem `done`), recomeça o turno com o próximo provider
+    configurado (`fallback_for`) — reemitindo `start`/`chunk`/`done` limpo.
+
+    Só recorre ao fallback quando o primário falhou antes de qualquer resposta
+    textual (não houve `chunk` nem `done`), evitando respostas duplicadas.
+    """
+    errored = False
+
+    async def _try(prov: AIProvider):
+        nonlocal errored
+        value = make_generator(prov)
+        gen = await value if inspect.isawaitable(value) else value
+        async for item in gen:
+            try:
+                payload = json.loads(item.removeprefix("data: ").strip())
+            except (ValueError, AttributeError):
+                yield item
+                continue
+            if payload.get("type") == "error":
+                errored = True
+            yield item
+
+    ok = False
+    try:
+        async for item in _try(provider):
+            yield item
+        # Sucesso = o prov primário não emitiu erro (respondeu ou concluiu).
+        ok = not errored
+    except Exception:  # noqa: BLE001 — erro de provedor durante o stream
+        ok = False
+
+    if ok:
+        return
+
+    fallback = router.fallback_for(provider, task="generate")
+    if fallback is None or fallback is provider:
+        return
+
+    ops.record_event(
+        db,
+        session_id=session_id,
+        event_type="fallback_triggered",
+        provider=fallback.name,
+        status="fallback",
+        meta=ops.json_safe_meta(path=path, from_provider=provider.name),
+    )
+    logger.warning(
+        "Fallback de resiliência: %s -> %s (path=%s)",
+        provider.name,
+        fallback.name,
+        path,
+    )
+
+    async for item in _try(fallback):
+        yield item
 
 
 # ---------------------------------------------------------------------------

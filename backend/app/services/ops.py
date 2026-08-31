@@ -31,6 +31,10 @@ EVENT_PROVIDER = "provider.selected"
 EVENT_PATH = "path.selected"
 EVENT_COMPLETED = "chat.completed"
 EVENT_FAILED = "chat.failed"
+EVENT_FALLBACK = "fallback_triggered"
+EVENT_LOCAL_STARTED = "local_model.started"
+EVENT_LOCAL_COMPLETED = "local_model.completed"
+EVENT_LOCAL_FAILED = "local_model.failed"
 
 
 # ---------------------------------------------------------------------------

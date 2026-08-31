@@ -20,6 +20,9 @@ backend/data/
 *.db
 *.sqlite3
 
+# Modelos locais (GGUF — baixados na máquina, não versionados)
+.local_models/
+
 # Frontend (fases futuras)
 node_modules/
 frontend/dist/

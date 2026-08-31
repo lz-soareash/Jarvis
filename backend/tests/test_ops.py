@@ -76,6 +76,11 @@ async def test_deterministic_provider_no_tools_capability():
 
 def test_router_deterministic_fallback_when_gemini_unconfigured(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "")
+    # Desabilita o Local LLM para isolar o cenário "sem Gemini → determinístico"
+    # (o Local LLM é o principal; com ele presente, `resolve` devolveria local).
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "ai_local_llm_enabled", False)
     from app.ai.registry import reset_ai_router, get_ai_router
 
     reset_ai_router()

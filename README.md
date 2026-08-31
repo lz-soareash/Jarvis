@@ -9,8 +9,9 @@ para múltiplos dispositivos e um futuro modo remoto.
 
 ## Regras fundamentais
 
-- IA **padrão**: Google Gemini (nunca OpenAI); **fallback determinístico local** quando
-  o Gemini não está configurado ou indisponível (Fase 11 — safety fallback).
+- IA **padrão**: LLM local generativo (Qwen2.5 via llama.cpp); **Gemini (Google) é
+  opcional** e entra como fallback se configurado; **fallback determinístico local** por
+  último (Fase 11 — independência total de internet / chave de API).
 - `GEMINI_API_KEY` nunca sai do backend (nunca no frontend/mobile/agente).
 - A IA **não executa** nada: ela apenas *sugere* `tool + params`. A execução passa
   obrigatoriamente pelo Tool Engine e pelo Permission System (implementados em fases futuras).
@@ -36,7 +37,8 @@ para múltiplos dispositivos e um futuro modo remoto.
 ```
 
 O `AIProvider` é uma interface abstrata (`generate`, `stream`, `analyze`, `health_check`).
-O `GeminiProvider` é a única implementação atual. O resto do sistema nunca depende do SDK.
+Implementações: `GeminiProvider`, `LocalLLMProvider` (local, via llama.cpp) e
+`DeterministicProvider` (safety). O resto do sistema nunca depende do SDK.
 
 ## Stack
 
@@ -62,7 +64,7 @@ backend/
 │   ├── ai/
 │   │   ├── core.py                # AI Core (Fase 11) — orquestra provedor + caminho + observabilidade
 │   │   ├── registry.py            # AI Router (Fase 11) — seleção/fallback de provedores
-│   │   └── providers/             # base.py (AIProvider) + gemini.py + deterministic.py (safety fallback)
+│   │   └── providers/             # base.py (AIProvider) + gemini.py + local_llm.py + deterministic.py (safety)
 │   ├── api/                       # rotas (health, chat, memory, approvals, permissions, audit, system, ops)
 │   ├── computer/                  # SystemController (stats, processos, abrir/encerrar apps) — Fase 5
 │   ├── core/                      # config, logging estruturado, enums (estados/permissões)
@@ -228,16 +230,26 @@ O **AI Core** (`app/ai/core.py`) orquestra cada turno do chat e o **AI Router**
 
 - **AI Router**: resolve o primeiro provedor **configurado** que atende à tarefa
   (`generate`/`embed`), com fallback automático. A ordem vem de `AI_PROVIDER_ORDER`
-  (padrão `gemini,deterministic`). O **Gemini deixou de ser obrigatório**.
+  (padrão `local,gemini,deterministic`). O **Gemini deixou de ser obrigatório**.
+- **LocalLLMProvider** (`app/ai/providers/local_llm.py`) — **motor principal local**:
+  LLM generativo via **llama.cpp** (`qwen2.5-3b-instruct-q4_k_m`) rodando 100% na
+  máquina com `llama-cpp-python`, **sem rede e sem chave API**. Modelo de embedding
+  separado (`nomic-embed-text-v1.5`, 768-dim). Implementa o mesmo contrato
+  `AIProvider` (`generate`/`stream`/`analyze`/`embed`/`tools`/`health_check`),
+  carrega o GGUF de forma **lazy e compartilhada** (singleton), executa em
+  `asyncio.to_thread`, e faz **tool calling** próprio (parse do formato texto
+  `<tool_call>` do Qwen) — nunca executa ferramenta não registrada.
+  Config em `AI_LOCAL_LLM_*` (paths, `n_ctx`, `n_threads`, `temperature`);
+  desabilite com `AI_LOCAL_LLM_ENABLED=false` para voltar ao Gemini-only.
 - **DeterministicProvider** (`app/ai/providers/deterministic.py`) — *safety fallback*
-  local: responde de forma previsível e offline (horário, data, aritmética segura
+  final: responde de forma previsível e offline (horário, data, aritmética segura
   via AST, saudação). Sem LLM generativo e **sem** capacidade `tools`/`embed`.
-  A arquitetura já prevê registrar um **LLM local real** no futuro, sem refatorar
-  o Core.
 - **Observabilidade**: cada turno registra `execution_events` (tabela SQLite) —
   `chat.started`, `provider.selected`, `path.selected`, `chat.completed`,
-  `chat.failed` — sempre **sanitizado** (nunca conteúdo de mensagens, tokens,
-  chaves ou secrets). Fonte da Central de Operações.
+  `chat.failed`, além de `fallback_triggered` (quando o provedor primário falha e
+  cai no fallback) e `local_model.started/completed/failed` (ciclo do modelo local) —
+  sempre **sanitizado** (nunca conteúdo de mensagens, tokens, chaves ou secrets).
+  Fonte da Central de Operações.
 - **Central de Operações** (aba do SPA): `GET /api/ops/overview` (AI Core,
   provedores, memória, tarefas, tools, Atlas), `GET /api/ops/providers`,
   `GET /api/ops/providers/{name}/health`, `GET /api/ops/events`.
@@ -286,9 +298,11 @@ Envie `{"content": "...", "stream": true, "tools": true}` em
 
 ## Executar
 
-Ver `SETUP.md` para o passo a passo completo (venv, `.env`, testes). Sem `GEMINI_API_KEY`,
-o **AI Router** usa o **fallback determinístico** (modo de segurança) e o chat segue
-respondendo (horário/data/aritmética/saudação) — o Core nunca fica sem resposta.
+Ver `SETUP.md` para o passo a passo completo (venv, `.env`, testes). Sem `GEMINI_API_KEY`
+e até **offline**, o **AI Router** usa o **Local LLM** (motor generativo local) para
+conversar/escrever/codificar — e, se o modelo local também não estiver disponível, cai no
+**fallback determinístico** (modo de segurança: horário/data/aritmética/saudação). O Core
+nunca fica sem resposta.
 
 ## Roadmap (resumo)
 
