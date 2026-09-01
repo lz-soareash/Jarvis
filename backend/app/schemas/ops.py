@@ -45,3 +45,5 @@ class OpsOverview(APIModel):
     atlas: dict  # enabled, configured, base_url, detail
     system: dict  # db, version
     recent_events: list[ExecutionEventOut]
+    context: dict = {}  # Fase 11.3 (#1/#14): métricas do context budget
+    local_first: bool = False  # Fase 11.3 (#3): política LOCAL_FIRST

@@ -51,9 +51,16 @@ class Settings(BaseSettings):
     ai_local_llm_enabled: bool = True
     ai_local_llm_model_path: str = ""  # vazio → resolve em runtime
     ai_local_llm_embed_path: str = ""  # vazio → resolve em runtime
-    ai_local_llm_n_ctx: int = 2048
+    ai_local_llm_n_ctx: int = 4096  # Fase 11.3: seguro p/ 16GB CPU-only; gerido via context budget
     ai_local_llm_n_threads: int = 6  # 5600G: 6c/12t, threads físicas
     ai_local_llm_temperature: float = 0.7
+
+    # Fase 11.3 (#3): política LOCAL_FIRST — operações de computador reconhecidas
+    # pela Intent Detection são executadas deterministicamente sem depender de
+    # geração de tool call por um LLM remoto. O modelo local/remote continua
+    # usado para conversação, raciocínio e operações ambíguas. Não reintroduz
+    # dependência obrigatória do Gemini.
+    local_first: bool = True
 
     # Memória / Contexto (Fase 2)
     gemini_embed_model: str = "text-embedding-004"

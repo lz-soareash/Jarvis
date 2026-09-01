@@ -22,6 +22,7 @@ const els = {
   ttsToggle: document.getElementById("tts-toggle"),
   wakeBtn: document.getElementById("wake-btn"),
   composerHint: document.getElementById("composer-hint"),
+  voiceStatus: document.getElementById("voice-status"),
   agentState: document.getElementById("agent-state"),
   dbState: document.getElementById("db-state"),
   aiState: document.getElementById("ai-state"),
@@ -157,13 +158,45 @@ function handleMicBlocked() {
   pendingStart = null;
   handsFree = false;
   commanding = false;
+  micDenied = true;
   setWakeVisual("off");
   setListeningVisual(false);
   showMicHint(
     "Microfone bloqueado: habilitar em Privacidade > Microfone (Windows) e no site do navegador."
   );
   console.warn("[voz] permissão de microfone negada");
+  updateVoiceIndicators();
 }
+
+/* Fase 11.3 (#11) — indicadores de estado de voz no HUD:
+   VOICE READY / VOICE UNAVAILABLE / VOICE MIC DENIED / SPEECH SYNTH UNAVAILABLE. */
+function updateVoiceIndicators() {
+  if (!els.voiceStatus) return;
+  if (!voiceSupported) {
+    els.voiceStatus.hidden = false;
+    els.voiceStatus.className = "voice-badge is-err";
+    els.voiceStatus.textContent = "VOZ INDISPONÍVEL";
+    return;
+  }
+  const ttsAvailable =
+    ttsSupported || Boolean(speech && speech.ttsSupported);
+  const parts = [];
+  let level = "is-ok";
+  parts.push("VOZ OK");
+  if (!ttsAvailable) {
+    parts.push("SINT FALA INDISPONÍVEL");
+    level = "is-warn";
+  }
+  if (micDenied) {
+    parts.push("MIC NEGADO");
+    level = "is-err";
+  }
+  els.voiceStatus.hidden = false;
+  els.voiceStatus.className = "voice-badge " + level;
+  els.voiceStatus.textContent = parts.join(" · ");
+}
+
+let micDenied = false;
 
 function clearTimer(t) {
   if (t) clearTimeout(t);
@@ -564,6 +597,9 @@ async function loadSessions() {
 
 async function createSession() {
   try {
+    // Fase 11.3 (#11) — troca de sessão limpa transientes de voz.
+    stopVoiceTransients();
+    stopSpeech();
     const s = await apiJSON("/api/sessions", { method: "POST", body: JSON.stringify({}) });
     currentSessionId = s.id;
     els.input.value = "";
@@ -578,6 +614,11 @@ async function createSession() {
 async function deleteSession(id) {
   if (id === currentSessionId && streaming) return;
   try {
+    // Fase 11.3 (#11) — limpa voz antes de excluir a sessão ativa.
+    if (id === currentSessionId) {
+      stopVoiceTransients();
+      stopSpeech();
+    }
     await apiJSON(`/api/sessions/${id}`, { method: "DELETE" });
     if (id === currentSessionId) {
       currentSessionId = null;
@@ -594,6 +635,9 @@ async function deleteSession(id) {
 
 async function selectSession(id) {
   if (streaming) return;
+  // Fase 11.3 (#11) — troca de sessão limpa transientes de voz.
+  stopVoiceTransients();
+  stopSpeech();
   currentSessionId = id;
   els.input.value = "";
   await openSessionView(id);
@@ -848,6 +892,10 @@ function init() {
   if (localStorage.getItem("jarvis.handsfree") === "1") toggleHandsFree();
   if ("speechSynthesis" in window) window.speechSynthesis.getVoices(); // pré-carrega vozes (Chrome)
   bindSpeakingState();
+  updateVoiceIndicators();
+  if (speech) {
+    speech.probeNeural().then(updateVoiceIndicators);
+  }
 
   document.querySelectorAll(".suggestion").forEach((chip) => {
     chip.addEventListener("click", () => {

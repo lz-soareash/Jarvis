@@ -400,11 +400,18 @@ async def _sse_with_fallback(
 
     Só recorre ao fallback quando o primário falhou antes de qualquer resposta
     textual (não houve `chunk` nem `done`), evitando respostas duplicadas.
+
+    Fase 11.3 (#3): se uma ferramenta JÁ foi executada com sucesso no turno
+    primário (`tool_done` com `ok:true`), o turno NÃO recorre ao fallback —
+    o efeito colateral já ocorreu no computador e reprocessar com outro provider
+    poderia RE-EXECUTAR a mesma tool. Nesse caso apenas o erro de texto é
+    reportado.
     """
     errored = False
+    tool_executed_ok = False
 
     async def _try(prov: AIProvider):
-        nonlocal errored
+        nonlocal errored, tool_executed_ok
         value = make_generator(prov)
         gen = await value if inspect.isawaitable(value) else value
         async for item in gen:
@@ -415,6 +422,8 @@ async def _sse_with_fallback(
                 continue
             if payload.get("type") == "error":
                 errored = True
+            elif payload.get("type") == "tool_done" and payload.get("ok") is True:
+                tool_executed_ok = True
             yield item
 
     ok = False
@@ -427,6 +436,16 @@ async def _sse_with_fallback(
         ok = False
 
     if ok:
+        return
+
+    # Não recomo o turno a outro provider se já houve efeito colateral (tool ok).
+    if tool_executed_ok:
+        logger.warning(
+            "Fallback suprimido: ferramenta já executada com sucesso no turno "
+            "primário (evita re-execução) — path=%s, provider=%s",
+            path,
+            provider.name,
+        )
         return
 
     fallback = router.fallback_for(provider, task="generate")

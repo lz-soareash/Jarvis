@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session as OrmSession
 from app.ai.providers.base import AIProvider, AIProviderError
 from app.core.config import settings
 from app.models import Message, Session, utcnow
-from app.schemas.ai import AIMessage
+from app.schemas.ai import AIMessage, ToolCall
 from app.schemas.chat import MessageOut, SessionOut
 
 from . import memory as memory_service
@@ -146,11 +146,50 @@ def build_ai_messages(
     session = db.get(Session, session_id)
     start = session.summarized_count if session is not None else 0
     window = rows[start:][-limit:]
-    return [
-        AIMessage(role=row.role, content=row.content)
-        for row in window
-        if row.role in ("user", "assistant")
-    ]
+
+    ai: list[AIMessage] = []
+    for row in window:
+        if row.role == "user":
+            ai.append(AIMessage(role="user", content=row.content))
+        elif row.role == "assistant":
+            ai.append(AIMessage(role="assistant", content=row.content))
+            # Fase 11.3 (#2): reconstrói tool calls/results persistidos para que
+            # o modelo veja que a ferramenta JÁ FOI executada — evitando que um
+            # tool call antigo volte e seja re-executado num turno seguinte.
+            meta = _parse_meta(row.metadata_json)
+            for ex in meta.get("tools_executed") or []:
+                tcall = ToolCall(
+                    name=ex.get("tool", ""),
+                    arguments=ex.get("arguments") or {},
+                    call_id=ex.get("execution_id") or ex.get("call_id"),
+                )
+                if not tcall.name:
+                    continue
+                ai.append(AIMessage(role="assistant", content="", tool_calls=[tcall]))
+                out = ex.get("output")
+                if out is None:
+                    out = ex.get("error") or "(falha na execução)"
+                ai.append(
+                    AIMessage(
+                        role="tool",
+                        tool_name=tcall.name,
+                        tool_call_id=tcall.call_id,
+                        content=str(out),
+                    )
+                )
+    return ai
+
+
+def _parse_meta(metadata_json: str | None) -> dict:
+    if not metadata_json:
+        return {}
+    try:
+        import json
+
+        data = json.loads(metadata_json)
+        return data if isinstance(data, dict) else {}
+    except (ValueError, TypeError):
+        return {}
 
 
 async def build_system_prompt(

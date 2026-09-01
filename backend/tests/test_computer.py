@@ -5,6 +5,7 @@ import json
 import pytest
 
 from app.computer import controller as computer_module
+from app.computer.controller import SystemControllerError
 from app.schemas.ai import ToolCall
 
 
@@ -168,3 +169,58 @@ def test_system_processes_endpoint(client, fake_computer):
     data = client.get("/api/system/processes", params={"limit": 2}).json()
     assert data == fake_computer.processes[:2]
     assert client.get("/api/system/processes", params={"limit": 200}).status_code == 200
+
+
+# ---------------------------------------------------------------- Fase 11.3 #5
+# Mídia/volume usam keybd_event + VK codes reais (SendKeys não suporta tokens
+# {MEDIA_*}/{VOLUME_*}).
+class _FakeUser32:
+    def __init__(self):
+        self.keydown = []
+        self.keyup = []
+
+    def keybd_event(self, vk, scan, flags, extra):
+        flags = int(flags)
+        if flags == 0x0000:
+            self.keydown.append(int(vk))
+        elif flags == 0x0002:
+            self.keyup.append(int(vk))
+        else:  # pragma: no cover
+            raise AssertionError(f"flags inesperadas: {flags}")
+
+
+def _patch_user32(monkeypatch):
+    fake = _FakeUser32()
+    # WinDLL("user32", ...) deve retornar o próprio fake (que tem keybd_event).
+    monkeypatch.setattr(
+        computer_module.ctypes, "WinDLL", lambda *a, **k: fake
+    )
+    return fake
+
+
+def test_send_vk_non_windows_raises(monkeypatch):
+    monkeypatch.setattr(computer_module.sys, "platform", "linux")
+    with pytest.raises(SystemControllerError):
+        computer_module._send_vk(0xB3)
+
+
+@pytest.mark.parametrize(
+    "method,vk",
+    [
+        ("play_media", 0xB3),
+        ("pause_media", 0xB3),
+        ("next_track", 0xB0),
+        ("previous_track", 0xB1),
+        ("volume_up", 0xAF),
+        ("volume_down", 0xAE),
+        ("mute", 0xAD),
+    ],
+)
+def test_media_and_volume_use_correct_vk(monkeypatch, method, vk):
+    fake = _patch_user32(monkeypatch)
+    monkeypatch.setattr(computer_module.sys, "platform", "win32")
+    controller = computer_module.SystemController()
+    getattr(controller, method)()
+    # keydown e keyup do mesmo VK foram enviados.
+    assert fake.keydown == [vk]
+    assert fake.keyup == [vk]

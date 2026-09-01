@@ -10,6 +10,7 @@ Fase 11.2 adiciona: media, volume, URLs, Windows control, verificação pós-exe
 e application aliases (via app.computer.aliases).
 """
 
+import ctypes
 import json
 import logging
 import os
@@ -59,17 +60,35 @@ Get-CimInstance Win32_Process |
 
 _KILL_SCRIPT = "Stop-Process -Id {pid} -Force -ErrorAction Stop"
 
-# --- Media: envia teclas de mídia via Windows API ---
-_MEDIA_KEY_SCRIPT = r"""
-Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.SendKeys]::SendWait("{keys}")
-"""
+# --- Media/Volume: Virtual-Key codes enviados via user32.keybd_event ---
+# SendKeys não reconhece tokens {MEDIA_*}/{VOLUME_*} — usa-se keybd_event com
+# os VK codes reais (Fase 11.3, #5).
+_VK_MEDIA_NEXT_TRACK = 0xB0
+_VK_MEDIA_PREV_TRACK = 0xB1
+_VK_MEDIA_PLAY_PAUSE = 0xB3
+_VK_VOLUME_MUTE = 0xAD
+_VK_VOLUME_DOWN = 0xAE
+_VK_VOLUME_UP = 0xAF
 
-# --- Volume: envia teclas de volume ---
-_VOLUME_KEY_SCRIPT = r"""
-Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.SendKeys]::SendWait("{keys}")
-"""
+def _send_vk(vk: int) -> None:
+    """Envia um Virtual-Key code via user32.keybd_event (sem janela).
+
+    keybd_event é assíncrono por natureza — não exige janela ativa e funciona
+    para teclas de mídia/volume do sistema. Substitui o SendKeys (que não
+    suporta {MEDIA_*}/{VOLUME_*}).
+    """
+    if sys.platform != "win32":
+        raise SystemControllerError("keybd_event disponível apenas no Windows")
+    try:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        KEYEVENTF_KEYDOWN = 0x0000
+        KEYEVENTF_KEYUP = 0x0002
+        # keybd_event(vk, scan, flags, extra) — ctypes converte ints nativos.
+        user32.keybd_event(vk, 0, KEYEVENTF_KEYDOWN, 0)
+        user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
+    except Exception as exc:  # noqa: BLE001
+        raise SystemControllerError(f"Não foi possível enviar a tecla (VK {vk:#x}): {exc}") from exc
+
 
 # --- Windows Control ---
 _SHUTDOWN_SCRIPT = "shutdown /s /t 0"
@@ -358,28 +377,28 @@ class SystemController:
         """Inicia/reproduz mídia (play/pause toggle)."""
         if not self._is_windows:
             raise SystemControllerError("play_media disponível apenas no Windows")
-        _run_ps(_MEDIA_KEY_SCRIPT.format(keys="{MEDIA_PLAY_PAUSE}"))
+        _send_vk(_VK_MEDIA_PLAY_PAUSE)
         return "Mídia: play/pause"
 
     def pause_media(self) -> str:
         """Pausa mídia (play/pause toggle)."""
         if not self._is_windows:
             raise SystemControllerError("pause_media disponível apenas no Windows")
-        _run_ps(_MEDIA_KEY_SCRIPT.format(keys="{MEDIA_PLAY_PAUSE}"))
+        _send_vk(_VK_MEDIA_PLAY_PAUSE)
         return "Mídia: pausada"
 
     def next_track(self) -> str:
         """Próxima faixa de mídia."""
         if not self._is_windows:
             raise SystemControllerError("next_track disponível apenas no Windows")
-        _run_ps(_MEDIA_KEY_SCRIPT.format(keys="{MEDIA_NEXT}"))
+        _send_vk(_VK_MEDIA_NEXT_TRACK)
         return "Mídia: próxima faixa"
 
     def previous_track(self) -> str:
         """Faixa anterior de mídia."""
         if not self._is_windows:
             raise SystemControllerError("previous_track disponível apenas no Windows")
-        _run_ps(_MEDIA_KEY_SCRIPT.format(keys="{MEDIA_PREV}"))
+        _send_vk(_VK_MEDIA_PREV_TRACK)
         return "Mídia: faixa anterior"
 
     # -------------------------------------------------------------- volume
@@ -387,21 +406,21 @@ class SystemController:
         """Aumenta o volume."""
         if not self._is_windows:
             raise SystemControllerError("volume_up disponível apenas no Windows")
-        _run_ps(_VOLUME_KEY_SCRIPT.format(keys="{VOLUME_UP}"))
+        _send_vk(_VK_VOLUME_UP)
         return "Volume aumentado"
 
     def volume_down(self) -> str:
         """Diminui o volume."""
         if not self._is_windows:
             raise SystemControllerError("volume_down disponível apenas no Windows")
-        _run_ps(_VOLUME_KEY_SCRIPT.format(keys="{VOLUME_DOWN}"))
+        _send_vk(_VK_VOLUME_DOWN)
         return "Volume diminuído"
 
     def mute(self) -> str:
         """Alterna mudo."""
         if not self._is_windows:
             raise SystemControllerError("mute disponível apenas no Windows")
-        _run_ps(_VOLUME_KEY_SCRIPT.format(keys="{VOLUME_MUTE}"))
+        _send_vk(_VK_VOLUME_MUTE)
         return "Volume: mudo alternado"
 
     # -------------------------------------------------------- windows control

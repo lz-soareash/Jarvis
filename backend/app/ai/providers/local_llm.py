@@ -187,6 +187,70 @@ def _serialize_messages(
     return messages, tool_defs
 
 
+def _apply_fit(
+    chat_messages: list[dict],
+    *,
+    system: str | None,
+    tools: list[ToolDeclaration] | None,
+    tool_defs: list[dict] | None,
+    n_ctx: int,
+    max_tokens_out: int,
+    tokenizer_fn,
+    provider: str,
+    model: str,
+):
+    """Aplica o context budget nas mensagens serializadas (thread separada).
+
+    Usa o tokenizer real do llama.cpp para medir; no fallback (tokenizer sem
+    método tokenize) a heurística do módulo de contexto é usada. Retorna
+    (messages, tool_defs, fit) — registrando truncamento via logger.
+    """
+    from app.ai import context as ctx
+
+    # `_serialize_messages` já embute o system no topo de chat_messages.
+    # Separa o system para contagem correta (sem dupla contagem) e re-insere
+    # intacto ao final.
+    sys_content = None
+    body = list(chat_messages)
+    if system is not None and body and body[0].get("role") == "system":
+        sys_content = body[0].get("content")
+        body = body[1:]
+
+    tokenizer = None
+    try:
+        llm = tokenizer_fn()
+        if hasattr(llm, "tokenize"):
+            tokenizer = llm.tokenize
+    except Exception:  # noqa: BLE001
+        tokenizer = None
+
+    fit = ctx.fit_context(
+        body,
+        system=sys_content,
+        tools=tools,
+        n_ctx=n_ctx,
+        max_tokens_out=max_tokens_out,
+        tokenizer=tokenizer,
+        clip_current=True,
+    )
+
+    final = fit.messages
+    if sys_content is not None:
+        final = [{"role": "system", "content": sys_content}] + final
+
+    if fit.truncated:
+        logger.warning(
+            "Contexto truncado (%s): %d/%d tokens, %d mensagens antigas descartadas "
+            "(profile=%s)",
+            model,
+            fit.used_tokens,
+            fit.limit_tokens,
+            fit.dropped_old_messages,
+            ctx.json.dumps(fit.profile, ensure_ascii=False),
+        )
+    return final, (tool_defs if tools else None), fit
+
+
 class LocalLLMProvider(AIProvider):
     """Provedor generativo local (chato, streaming, análise, embeddings).
 
@@ -280,13 +344,30 @@ class LocalLLMProvider(AIProvider):
     ) -> AIResponse:
         llm = await asyncio.to_thread(self._get_llm)
         chat_messages, tool_defs = _serialize_messages(messages, system, tools)
+        out_tokens = max_tokens or 256
+
+        # Fase 11.3 (#1) — context budget: mede e trunca inteligentemente.
+        fit = await asyncio.to_thread(
+            lambda: _apply_fit(
+                chat_messages,
+                system=system,
+                tools=tools,
+                tool_defs=tool_defs,
+                n_ctx=self._n_ctx,
+                max_tokens_out=out_tokens,
+                tokenizer_fn=lambda: llm,
+                provider=self.name,
+                model=self.model or os.path.basename(self._model_path),
+            )
+        )
+        chat_messages, tool_defs, _ = fit
 
         def _call():
             return llm.create_chat_completion(
                 messages=chat_messages,
                 tools=tool_defs,
                 tool_choice="auto" if tool_defs else None,
-                max_tokens=max_tokens or 256,
+                max_tokens=out_tokens,
                 temperature=self._temperature if temperature is None else temperature,
             )
 

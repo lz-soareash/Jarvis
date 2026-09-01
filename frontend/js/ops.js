@@ -14,6 +14,7 @@ const OpsView = (() => {
     aiBody: document.getElementById("ops-ai-body"),
     providersBody: document.getElementById("ops-providers-body"),
     systemBody: document.getElementById("ops-system-body"),
+    contextBody: document.getElementById("ops-context-body"),
     memoryBody: document.getElementById("ops-memory-body"),
     toolsBody: document.getElementById("ops-tools-body"),
     tasksBody: document.getElementById("ops-tasks-body"),
@@ -97,6 +98,23 @@ const OpsView = (() => {
     els.systemBody.innerHTML = `
       <div class="ops-row"><span>Banco de dados</span><b>${sys?.db ? "ok" : "erro"}</b></div>
       <div class="ops-row"><span>Versão</span><b>${esc(sys?.version) || "—"}</b></div>
+    `;
+  }
+
+  function renderContext(ctx, localFirst) {
+    if (!els.contextBody) return;
+    const use = ctx?.used_tokens_est != null ? ctx.used_tokens_est : "—";
+    const limit = ctx?.limit_tokens != null ? ctx.limit_tokens : "—";
+    const truncated = ctx?.truncated_est
+      ? '<span class="ops-badge ops-badge--warn">truncado</span>'
+      : '<span class="ops-badge ops-badge--ok">integral</span>';
+    const policy = localFirst
+      ? '<span class="ops-badge ops-badge--ok">LOCAL_FIRST</span>'
+      : '<span class="ops-badge">LLM-first</span>';
+    els.contextBody.innerHTML = `
+      <div class="ops-row"><span>Contexto (estimado)</span><b>${esc(use)} / ${esc(limit)} tok ${truncated}</b></div>
+      <div class="ops-row"><span>Política</span><b>${policy}</b></div>
+      <div class="ops-muted ops-note">Operações conhecidas são executadas deterministicamente pela Intent Detection.</div>
     `;
   }
 
@@ -200,6 +218,7 @@ const OpsView = (() => {
       renderAI(data.ai_core);
       renderProviders(data.providers);
       renderSystem(data.system);
+      renderContext(data.context, data.local_first);
       renderMemory(data.memory);
       renderTools(data.tools);
       renderTasks(data.tasks);

@@ -399,6 +399,38 @@
   text-shadow: 0 0 12px rgba(255, 80, 100, 0.45);
 }
 
+/* ---- indicador de voz (Fase 11.3, #11) ---- */
+.voice-badge {
+  font-size: 0.62em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(56, 208, 255, 0.35);
+  color: var(--color-arc);
+  background: rgba(56, 208, 255, 0.08);
+  white-space: nowrap;
+}
+
+.voice-badge.is-ok {
+  color: #7cffa9;
+  border-color: rgba(124, 255, 169, 0.4);
+  background: rgba(124, 255, 169, 0.08);
+}
+
+.voice-badge.is-warn {
+  color: var(--color-warning);
+  border-color: var(--color-warning-soft);
+  background: rgba(255, 202, 57, 0.08);
+}
+
+.voice-badge.is-err {
+  color: #ff6b7a;
+  border-color: rgba(255, 107, 122, 0.45);
+  background: rgba(255, 107, 122, 0.1);
+}
+
 /* ---------------- Empty state (arc-reactor) ---------------- */
 .empty {
   display: flex;

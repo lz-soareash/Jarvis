@@ -147,6 +147,33 @@
   gap: var(--space-2);
 }
 
+.ops-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  background: var(--color-surface-2);
+}
+
+.ops-badge--ok {
+  color: var(--color-success);
+  border-color: rgba(47, 230, 165, 0.4);
+  background: rgba(47, 230, 165, 0.08);
+}
+
+.ops-badge--warn {
+  color: var(--color-warning);
+  border-color: var(--color-warning-soft);
+  background: rgba(255, 202, 57, 0.08);
+}
+
 .ops-list {
   list-style: none;
   margin: var(--space-2) 0 0;

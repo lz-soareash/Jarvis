@@ -202,6 +202,13 @@ def build_overview(db: OrmSession) -> OpsOverview:
     if last:
         fallback_active = last[0].status == "fallback"
 
+    # Fase 11.3 (#1/#14): último contexto mensurado (sanitizado — só contagens)
+    context_meta: dict = {}
+    ctx_event = list_events(db, event_type="context.budget", limit=1)
+    if ctx_event:
+        out = to_out(ctx_event[0])
+        context_meta = dict(out.meta or {})
+
     return OpsOverview(
         ai_core=OpsAICore(
             active_provider=primary.name if primary else None,
@@ -216,6 +223,8 @@ def build_overview(db: OrmSession) -> OpsOverview:
         atlas=_atlas_stats(),
         system=_system_stats(),
         recent_events=[to_out(e) for e in list_events(db, limit=20)],
+        context=context_meta,
+        local_first=bool(settings.local_first),
     )
 
 
