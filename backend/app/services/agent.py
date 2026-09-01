@@ -1,4 +1,4 @@
-"""Agente (Tool Engine — Fases 3 e 4): modelo propõe chamadas, Core decide e executa.
+"""Agente (Tool Engine — Fases 3, 4 e 11.2): modelo propõe chamadas, Core decide e executa.
 
 Loop determinístico e limitado: a cada rodada o provedor pode propor N chamadas
 de ferramenta; o Core valida contra o registro (nunca executa chamadas
@@ -8,6 +8,10 @@ modelo responder por texto. Tudo transcorre via SSE.
 Fase 4 — Permissions: ferramentas com nível ≥ 2 geram um pedido de aprovação e
 o turno pausa (`approval_pending`). O usuário decide pela API e o `run_agent`
 retoma, transformando a decisão em resultado de ferramenta para o modelo.
+
+Fase 11.2 — Intent Detection: quando o LLM não gera tool_calls mas o texto
+contém uma solicitação claramente operacional, a camada determinística de
+detecção de intenção verifica e executa a ferramenta apropriada.
 """
 
 import logging
@@ -195,11 +199,85 @@ async def run_agent(
             yield sse_event(event)
 
     final_text = ""
+    _intent_triggered = False
     try:
         for round_index in range(1, settings.max_tool_rounds + 1):
             response = await provider.generate(messages, system=system, tools=declarations)
 
             if not response.tool_calls:
+                # Fase 11.2 — Intent Detection: verifica se o texto contém
+                # uma solicitação operacional clara que o LLM não converteu
+                # em tool_call. Só aciona uma vez por turno.
+                if not _intent_triggered:
+                    from app.ai.intent import detect_intent
+
+                    intent = detect_intent(user_text)
+                    if intent is not None and intent.tool_call.name in [
+                        t.name for t in tool_registry.get_tool_registry().all()
+                    ]:
+                        _intent_triggered = True
+                        logger.info(
+                            "Intent detection: %s (conf=%.2f) — texto sem tool_call",
+                            intent.tool_call.name,
+                            intent.confidence,
+                        )
+                        audit_service.log_action(
+                            db,
+                            action="intent.detected",
+                            session_id=session_id,
+                            tool=intent.tool_call.name,
+                            allowed=None,
+                            detail=f"confidence={intent.confidence:.2f}",
+                        )
+                        yield sse_event(
+                            {
+                                "type": "tool_start",
+                                "round": round_index,
+                                "names": [intent.tool_call.name],
+                            }
+                        )
+                        results, pending = await _execute_tool_calls(
+                            db, session_id, provider, [intent.tool_call]
+                        )
+                        if pending:
+                            for approval in pending:
+                                yield sse_event(
+                                    {
+                                        "type": "approval_request",
+                                        "approval": approval_service.to_out(approval).model_dump(mode="json"),
+                                    }
+                                )
+                            yield sse_event(
+                                {
+                                    "type": "approval_pending",
+                                    "count": len(pending),
+                                    "approvals": [
+                                        approval_service.to_out(a).model_dump(mode="json")
+                                        for a in pending
+                                    ],
+                                }
+                            )
+                            audit_service.log_action(
+                                db,
+                                action="agent.paused",
+                                session_id=session_id,
+                                tool=", ".join(a.tool_name for a in pending),
+                                allowed=None,
+                                detail=f"aguardando decisão ({len(pending)})",
+                            )
+                            return
+                        messages.extend(provider.tool_result_message([intent.tool_call], results))
+                        for call, result in zip([intent.tool_call], results):
+                            event: dict = {"type": "tool_done", "name": call.name, "ok": result.ok}
+                            if result.ok:
+                                event["output"] = result.output
+                            else:
+                                event["detail"] = result.output
+                            yield sse_event(event)
+                        # Após executar a intent, continua o loop para o LLM
+                        # gerar a resposta final com base no resultado.
+                        continue
+
                 final_text = response.text
                 break
 

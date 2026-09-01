@@ -316,6 +316,10 @@ class LocalLLMProvider(AIProvider):
         temperature: float | None = None,
         max_tokens: int | None = None,
     ) -> AsyncIterator[str]:
+        """Streaming do LLM local. Fase 11.2: itera o generator em thread
+        separada para não bloquear o event loop do asyncio."""
+        import queue
+
         llm = await asyncio.to_thread(self._get_llm)
         chat_messages, _ = _serialize_messages(messages, system, None)
         kwargs = {
@@ -324,15 +328,44 @@ class LocalLLMProvider(AIProvider):
             "temperature": self._temperature if temperature is None else temperature,
             "stream": True,
         }
+
+        chunk_queue: queue.Queue[str | None] = queue.Queue()
+
+        def _generate():
+            """Roda em thread separada — itera o generator do llama.cpp."""
+            try:
+                stream = llm.create_chat_completion(**kwargs)
+                for chunk in stream:
+                    delta = chunk["choices"][0].get("delta") or {}
+                    text = delta.get("content")
+                    if text:
+                        chunk_queue.put(text)
+            except Exception as exc:  # noqa: BLE001
+                chunk_queue.put(exc)
+            finally:
+                chunk_queue.put(None)  # sentinel
+
+        # Inicia a geração em thread separada
+        loop = asyncio.get_event_loop()
+        thread = loop.run_in_executor(None, _generate)
+
         try:
-            stream = llm.create_chat_completion(**kwargs)
-            for chunk in stream:
-                delta = chunk["choices"][0].get("delta") or {}
-                text = delta.get("content")
-                if text:
-                    yield text
-        except Exception as exc:  # noqa: BLE001
-            raise AIProviderError(f"Local LLM indisponível: {exc}") from exc
+            while True:
+                try:
+                    chunk = await asyncio.to_thread(chunk_queue.get, timeout=120)
+                except Exception:
+                    break
+                if chunk is None:
+                    break
+                if isinstance(chunk, Exception):
+                    raise AIProviderError(f"Local LLM indisponível: {chunk}") from chunk
+                yield chunk
+        finally:
+            # Garante que a thread termine
+            try:
+                await thread
+            except Exception:  # noqa: BLE001
+                pass
 
     async def analyze(
         self, text: str, *, instruction: str | None = None

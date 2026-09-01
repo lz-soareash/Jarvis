@@ -566,6 +566,7 @@ async function createSession() {
   try {
     const s = await apiJSON("/api/sessions", { method: "POST", body: JSON.stringify({}) });
     currentSessionId = s.id;
+    els.input.value = "";
     await openSessionView(s.id);
     await loadSessions();
     closeDrawerOnMobile();
@@ -580,6 +581,7 @@ async function deleteSession(id) {
     await apiJSON(`/api/sessions/${id}`, { method: "DELETE" });
     if (id === currentSessionId) {
       currentSessionId = null;
+      els.input.value = "";
       els.messages.innerHTML = "";
       els.messages.hidden = true;
       els.emptyState.hidden = false;
@@ -593,6 +595,7 @@ async function deleteSession(id) {
 async function selectSession(id) {
   if (streaming) return;
   currentSessionId = id;
+  els.input.value = "";
   await openSessionView(id);
   await loadSessions();
   closeDrawerOnMobile();

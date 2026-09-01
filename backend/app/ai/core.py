@@ -16,6 +16,7 @@ Esses eventos (tabela `execution_events`) alimentam a Central de Operações.
 import inspect
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import AsyncIterator
@@ -49,12 +50,52 @@ class CoreTurn:
     error: str | None = None
 
 
+# ---------------------------------------------------------------------------
+# Fase 11.2 — Atlas condicional: detecta solicitações operacionais
+# ---------------------------------------------------------------------------
+
+# Padrões que indicam solicitação operacional (computer control)
+_OP_PATTERNS = re.compile(
+    r"\b(?:abra|abrir|abre|feche|fechar|fecha|toque|pause|pausar|mute|silenciar"
+    r"|aumente|diminua|volume|bloquei|suspenda|reini?ci?e?|desligue|desligar"
+    r"|quanto\s+(?:de\s+)?(?:ram|mem[óo]ria|CPU|disco|espa[çc]o)"
+    r"|como\s+(?:est[áa]|vai)\s+(?:o\s+)?computador"
+    r"|status\s+(?:do\s+)?computador|processos?|explorador|terminal|notepad"
+    r"|vs\s*code|chrome|firefox|spotify|edge|powershell|cmd|youtube|github"
+    r"|pr[óo]xima|anterior|track|sleep|shutdown|reboot|lock)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_operational_request(content: str) -> bool:
+    """Verifica se o conteúdo é uma solicitação operacional (computer control).
+
+    Retorna True se o texto contiver padrões claros de operação no computador,
+    indicando que Atlas não precisa ser consultado (reduz latência).
+    """
+    if not content:
+        return False
+    return bool(_OP_PATTERNS.search(content))
+
+
 async def _run_summary_best_effort(db: OrmSession, session_id: str, provider: AIProvider) -> None:
-    """Resumo rolante (Fase 2) — best-effort, nunca interrompe o turno."""
+    """Resumo rolante (Fase 2) — best-effort, não bloqueia o turno.
+
+    Fase 11.2: executa como tarefa em background via asyncio.create_task
+    para não adicionar latência ao turno do chat.
+    """
+    import asyncio
+
+    async def _do_summary():
+        try:
+            await summarizer.summarize_chunk(db, session_id=session_id, provider=provider)
+        except Exception:  # noqa: BLE001 — resumo é best-effort
+            logger.exception("Resumo periódico falhou (best-effort)")
+
     try:
-        await summarizer.summarize_chunk(db, session_id=session_id, provider=provider)
-    except Exception:  # noqa: BLE001 — resumo é best-effort
-        logger.exception("Resumo periódico falhou (best-effort)")
+        asyncio.create_task(_do_summary())
+    except Exception:  # noqa: BLE001
+        logger.debug("Não foi possível agendar resumo em background")
 
 
 async def handle_message(
@@ -99,8 +140,12 @@ async def handle_message(
 
     await _run_summary_best_effort(db, session_id, provider)
 
-    # Fase 10 — Atlas como camada externa de inteligência (preservada).
-    atlas_response = atlas_route(db, session_id, content)
+    # Fase 11.2 — Atlas condicional: só consulta Atlas para consultas de
+    # conhecimento/contexto. Para solicitações operacionais (computer control),
+    # pula Atlas para reduzir latência.
+    atlas_response = None
+    if not _is_operational_request(content):
+        atlas_response = atlas_route(db, session_id, content)
     if atlas_response is not None:
         ops.record_event(
             db,

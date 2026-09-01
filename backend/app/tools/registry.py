@@ -44,24 +44,72 @@ _default_registry: ToolRegistry | None = None
 
 def build_default_registry() -> ToolRegistry:
     from .builtins import GetSystemInfo, GetTime, RecallMemory, StoreMemory
-    from .computer import GetSystemStats, KillProcess, ListProcesses, OpenApp
+    from .computer import (
+        CloseApplication,
+        GetSystemStats,
+        GetSystemStatus,
+        KillProcess,
+        ListProcesses,
+        LockComputer,
+        Mute,
+        NextTrack,
+        OpenApplication,
+        OpenFile,
+        OpenFolder,
+        OpenUrl,
+        PauseMedia,
+        PlayMedia,
+        PreviousTrack,
+        RestartComputer,
+        RunAllowedCommand,
+        ShutdownComputer,
+        SleepComputer,
+        StopProcess,
+        VolumeDown,
+        VolumeUp,
+    )
     from .developer import DevDiagnostics, DevGetConfig, DevGetToolSchema, DevListTools
     from .filesystem import DeletePath, ListDir, MakeDir, ReadFile, WriteFile
 
     registry = ToolRegistry()
+    # Builtin tools
     registry.register(GetTime())
     registry.register(GetSystemInfo())
     registry.register(StoreMemory())
     registry.register(RecallMemory())
+    # Computer tools — LEVEL 0
     registry.register(GetSystemStats())
+    registry.register(GetSystemStatus())
     registry.register(ListProcesses())
-    registry.register(OpenApp())
+    registry.register(PlayMedia())
+    registry.register(PauseMedia())
+    registry.register(NextTrack())
+    registry.register(PreviousTrack())
+    registry.register(VolumeUp())
+    registry.register(VolumeDown())
+    registry.register(Mute())
+    # Computer tools — LEVEL 1
+    registry.register(OpenApplication())
+    registry.register(OpenUrl())
+    registry.register(OpenFile())
+    registry.register(OpenFolder())
+    # Computer tools — LEVEL 2
+    registry.register(CloseApplication())
+    registry.register(StopProcess())
+    registry.register(RunAllowedCommand())
+    # Computer tools — LEVEL 3
     registry.register(KillProcess())
+    registry.register(LockComputer())
+    registry.register(SleepComputer())
+    registry.register(RestartComputer())
+    registry.register(ShutdownComputer())
+    # Filesystem tools
     registry.register(ListDir())
     registry.register(ReadFile())
     registry.register(WriteFile())
     registry.register(MakeDir())
     registry.register(DeletePath())
+    # Developer tools
     registry.register(DevListTools())
     registry.register(DevGetToolSchema())
     registry.register(DevGetConfig())
