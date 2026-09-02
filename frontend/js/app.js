@@ -14,6 +14,7 @@ const els = {
   newSession: document.getElementById("new-session"),
   chatWindow: document.getElementById("chat-window"),
   emptyState: document.getElementById("empty-state"),
+  orb: document.getElementById("orb"),
   messages: document.getElementById("messages"),
   inputForm: document.getElementById("input-form"),
   input: document.getElementById("input"),
@@ -71,7 +72,18 @@ function appendMessageDOM(role, content, meta = "") {
 
   const msg = document.createElement("div");
   msg.className = `msg msg-${role}`;
-  msg.textContent = content;
+  if (role === "assistant") {
+    const body = document.createElement("div");
+    body.className = "msg-body";
+    if (window.Markdown) {
+      window.Markdown.render(body, content);
+    } else {
+      body.textContent = content;
+    }
+    msg.appendChild(body);
+  } else {
+    msg.textContent = content;
+  }
   if (meta) {
     const time = document.createElement("span");
     time.className = "msg-meta";
@@ -113,6 +125,39 @@ function formatTime(iso) {
   const d = new Date(iso);
   if (isNaN(d)) return "";
   return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
+
+/* ---------- Orb central (Fase 4) — estados visuais ----------
+   Estados: idle · listening · thinking · executing · speaking · error.
+   Comunica o estado atual do JARVIS visualmente (aria-hidden, decorativo). */
+let orbErrorTimer = null;
+
+/* Erro pontual de envio — borda danger temporária no composer-field (§13) */
+let composerErrTimer = null;
+
+function flashComposerError() {
+  const field = els.inputForm && els.inputForm.querySelector(".composer-field");
+  if (!field) return;
+  field.classList.add("is-error");
+  clearTimer(composerErrTimer);
+  composerErrTimer = setTimeout(() => {
+    composerErrTimer = null;
+    field.classList.remove("is-error");
+  }, 2600);
+}
+
+function setOrbState(state) {
+  const el = els.orb;
+  if (!el || el.dataset.state === state) return;
+    el.dataset.state = state;
+    if (window.OpsView && window.OpsView.notifyOrb) window.OpsView.notifyOrb(state);
+    if (state === "error") {
+    clearTimer(orbErrorTimer);
+    orbErrorTimer = setTimeout(() => {
+      orbErrorTimer = null;
+      if (el.dataset.state === "error") setOrbState("idle");
+    }, 2600);
+  }
 }
 
 /* ---------- voz (Fase 6/6b) — Web Speech API, 100% no navegador ----------
@@ -217,6 +262,7 @@ function setListeningVisual(on) {
   els.voiceBtn.setAttribute("aria-label", on ? "Parar de falar" : "Falar com o Jarvis");
   els.voiceBtn.title = on ? "Parar" : "Falar";
   els.inputForm.classList.toggle("is-listening", on);
+  setOrbState(on ? "listening" : "idle");
 }
 
 function setWakeVisual(mode) {
@@ -266,14 +312,14 @@ function buildRecognizer() {
 
     if (manualDictation) {
       els.input.value = text;
-      els.input.scrollLeft = els.input.scrollWidth;
+      autosizeArea();
       return;
     }
     if (!handsFree) return;
 
     if (commanding) {
       els.input.value = text;
-      els.input.scrollLeft = els.input.scrollWidth;
+      autosizeArea();
       scheduleCommandSubmit();
       return;
     }
@@ -286,7 +332,7 @@ function buildRecognizer() {
     setWakeVisual("speaking");
     if (command) {
       els.input.value = command;
-      els.input.scrollLeft = els.input.scrollWidth;
+      autosizeArea();
       scheduleCommandSubmit();
     } else {
       startCaptureSession();
@@ -517,6 +563,7 @@ function bindSpeakingState() {
   if (!speech) return;
   speech.onStateChange = (state) => {
     els.statusDot.classList.toggle("is-speaking", state === "speaking");
+    setOrbState(state === "speaking" ? "speaking" : listening ? "listening" : "idle");
     if (els.composerHint) {
       els.composerHint.classList.toggle("is-speaking-v", state === "speaking");
       if (state === "speaking" && !manualDictation && !handsFree) {
@@ -603,6 +650,8 @@ async function createSession() {
     const s = await apiJSON("/api/sessions", { method: "POST", body: JSON.stringify({}) });
     currentSessionId = s.id;
     els.input.value = "";
+    autosizeArea();
+    if (els.sendBtn) els.sendBtn.classList.remove("has-text");
     await openSessionView(s.id);
     await loadSessions();
     closeDrawerOnMobile();
@@ -623,6 +672,8 @@ async function deleteSession(id) {
     if (id === currentSessionId) {
       currentSessionId = null;
       els.input.value = "";
+      autosizeArea();
+      if (els.sendBtn) els.sendBtn.classList.remove("has-text");
       els.messages.innerHTML = "";
       els.messages.hidden = true;
       els.emptyState.hidden = false;
@@ -640,6 +691,8 @@ async function selectSession(id) {
   stopSpeech();
   currentSessionId = id;
   els.input.value = "";
+  autosizeArea();
+  if (els.sendBtn) els.sendBtn.classList.remove("has-text");
   await openSessionView(id);
   await loadSessions();
   closeDrawerOnMobile();
@@ -668,11 +721,17 @@ async function openSessionView(id) {
 /* ---------- envio / SSE ---------- */
 
 function ensureStreamContent(bubble) {
-  let node = bubble.querySelector(".msg-stream");
+  let body = bubble.querySelector(".msg-body");
+  if (!body) {
+    body = document.createElement("div");
+    body.className = "msg-body";
+    bubble.insertBefore(body, bubble.firstChild);
+  }
+  let node = body.querySelector(".msg-stream");
   if (!node) {
     node = document.createElement("div");
     node.className = "msg-stream";
-    bubble.insertBefore(node, bubble.firstChild);
+    body.appendChild(node);
   }
   return node;
 }
@@ -801,16 +860,111 @@ function handleSSELine(line, bubbleEl) {
     const span = document.createElement("span");
     span.className = "msg-meta";
     span.textContent = meta;
+    // Re-renderiza apenas o corpo (markdown), preservando tool-feed/meta.
+    const body = bubbleEl.querySelector(".msg-body");
+    const fullText = content.textContent;
+    content.remove();
+    if (window.Markdown && body && fullText) {
+      window.Markdown.render(body, fullText);
+    }
     bubbleEl.appendChild(span);
+    completeToolFeed(bubbleEl);
     if (event.message?.content) speak(event.message.content);
+    setOrbState("idle");
   } else if (event.type === "error") {
     content.textContent = event.detail || "Erro ao gerar resposta.";
     bubbleEl.classList.add("msg-error");
+    setOrbState("error");
   } else if (event.type === "approval_request") {
     renderApprovalCard(event.approval, bubbleEl);
     scrollChatToBottom();
+  } else if (event.type === "tool_start") {
+    setOrbState("executing");
+    showToolRunning(bubbleEl, event.names || []);
+  } else if (event.type === "tool_done") {
+    setOrbState("thinking");
+    markToolDone(bubbleEl, event.name, event);
   }
-  /* tool_start / tool_done / approval_pending: progresso implícito no card */
+}
+
+/* ---------------- Tool Execution Feedback (Fase 7) ---------------- */
+
+function toolFeedOf(bubbleEl) {
+  let feed = bubbleEl.querySelector(".tool-feed");
+  if (!feed) {
+    feed = document.createElement("div");
+    feed.className = "tool-feed";
+    const body = bubbleEl.querySelector(".msg-body");
+    if (body) {
+      body.after(feed);
+    } else {
+      bubbleEl.appendChild(feed);
+    }
+  }
+  return feed;
+}
+
+function toolItemKey(name) {
+  return ((name || "").trim() || "tool").toLowerCase().replace(/[^a-z0-9]+/gi, "_");
+}
+
+function toolItemOf(feed, name) {
+  const key = toolItemKey(name);
+  const hasEscape = !!(window.CSS && window.CSS.escape);
+  const q = hasEscape ? `[data-tool="${window.CSS.escape(key)}"]` : `[data-tool="${key}"]`;
+  let item = feed.querySelector(q);
+  if (!item) {
+    item = document.createElement("div");
+    item.className = "tool-feed-item tf-running";
+    item.dataset.tool = key;
+    const dot = document.createElement("span");
+    dot.className = "tf-dot";
+    const label = document.createElement("span");
+    label.className = "tf-label";
+    label.textContent = (name || "Ferramenta").replace(/_/g, " ");
+    item.append(dot, label);
+    feed.appendChild(item);
+  }
+  return item;
+}
+
+function showToolRunning(bubbleEl, names) {
+  const feed = toolFeedOf(bubbleEl);
+  const list = Array.isArray(names) && names.length ? names : [null];
+  for (const n of list) {
+    toolItemOf(feed, n).classList.remove("has-done", "tf-ok", "tf-fail");
+  }
+  scrollChatToBottom();
+}
+
+function markToolDone(bubbleEl, name, event) {
+  const feed = toolFeedOf(bubbleEl);
+  const item = toolItemOf(feed, name);
+  item.classList.remove("tf-running");
+  const ok = !!(event && event.ok);
+  item.classList.add(ok ? "tf-ok" : "tf-fail");
+  if (ok) {
+    // feedback desaparece discretamente no fim do turno (Fase 7 §4)
+    item.classList.add("has-done");
+    setTimeout(() => {
+      item.remove();
+    }, 460);
+  }
+  scrollChatToBottom();
+}
+
+function completeToolFeed(bubbleEl) {
+  const feed = bubbleEl.querySelector(".tool-feed");
+  if (!feed) {
+    // sem tools: nada a condensar
+    return;
+  }
+  feed.querySelectorAll(".tool-feed-item.tf-running").forEach((item) => {
+    item.classList.remove("tf-running");
+    item.classList.add("tf-waiting");
+  });
+  // removes itens concluídos (ok) que já fizeram fade;
+  // mantém durante a resposta e condensa ao final do turno.
 }
 
 async function sendMessage() {
@@ -821,9 +975,13 @@ async function sendMessage() {
   if (getVoiceEnabled()) stopSpeech();
 
   els.input.value = "";
+  autosizeArea();
+  const field = els.inputForm.querySelector(".composer-field");
+  if (field) field.classList.add("is-sending");
   appendMessageDOM("user", content, formatTime(new Date().toISOString()));
   const assistant = appendMessageDOM("assistant", "");
   setTyping(true);
+  setOrbState("thinking");
 
   try {
     const res = await fetch(`/api/sessions/${currentSessionId}/messages`, {
@@ -862,20 +1020,45 @@ async function sendMessage() {
   } catch (err) {
     assistant.textContent = `Falha de conexão: ${err.message}`;
     assistant.classList.add("msg-error");
+    flashComposerError();
   } finally {
+    const field = els.inputForm.querySelector(".composer-field");
+    if (field) field.classList.remove("is-sending");
     setTyping(false);
+    setOrbState("idle");
     loadSessions();
     if (handsFree) scheduleWakeRearm();
   }
 }
 
 /* ---------- init ---------- */
+function autosizeArea() {
+  const el = els.input;
+  if (!el) return;
+  el.style.height = "auto";
+  el.style.height = Math.min(el.scrollHeight, 152) + "px";
+}
+
 function init() {
   console.info("[voz] STT:", voiceSupported, "| TTS local:", ttsSupported);
   els.inputForm.addEventListener("submit", (e) => {
     e.preventDefault();
     sendMessage();
   });
+  // Enter envia; Shift+Enter quebra linha (textarea) — Fase 6.
+  if (els.input && els.input.tagName === "TEXTAREA") {
+    els.input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+        e.preventDefault();
+        els.inputForm.requestSubmit();
+      }
+    });
+    els.input.addEventListener("input", () => {
+      autosizeArea();
+      els.sendBtn.classList.toggle("has-text", els.input.value.trim().length > 0);
+    });
+    autosizeArea();
+  }
   els.newSession.addEventListener("click", createSession);
   els.menuToggle.addEventListener("click", () => toggleDrawer());
   els.sessionsBackdrop.addEventListener("click", () => toggleDrawer(false));

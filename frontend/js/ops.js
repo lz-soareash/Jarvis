@@ -11,6 +11,16 @@ const OpsView = (() => {
     tabChat: document.getElementById("tab-chat"),
     tabOps: document.getElementById("tab-ops"),
     refresh: document.getElementById("ops-refresh"),
+    ovMode: document.getElementById("ops-ov-mode"),
+    ovBadge: document.getElementById("ops-ov-badge"),
+    ovContext: document.getElementById("ops-ov-context"),
+    ovPolicy: document.getElementById("ops-ov-policy"),
+    ovActivity: document.getElementById("ops-ov-activity"),
+    aiCard: document.getElementById("ops-ai"),
+    providersCard: document.getElementById("ops-providers"),
+    systemCard: document.getElementById("ops-system"),
+    toolsCard: document.getElementById("ops-tools"),
+    tasksCard: document.getElementById("ops-tasks"),
     aiBody: document.getElementById("ops-ai-body"),
     providersBody: document.getElementById("ops-providers-body"),
     systemBody: document.getElementById("ops-system-body"),
@@ -26,6 +36,23 @@ const OpsView = (() => {
   const COMPOSER = document.getElementById("input-form");
 
   let open = false;
+  let orbState = "idle";
+
+  /* Sincroniza com o Orb (app.js) — integração visual com ferramenta em execução §13.
+     Não altera contrato/backend; apenas observa o estado decorativo. */
+  function notifyOrb(state) {
+    orbState = state || "idle";
+    if (open && els.ovActivity) {
+      els.ovActivity.textContent =
+        state === "executing"
+          ? "executando ferramenta"
+          : state === "thinking"
+            ? "processando"
+            : state === "speaking"
+              ? "respondendo"
+              : "ociosa";
+    }
+  }
 
   /* ---------- navegação ---------- */
   function setView(showOps) {
@@ -206,6 +233,71 @@ const OpsView = (() => {
       "</ul>";
   }
 
+  /* ---------- estado geral (Nível 1) §13 ---------- */
+  function setCardState(card, state) {
+    if (!card) return;
+    card.classList.remove("has-warn", "has-err");
+    if (state === "warn") card.classList.add("has-warn");
+    else if (state === "err") card.classList.add("has-err");
+  }
+
+  function renderOverview(data) {
+    if (!els.ovBadge) return;
+    const core = data.ai_core || {};
+    const sys = data.system || {};
+    const routerOk = !!core.router_ready;
+    const dbOk = sys?.db !== false;
+    const localFirst = !!data.local_first;
+
+    // Nível de estado global: READY / ATENÇÃO / ERRO
+    let state = "ok";
+    let label = "PRONTO";
+    if (dbOk === false) {
+      state = "err";
+      label = "BANCO DE DADOS";
+    } else if (core.fallback_active) {
+      state = "warn";
+      label = "FALLBACK";
+    } else if (!routerOk) {
+      state = "warn";
+      label = "SEM PROVEDOR IA";
+    }
+
+    els.ovBadge.textContent = localFirst ? "READY" : "PRONTO";
+    els.ovBadge.className =
+      "ops-ov-badge " +
+      (state === "ok"
+        ? "is-ok"
+        : state === "warn"
+          ? "is-warn"
+          : "is-err");
+    if (els.ovMode) els.ovMode.textContent = localFirst ? "LOCAL" : "LLM-FIRST";
+    if (els.ovContext) {
+      const ctx = data.context || {};
+      const use = ctx.used_tokens_est != null ? ctx.used_tokens_est : "—";
+      const limit = ctx.limit_tokens != null ? ctx.limit_tokens : "—";
+      els.ovContext.textContent = `${use} / ${limit}`;
+    }
+    if (els.ovPolicy) els.ovPolicy.textContent = localFirst ? "LOCAL_FIRST" : "LLM-FIRST";
+
+    // Estados por card (sistema/ferramentas)
+    const ex = data.tasks?.recent_executions || [];
+    const hasPending = ex.some((a) => a.action === "tool.execute" && a.allowed === null);
+    setCardState(els.systemCard, dbOk === false ? "err" : null);
+    setCardState(els.providersCard, !routerOk ? "warn" : null);
+    setCardState(els.aiCard, core.fallback_active ? "warn" : null);
+    setCardState(els.tasksCard, hasPending ? "warn" : null);
+
+    if (els.ovActivity) {
+      const ex = data.tasks?.recent_executions || [];
+      const pending = ex.some((a) => a.action === "tool.execute" && a.allowed === null);
+      if (orbState === "executing") els.ovActivity.textContent = "executando ferramenta";
+      else if (orbState === "thinking") els.ovActivity.textContent = "processando";
+      else if (orbState === "speaking") els.ovActivity.textContent = "respondendo";
+      else els.ovActivity.textContent = pending ? "aprovação pendente" : "ociosa";
+    }
+  }
+
   async function apiJSON(path) {
     const res = await fetch(path);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -215,6 +307,7 @@ const OpsView = (() => {
   async function load() {
     try {
       const data = await apiJSON("/api/ops/overview");
+      renderOverview(data);
       renderAI(data.ai_core);
       renderProviders(data.providers);
       renderSystem(data.system);
@@ -237,7 +330,7 @@ const OpsView = (() => {
     if (els.refresh) els.refresh.addEventListener("click", () => load());
   }
 
-  return { init, load, setView, isOpen: () => open };
+  return { init, load, setView, notifyOrb, isOpen: () => open };
 })();
 
 if (typeof window !== "undefined") {

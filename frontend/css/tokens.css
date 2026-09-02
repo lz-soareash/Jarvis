@@ -4,26 +4,37 @@
    brilho azul, sem caos holográfico.
    ============================================================= */
 :root {
-  /* ---------- Cores ---------- */
+  /* ================================================================
+     CORES ORIGINAIS — não remover, são a base de todas as referências.
+     Remoção gradual será feita nas fases seguintes.
+     ================================================================ */
+
+  /* Background */
   --color-bg: #05080f;
   --color-bg-elev: #07101d;
   --color-surface: #0b1524;
   --color-surface-2: #101d31;
+
+  /* Borders */
   --color-border: #1b2a41;
   --color-border-strong: #2c4363;
 
+  /* Text */
   --color-text: #e8f4ff;
   --color-text-secondary: #9fb6d9;
-  --color-text-muted: #5f7396;
+  --color-text-muted: #72889f;
 
+  /* Primary (cyan / electric blue) */
   --color-primary: #2fd0ff;
   --color-primary-hover: #63e0ff;
   --color-primary-active: #18a9e6;
   --color-primary-soft: rgba(47, 208, 255, 0.12);
 
+  /* Secondary (blue) */
   --color-secondary: #4d8dff;
   --color-secondary-soft: rgba(77, 141, 255, 0.14);
 
+  /* State colors */
   --color-success: #2fe6a5;
   --color-success-soft: rgba(47, 230, 165, 0.12);
   --color-warning: #ffc25e;
@@ -31,14 +42,57 @@
   --color-error: #ff7a8f;
   --color-error-soft: rgba(255, 122, 143, 0.12);
 
+  /* Brand gradient */
   --gradient-brand: linear-gradient(120deg, #7ce8ff 0%, #3aa8ff 55%, #2f6bff 140%);
 
-  /* Referências "arc" (reator / brilho de energia) */
+  /* Arc-reactor / energy glow */
   --color-arc: #7ce8ff;
   --arc-glow: 0 0 18px rgba(56, 182, 255, 0.4);
   --arc-glow-strong: 0 0 34px rgba(56, 208, 255, 0.55);
 
-  /* ---------- Tipografia ---------- */
+  /* ================================================================
+     ALIASES — nomes curtos para novas fases.
+     Referenciam os tokens originais; migrar gradualmente.
+     ================================================================ */
+
+  /* Background */
+  --bg-primary: var(--color-bg);
+  --bg-secondary: var(--color-bg-elev);
+  --bg-surface: var(--color-surface);
+  --bg-surface-2: var(--color-surface-2);
+  --bg-overlay: rgba(5, 8, 15, 0.85);
+
+  /* Borders */
+  --border: var(--color-border);
+  --border-strong: var(--color-border-strong);
+
+  /* Text */
+  --text-primary: var(--color-text);
+  --text-secondary: var(--color-text-secondary);
+  --text-muted: var(--color-text-muted);
+
+  /* Accent (primary cyan) */
+  --accent: var(--color-primary);
+  --accent-hover: var(--color-primary-hover);
+  --accent-active: var(--color-primary-active);
+  --accent-soft: var(--color-primary-soft);
+  --accent-secondary: var(--color-secondary);
+  --accent-secondary-soft: var(--color-secondary-soft);
+
+  /* State */
+  --success: var(--color-success);
+  --success-soft: var(--color-success-soft);
+  --warning: var(--color-warning);
+  --warning-soft: var(--color-warning-soft);
+  --danger: var(--color-error);
+  --danger-soft: var(--color-error-soft);
+
+  /* Arc / Brand (sem alteração) */
+  --arc: var(--color-arc);
+
+  /* ================================================================
+     TIPOGRAFIA
+     ================================================================ */
   --font-ui: "Segoe UI", system-ui, -apple-system, "Inter", Roboto, Arial, sans-serif;
   --font-mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, "Courier New", monospace;
 
@@ -56,7 +110,9 @@
   --leading-normal: 1.5;
   --leading-loose: 1.7;
 
-  /* ---------- Espaçamento (escala 4px) ---------- */
+  /* ================================================================
+     ESPAÇAMENTO (escala 4px)
+     ================================================================ */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -66,38 +122,51 @@
   --space-7: 48px;
   --space-8: 64px;
 
-  /* ---------- Forma ---------- */
+  /* ================================================================
+     FORMA
+     ================================================================ */
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 14px;
   --radius-xl: 20px;
   --radius-full: 999px;
 
-  /* ---------- Sombras ---------- */
+  /* ================================================================
+     SOMBRAS
+     ================================================================ */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.38);
   --shadow-lg: 0 14px 40px rgba(0, 0, 0, 0.5);
   --focus-ring: 0 0 0 3px rgba(47, 208, 255, 0.3);
 
-  /* ---------- Movimento ---------- */
+  /* ================================================================
+     MOVIMENTO
+     ================================================================ */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
   --dur-fast: 140ms;
   --dur-base: 220ms;
   --dur-slow: 320ms;
 
-  /* ---------- Z-index ---------- */
+  /* ================================================================
+     Z-INDEX
+     ================================================================ */
   --z-header: 30;
   --z-backdrop: 40;
   --z-drawer: 50;
   --z-toast: 60;
 
-  /* ---------- Breakpoints ---------- */
+  /* ================================================================
+     BREAKPOINTS
+     ================================================================ */
   --bp-desktop: 901px;
   --bp-tablet: 900px;
   --bp-mobile: 640px;
 }
 
+/* ================================================================
+   ACCESSIBILITY — prefers-reduced-motion
+   ================================================================ */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -105,5 +174,6 @@
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
   }
 }
