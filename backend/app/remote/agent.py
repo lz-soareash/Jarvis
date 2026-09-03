@@ -352,6 +352,36 @@ class RemoteAgent:
             payload=payload,
         )
 
+    def deliver_result(self, command_id: str, payload: dict[str, Any]) -> None:
+        """Fase 12.4 — entrega best-effort de um resultado à Gateway ativa.
+
+        NUNCA lança e NUNCA é requisito para a execução: o resultado já foi
+        persistido de forma transacional antes desta chamada. Se não houver
+        conexão ativa (device offline), o cliente recupera via endpoint de
+        consulta (`GET /remote/commands/{device}/{command}`).
+        """
+        gateway = self._gateway
+        if gateway is None or not getattr(gateway, "connected", False):
+            return
+        try:
+            envelope = self._build_reply(command_id, payload)
+            self._spawn_send(gateway, envelope)
+        except Exception as exc:  # noqa: BLE001 — push é best-effort
+            logger.warning("push de resultado falhou (command=%s): %s", command_id, _brief(exc))
+
+    def _spawn_send(self, gateway: Any, envelope: RemoteEnvelope) -> None:
+        """Dispara o envio sem bloquear/esperar (fire-and-forget)."""
+        try:
+            asyncio.get_running_loop().create_task(self._safe_send(gateway, envelope))
+        except RuntimeError:  # sem loop ativo
+            pass
+
+    async def _safe_send(self, gateway: Any, envelope: RemoteEnvelope) -> None:
+        try:
+            await gateway.send_message(envelope)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("envio de resultado falhou: %s", _brief(exc))
+
     # -- helpers --------------------------------------------------------------
 
     def _set_health(self, **kw: Any) -> None:

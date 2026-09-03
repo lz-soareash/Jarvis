@@ -97,6 +97,20 @@ def get_remote_status() -> dict[str, Any] | None:
     return agent.snapshot()
 
 
+def deliver_command_result(device_id: str, command_id: str, payload: dict[str, Any]) -> bool:
+    """Fase 12.4 — entrega best-effort do resultado à Gateway do device.
+
+    Só entrega se houver agente ativo E a conexão dele pertencer a este device
+    E a conexão estiver viva. Falhas/push desconectado são SILENCIOSOS (o
+    cliente recupera via `GET /remote/commands/{device}/{command}`).
+    """
+    agent = _agent
+    if agent is None or agent.device_id != device_id:
+        return False
+    agent.deliver_result(command_id, payload)
+    return True
+
+
 def reset_remote_gateway() -> None:
     """Zera o singleton (usado em testes/fixtures)."""
     global _agent

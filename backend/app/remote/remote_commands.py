@@ -88,6 +88,16 @@ def get_command(db: OrmSession, device_id: str, command_id: str) -> RemoteComman
     ).first()
 
 
+def get_command_by_approval(db: OrmSession, approval_id: str) -> RemoteCommand | None:
+    """Fase 12.4 — comando aguardando um pedido de aprovação específico."""
+    return db.scalars(
+        select(RemoteCommand).where(
+            RemoteCommand.approval_id == approval_id,
+            RemoteCommand.status == RemoteCommandStatus.PENDING_APPROVAL.value,
+        )
+    ).first()
+
+
 def _claim_for_execution(db: OrmSession, device_id: str, command_id: str) -> RemoteCommand:
     """Marca um comando como EXECUTING (apenas se ainda estiver REGISTERED).
 
@@ -170,3 +180,22 @@ def command_meta(cmd: RemoteCommand) -> dict[str, Any]:
         "expires_at": cmd.expires_at,
         "executed_at": cmd.executed_at,
     }
+
+
+def command_detail(cmd: RemoteCommand) -> dict[str, Any]:
+    """Detalhe público de um comando (Fase 12.4) p/ o endpoint de consulta.
+
+    Inclui o resultado sanitizado (sem payload de entrada cru jamais retornado
+    fora do necessário). `result` é o output textual do tool; `error` só quando
+    houve falha/negação.
+    """
+    detail = command_meta(cmd)
+    detail["result"] = None
+    detail["error"] = None
+    if cmd.result_json:
+        try:
+            detail["result"] = json.loads(cmd.result_json).get("output")
+        except (ValueError, TypeError):  # noqa: BLE001
+            detail["result"] = None
+    detail["error"] = cmd.error
+    return detail

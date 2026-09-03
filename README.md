@@ -70,9 +70,11 @@ backend/
 │   ├── core/                      # config, logging estruturado, enums (estados/permissões)
 │   ├── db/                        # SQLAlchemy (Base, engine, sessão)
 │   ├── models/                    # Session / Message / Memory / ExecutionEvent / governança (SQLAlchemy 2.x)
-│   ├── remote/                    # Fase 12.1+12.2 — transporte Gateway + identidade/credenciais/pairing
+│   ├── remote/                    # Fase 12.1..12.4 — transporte Gateway + identidade + comandos
 │   │   ├── protocol.py, connection.py, manager.py, gateway.py, runtime.py   # 12.1
-│   │   └── crypto/devices/credentials/sessions/pairing/auth/registrar/identity_events  # 12.2
+│   │   ├── crypto/devices/credentials/sessions/pairing/auth/registrar/identity_events  # 12.2
+│   │   └── agent/executor/remote_commands/jarvis_session/status            # 12.3
+│   │   └── resume                                                           # 12.4
 │   ├── schemas/                   # modelos Pydantic base (inclui ToolCall/Declaration, ops)
 │   ├── services/                  # chat, memory, summarizer, agent, approvals, permissions, audit, ops, atlas
 │   ├── tools/                     # Tool Engine: base, registry, builtins (tempo, sistema, memória, computador)
@@ -313,7 +315,8 @@ Suíte de testes (do diretório `backend/`):
 ..\.venv\Scripts\python -m pytest -q
 ```
 
-**353 testes verdes** (282 da Fase 12.1 + 58 da Fase 12.2 + 13 da Fase 12.3). Os testes são
+**361 testes verdes** (282 da Fase 12.1 + 58 da Fase 12.2 + 13 da Fase 12.3 + 8 da Fase
+12.4). Os testes são
 herméticos: forçam `ENV=test`, `GEMINI_API_KEY=""`, `DATABASE_URL=sqlite:///:memory:`,
 `ATLAS_ENABLED=false`, `AI_LOCAL_LLM_ENABLED=false` e `REMOTE_ENABLED=false` **antes** de
 importar o app — nunca tocam serviços reais nem o `.env` da máquina.
@@ -399,9 +402,36 @@ Também aditivo: com `REMOTE_ENABLED=false` (padrão) **zero comportamento novo*
   payload sensível.
 - **Status** (`GET /api/remote/status`): `RemoteHealthState` somente para observabilidade
   (connection_state, authenticated, healthy, reconnect_count, last_error, …).
-- **Fora de escopo (próximas da 12.x)**: retomada/entrega de resultado pós-aprovação (12.4),
-  UI/SSE mobile, Wake-on-LAN. O dispositivo continua **local-first**; a Gateway não é o cérebro
-  nem executa tools Windows.
+- **Fora de escopo desta fase**: UI/SSE mobile e Wake-on-LAN. O dispositivo continua
+  **local-first**; a Gateway não é o cérebro nem executa tools Windows.
+
+## Retomada pós-aprovação de comandos remotos (Fase 12.4)
+
+Um comando remoto de nível ≥ 2 fica `PENDING_APPROVAL` até o usuário decidir. Esta fase
+**entrega o resultado da decisão** sem criar um loop de agente novo — a execução continua
+via o pipeline interno (Tool Registry → Permission Engine → AuditLog → `agent._run_tool`).
+
+- **Ligação Approval ↔ Comando**: `RemoteCommand.approval_id` aponta para o
+  `ApprovalRequest` criado na chegada do comando (Fase 12.3) — ligação estável e
+  independente da conexão.
+- **`app/remote/resume.py`** (`resume_remote_command`): aplica a decisão de forma
+  **transacional e offline-safe**. Aprovado → re-claim (PENDING_APPROVAL → EXECUTING),
+  executa via `_run_tool` e marca `EXECUTED/FAILED` (audita `remote.command.approved`);
+  negado → marca `FAILED` com "negado pelo usuário" (audita `remote.command.denied`), sem
+  executar tool.
+- **Entrega best-effort à Gateway** (`RemoteAgent.deliver_result` /
+  `runtime.deliver_command_result`): após persistir, tenta enviar o `COMMAND_RESULT` pela
+  conexão ativa do device. **Nunca lança e nunca é requisito da execução** — se o device
+  estiver offline, o resultado permanece consultável.
+- **Fonte de recuperação offline**: `GET /api/remote/commands/{device_id}/{command_id}`
+  devolve o resultado persistido (status, output sanitizado, erro), sem expor secrets.
+- **Wiring**: o endpoint de decisão (`POST /api/approvals/{id}/respond`) detecta approvals
+  de comando remoto pela ligação `approval_id` e retoma o comando remoto **em vez** de rodar
+  o loop do agente local (que continua intacto para o chat). `applied` é marcado no endpoint.
+- **`GET /api/remote/status`** agora reflete `pending_commands` (comandos em andamento,
+  incl. aguardando aprovação) a partir do banco.
+- **Fora de escopo (futuras da 12.x)**: UI/SSE mobile, Wake-on-LAN, re-entrega direcionada
+  por fila quando a Gateway assume o retry.
 
 ## Roadmap (resumo)
 
@@ -410,9 +440,10 @@ Também aditivo: com `REMOTE_ENABLED=false` (padrão) **zero comportamento novo*
 sanitização, provedores, SPEAKING) ✔ · 7. Filesystem ✔ · 8. Developer ✔ · 9. Mobile/Devices/PWA ✔ ·
 10. Atlas ✔ · 11. AI Core + Central de Operações ✔ · 12. Agent loop · 13. Web · 14. Visão ·
 15. Proativo · 16. Remote (foundation 12.1 ✔ + identidade/emparelhamento 12.2 ✔ + agente
-persistente/execução de comandos 12.3 ✔: transporte outbound + dispositivos/credenciais/pairing +
-agente com reconnect/backoff e comandos executados só via Permission Engine com aprovação para
-níveis ≥ 2; retomada pós-aprovação, UI/SSE mobile e Wake-on-LAN chegam em fases futuras da 12.x —
+persistente/execução de comandos 12.3 ✔ + retomada pós-aprovação/entrega 12.4 ✔: transporte
+outbound + dispositivos/credenciais/pairing + agente com reconnect/backoff, comandos executados
+só via Permission Engine com aprovação para níveis ≥ 2, e resultado da decisão entregue best-effort
+à Gateway + consultável offline; UI/SSE mobile e Wake-on-LAN chegam em fases futuras da 12.x —
 WoL exige ponto de entrada sempre-on) · 17. V1.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

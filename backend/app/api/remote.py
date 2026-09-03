@@ -61,7 +61,7 @@ def _pairing_error_to_status(exc: PairingError) -> HTTPException:
 
 
 @router.get("/remote/status", response_model=RemoteStatusOut)
-def remote_status() -> RemoteStatusOut:
+def remote_status(db: OrmSession = Depends(get_db)) -> RemoteStatusOut:
     enabled = bool(settings.remote_enabled)
     configured = bool(enabled and settings.remote_device_id)
     out: dict = {
@@ -74,11 +74,21 @@ def remote_status() -> RemoteStatusOut:
         ),
     }
     if enabled:
+        from app.remote import remote_commands as cmd_service
         from app.remote.runtime import get_remote_status
 
         snapshot = get_remote_status()
         if snapshot is not None:
             out.update(snapshot)  # observabilidade sanitizada (sem secrets)
+        # Fase 12.4 — comandos em andamento (incl. aguardando aprovação) p/ o device.
+        if settings.remote_device_id:
+            active = cmd_service.list_commands(
+                db,
+                device_id=settings.remote_device_id,
+                active_only=True,
+            )
+            out["pending_commands"] = len(active)
+        return RemoteStatusOut(**out)
     return RemoteStatusOut(**out)
 
 
@@ -216,6 +226,25 @@ def remote_end_session(session_id: str, db: OrmSession = Depends(get_db)) -> Emp
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return Empty(ok=True)
+
+
+@router.get("/remote/commands/{device_id}/{command_id}", response_model=dict)
+def remote_get_command(
+    device_id: str, command_id: str, db: OrmSession = Depends(get_db)
+) -> dict:
+    """Fase 12.4 — consulta o resultado persistido de um comando remoto.
+
+    Fonte de recuperação offline: mesmo que a entrega pela conexão falhe, o
+    cliente obtém o resultado EXECUTED/FAILED/DENIED aqui. Nunca expõe secrets
+    (apenas o output textual sanitizado e metadados).
+    """
+    _require_remote()
+    from app.remote import remote_commands as cmd_service
+
+    cmd = cmd_service.get_command(db, device_id, command_id)
+    if cmd is None:
+        raise HTTPException(status_code=404, detail="Comando não encontrado")
+    return cmd_service.command_detail(cmd)
 
 
 @router.post("/remote/auth", response_model=AuthOut)

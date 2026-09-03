@@ -203,6 +203,13 @@ class RemoteCommand(Base):
     )
     result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Aprovação que governa este comando (Fase 12.4): quando um comando de
+    # nível ≥ 2 é pausado em PENDING_APPROVAL, este registro guarda o
+    # ApprovalRequest correspondente, ligando a decisão do usuário ao comando
+    # exato a ser retomado (estável, independe da conexão WebSocket).
+    approval_id: Mapped[str | None] = mapped_column(
+        ForeignKey("approval_requests.id"), nullable=True, index=True
+    )
 
     __table_args__ = (
         Index("ix_remote_commands_device_cmd", "device_id", "command_id", unique=True),

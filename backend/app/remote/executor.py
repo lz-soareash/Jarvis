@@ -125,6 +125,7 @@ async def execute_remote_command(
             permission_level=level.value,
             risk=(tool.risk.value if tool is not None else "low"),
         )
+        cmd.approval_id = approval.id  # Fase 12.4: liga o comando à aprovação
         cmd_service.mark_pending_approval(db, cmd)
         audit_service.log_action(
             db, action=AUDIT_REMOTE_APPROVAL, session_id=jarvis_session_id,
