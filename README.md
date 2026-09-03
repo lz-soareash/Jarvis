@@ -70,6 +70,9 @@ backend/
 │   ├── core/                      # config, logging estruturado, enums (estados/permissões)
 │   ├── db/                        # SQLAlchemy (Base, engine, sessão)
 │   ├── models/                    # Session / Message / Memory / ExecutionEvent / governança (SQLAlchemy 2.x)
+│   ├── remote/                    # Fase 12.1+12.2 — transporte Gateway + identidade/credenciais/pairing
+│   │   ├── protocol.py, connection.py, manager.py, gateway.py, runtime.py   # 12.1
+│   │   └── crypto/devices/credentials/sessions/pairing/auth/registrar/identity_events  # 12.2
 │   ├── schemas/                   # modelos Pydantic base (inclui ToolCall/Declaration, ops)
 │   ├── services/                  # chat, memory, summarizer, agent, approvals, permissions, audit, ops, atlas
 │   ├── tools/                     # Tool Engine: base, registry, builtins (tempo, sistema, memória, computador)
@@ -304,13 +307,112 @@ conversar/escrever/codificar — e, se o modelo local também não estiver dispo
 **fallback determinístico** (modo de segurança: horário/data/aritmética/saudação). O Core
 nunca fica sem resposta.
 
+Suíte de testes (do diretório `backend/`):
+
+```bat
+..\.venv\Scripts\python -m pytest -q
+```
+
+**353 testes verdes** (282 da Fase 12.1 + 58 da Fase 12.2 + 13 da Fase 12.3). Os testes são
+herméticos: forçam `ENV=test`, `GEMINI_API_KEY=""`, `DATABASE_URL=sqlite:///:memory:`,
+`ATLAS_ENABLED=false`, `AI_LOCAL_LLM_ENABLED=false` e `REMOTE_ENABLED=false` **antes** de
+importar o app — nunca tocam serviços reais nem o `.env` da máquina.
+
+## Infra remota (Fase 12.x — foundation 12.1)
+
+O **JARVIS se conecta a uma Gateway externa como CLIENTE** (`wss://…`, WebSocket outbound) —
+**nenhuma porta de entrada é aberta no PC**. Com `REMOTE_ENABLED=false` (padrão) **nenhum
+worker ou conexão é criado**: o flag é a chave para ativar tudo.
+
+- Flags (`backend/app/core/config.py` + `.env.example`): `REMOTE_ENABLED`, `REMOTE_GATEWAY_URL`,
+  `REMOTE_DEVICE_ID`, `REMOTE_DEVICE_TOKEN` (+ `REMOTE_HEARTBEAT_INTERVAL`,
+  `REMOTE_CONNECT_TIMEOUT`, `REMOTE_MAX_RECONNECT_DELAY`).
+- Package `app/remote/`: `protocol.py` (envelope versionado
+  `{version, type, message_id, device_id, command_id, timestamp, payload}` — campos extras são
+  rejeitados), `connection.py` (`RemoteConnection`, `WebSocketConnection` outbound,
+  `InMemoryConnection`/`MemoryPipe` em processo para testes), `manager.py` (receive loop +
+  heartbeat + despacho por tipo), `gateway.py` (`RemoteGateway` com auditoria/ops),
+  `runtime.py` (lifespan; ativa só se `should_start()`).
+- Tipos de mensagem: `hello, hello_ack, heartbeat, heartbeat_ack, command, command_ack,
+  command_result, error`. Estados: `DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING, STOPPING`.
+- Auditoria (`AuditLog`): `device_connected`, `device_disconnected`, `remote_connection_failed`,
+  `remote_message_received`, `remote_message_sent`. Ops (`ExecutionEvent`, prefixo `remote.*`),
+  sempre com metadados sanitizados.
+- Segurança: **o transporte nunca executa tools** (um `command` recebido é apenas acusado com
+  `execution: "not_implemented"`); o `REMOTE_DEVICE_TOKEN` só viaja no cabeçalho `Authorization`
+  e jamais em logs/auditoria/eventos.
+- Testes usam um **FakeGateway em processo** (`tests/remote_fakes.py`) — sem internet, sem portas.
+
+## Identidade, credenciais e emparelhamento (Fase 12.2)
+
+Camada de **identidade local** que a Fase 16 (Remote) usará para autenticar devices. Também
+aditiva e **desabilitada por padrão** — todos os endpoints devolvem `503` com
+`REMOTE_ENABLED=false`.
+
+- Modelos (`Device`, `Credential`, `PairingRequest`, `RemoteSession`) com as tabelas
+  `remote_*`; **tokens e pair-codes são armazenados somente como hash `sha256:`** e nunca
+  aparecem em logs/auditoria/ops/payloads.
+- **Identidade sempre derivada da credencial**: `device_id`/`pairing_id`/`session_id` alegados
+  pelo cliente nunca resolvem identidade — discrepância em `claimed_device_id` → rejeição
+  (audit sanitizado).
+- Emparelhamento: código de 10 dígitos (entropia uniforme), TTL (10 min), máx. 5 tentativas
+  por request, bloom/abuso global (gate com token-bucket), máx. 10 requests ativos, consumo
+  atômico (`UPDATE … WHERE status`) — single-use, sem replay de código.
+- Revogação (device → credenciais → sessões ativas), expiração e **múltiplas credenciais por
+  device**; verificação com `hmac.compare_digest` contra SÓ o hash.
+- Bootstrap local (§9): com `REMOTE_DEVICE_ID`+`REMOTE_DEVICE_TOKEN` no `.env`, o lifespan
+  cria o root device na primeira subida (idempotente; device revogado não ressuscita). O
+  `.env` é a fonte do segredo inicial; o banco guarda apenas o hash.
+- API (`/api/remote/*`, package `app/remote/`): `status`, `pairings` (create/submit),
+  `validate`, `devices`, `credentials`, `sessions`, `auth`. Regra mestre: **identidade nunca
+  concede bypass ao Permission Engine** — nenhum comando é executado por este caminho.
+- Auditoria/ops próprios (`remote.identity`): `device_created/authenticated/…`, `credential_*`,
+  `pairing_*`, `session_*` — com metadados sanitizados.
+- Fora de escopo desta fase (futuras da 12.x): execução remota de tools, Permission Engine
+  remoto, UI mobile, SSE, Wake-on-LAN e sync de sessões entre devices.
+
+## Agente remoto persistente e execução de comandos (Fase 12.3)
+
+Mantém **uma conexão persistente e segura** com a Gateway (outbound) e **executa comandos**
+recebidos — mas **sempre pelo pipeline interno existente**, sem duplicar regras de segurança.
+Também aditivo: com `REMOTE_ENABLED=false` (padrão) **zero comportamento novo**.
+
+- **Transporte**: reutiliza o WebSocket outbound da 12.1. Com novo `command_handler` na
+  `RemoteGateway`, um `command` recebido é roteado ao `RemoteAgent` (não mais acusado como
+  `not_implemented`).
+- **`RemoteAgent`** (`app/remote/agent.py`): supervisor que autentica com a Gateway
+  (`AuthRequest` → credencial), envia heartbeat, e reconecta com **backoff exponencial**
+  (`remote_reconnect_min_delay → max_delay` com jitter). **REVOKED é terminal** — uma
+  credencial revogada não dispara reconnect infinito. Despacha comandos sob um `asyncio.Lock`
+  (processamento serializado; sem dupla execução em reconnect).
+- **Idempotência atômica** (`app/remote/remote_commands.py`): cada comando é persistido na
+  tabela `remote_commands` com `command_id` UNIQUE por device ANTES de qualquer execução.
+  `REGISTERED → EXECUTING → EXECUTED|FAILED`, mais `PENDING_APPROVAL` e `EXPIRED` (TTL
+  `remote_command_ttl_seconds`). Reenvio do mesmo `command_id` → rejeitado (sem replay).
+- **executor** (`app/remote/executor.py`): **reutiliza** `Tool Registry`, `Permission Engine`
+  (`effective_level`), `AuditLog` e `agent._run_tool`. Níveis L0/L1 executam; **L2/L3 criam um
+  `ApprovalRequest` vinculado à Sessão JARVIS estável do device (`Device.jarvis_session_id`)**
+  e o comando fica `PENDING_APPROVAL` — nunca executa sem decisão do usuário. Payload/tool/
+  argumentos são validados (teto `remote_command_max_payload`); tool não registrada → `failed`.
+- **Identidade**: sempre derivada da credencial; o device deve estar `ACTIVE` (revalidação a
+  cada comando). Auditoria/status sanitizados — **nunca** token, credential, pairing code ou
+  payload sensível.
+- **Status** (`GET /api/remote/status`): `RemoteHealthState` somente para observabilidade
+  (connection_state, authenticated, healthy, reconnect_count, last_error, …).
+- **Fora de escopo (próximas da 12.x)**: retomada/entrega de resultado pós-aprovação (12.4),
+  UI/SSE mobile, Wake-on-LAN. O dispositivo continua **local-first**; a Gateway não é o cérebro
+  nem executa tools Windows.
+
 ## Roadmap (resumo)
 
 0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·
 4. Permissions ✔ · 5. Computer ✔ · 6. Voz (STT/TTS no navegador) ✔ · 6b. Voz (UX de fala: fila,
 sanitização, provedores, SPEAKING) ✔ · 7. Filesystem ✔ · 8. Developer ✔ · 9. Mobile/Devices/PWA ✔ ·
 10. Atlas ✔ · 11. AI Core + Central de Operações ✔ · 12. Agent loop · 13. Web · 14. Visão ·
-15. Proativo · 16. Remote (inclui Wake-on-LAN — ligar o PC pelo celular exige WoL + ponto de
-entrada sempre-on; só nesta fase) · 17. V1.
+15. Proativo · 16. Remote (foundation 12.1 ✔ + identidade/emparelhamento 12.2 ✔ + agente
+persistente/execução de comandos 12.3 ✔: transporte outbound + dispositivos/credenciais/pairing +
+agente com reconnect/backoff e comandos executados só via Permission Engine com aprovação para
+níveis ≥ 2; retomada pós-aprovação, UI/SSE mobile e Wake-on-LAN chegam em fases futuras da 12.x —
+WoL exige ponto de entrada sempre-on) · 17. V1.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

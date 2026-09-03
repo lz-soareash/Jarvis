@@ -63,3 +63,47 @@ class DeviceType(str, Enum):
     DESKTOP = "desktop"
     MOBILE = "mobile"
     WEB = "web"
+
+
+class DeviceStatus(str, Enum):
+    """Fase 12.2 — ciclo de vida de um device remoto (identidade)."""
+
+    PENDING = "pending"  # criado mas ainda não liberado para conexões
+    ACTIVE = "active"  # pode autenticar (pairing bem-sucedido / bootstrap)
+    REVOKED = "revoked"  # revogado — credenciais e sessões são invalidadas
+
+
+class PairingStatus(str, Enum):
+    """Fase 12.2 — ciclo de vida de um pedido de pairing.
+
+    O código curto existe apenas derivado (hash). `CONSUMED` é terminal e
+    single-use; `EXPIRED` cobre TTL e excesso de tentativas; `REVOKED` é
+    revogação administrativa.
+    """
+
+    CREATED = "created"
+    ACTIVE = "active"
+    CONSUMED = "consumed"
+    EXPIRED = "expired"
+    REVOKED = "revoked"
+
+
+class RemoteSessionStatus(str, Enum):
+    """Fase 12.2 — ciclo de vida de uma sessão remota (separada do device)."""
+
+    CREATED = "created"
+    AUTHENTICATED = "authenticated"
+    ACTIVE = "active"
+    ENDED = "ended"
+    REVOKED = "revoked"
+
+
+class RemoteCommandStatus(str, Enum):
+    """Fase 12.3 — ciclo de vida de um comando remoto (idempotência/rastreio)."""
+
+    REGISTERED = "registered"  # chegou, ainda não avaliado
+    PENDING_APPROVAL = "pending_approval"  # nível ≥ 2 aguardando decisão
+    EXECUTING = "executing"  # em execução
+    EXECUTED = "executed"  # concluído com sucesso
+    FAILED = "failed"  # concluído com erro
+    EXPIRED = "expired"  # excedeu o TTL antes de concluir

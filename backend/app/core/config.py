@@ -84,6 +84,43 @@ class Settings(BaseSettings):
     atlas_password: str = ""
     atlas_timeout: float = 30.0  # s — timeout de conexão/leitura com o Atlas
 
+    # Remote (Fase 12.1) — transporte com a Gateway (PC é cliente WebSocket;
+    # nenhuma porta de entrada é aberta no Windows). Desabilitado por padrão;
+    # sem conexão em andamento quando `remote_enabled=false`.
+    remote_enabled: bool = False
+    remote_gateway_url: str = ""  # ex.: wss://gateway.example.com:443/ws
+    remote_device_id: str = ""  # identidade do device junto à Gateway
+    remote_device_token: str = ""  # segredo de autenticação (nunca em logs)
+    remote_heartbeat_interval: int = 30  # s — intervalo de heartbeat
+    remote_connect_timeout: float = 10.0  # s — timeout de estabelecimento
+    remote_max_reconnect_delay: float = 60.0  # s — teto do backoff de reconexão
+
+    # Remote Identity (Fase 12.2) — parâmetros de segurança do pairing/credenciais.
+    # Código curto de pairing: 10 dígitos, TTL de 10 min, single-use.
+    remote_pairing_code_length: int = 10
+    remote_pairing_ttl_seconds: int = 600
+    # Tentativas por pedido de pairing (após o limite o pedido é bloqueado).
+    remote_pairing_max_attempts: int = 5
+    # Teto de pairings ativos simultâneos (anti-desperdício de recursos).
+    remote_pairing_max_active: int = 10
+    # Entropia dos tokens de credencial (bytes passados ao secrets.token_urlsafe).
+    remote_token_entropy_bytes: int = 32
+    # Máximo de credenciais ativas por device (rotacionar em vez de acumular).
+    remote_max_active_credentials: int = 10
+    # Gate global de submissões de código ("token bucket", por processo):
+    # capacidade de rajada e refill por segundo. Não depende de IP.
+    remote_pairing_gate_capacity: float = 5.0
+    remote_pairing_gate_refill: float = 0.5
+
+    # Remote Agent (Fase 12.3) — conexão persistente, comandos e idempotência.
+    # Idempotência: TTL (s) dos registros de comandos e payload máximo (bytes).
+    remote_command_ttl_seconds: int = 3600  # 1h — comandos/approvals velhos expiram
+    remote_command_max_payload: int = 16 * 1024  # 16 KiB — teto do payload
+    # Reconexão: backoff inicial (s), fator multiplicador e jitter máximo (fração).
+    remote_reconnect_min_delay: float = 0.5  # s — primeiro backoff
+    remote_reconnect_max_delay: float = 60.0  # s — teto do backoff (também configurável acima)
+    remote_reconnect_jitter: float = 0.1  # fração do delay usada como jitter
+
     # Voz & Fala (Fase 6b) — configuração centralizada do TTS
     # Provedor ativo (edge por padrão; outros via tts_providers).
     tts_provider: str = "edge"

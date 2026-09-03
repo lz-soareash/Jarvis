@@ -11,6 +11,15 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def ensure_utc(dt: datetime | None) -> datetime | None:
+    """Normaliza datetimes lidos do SQLite (que voltam naive) como UTC."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 class Session(Base):
     """Uma conversa do usuário (memória operacional de sessão).
 

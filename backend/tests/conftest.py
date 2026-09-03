@@ -11,6 +11,18 @@ os.environ["GEMINI_API_KEY"] = ""
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 os.environ["LOG_LEVEL"] = "ERROR"
 
+# Isolamento de Fases externas/opcionais — testes nunca tocam serviços reais.
+os.environ["ATLAS_ENABLED"] = "false"
+os.environ["ATLAS_EMAIL"] = ""
+os.environ["ATLAS_PASSWORD"] = ""
+os.environ["AI_LOCAL_LLM_ENABLED"] = "false"
+
+# Fase 12 (remote) — desabilitada por padrão nos testes (sem rede, sem worker).
+os.environ["REMOTE_ENABLED"] = "false"
+os.environ["REMOTE_GATEWAY_URL"] = ""
+os.environ["REMOTE_DEVICE_ID"] = ""
+os.environ["REMOTE_DEVICE_TOKEN"] = ""
+
 import re
 import unicodedata
 
@@ -111,9 +123,14 @@ def _clean_db():
     from app.models import (
         ApprovalRequest,
         AuditLog,
+        Credential,
+        Device,
         ExecutionEvent,
         Memory,
         Message,
+        PairingRequest,
+        RemoteCommand,
+        RemoteSession,
         Session,
         ToolPolicy,
     )
@@ -122,6 +139,11 @@ def _clean_db():
     db = SessionLocal()
     try:
         db.rollback()
+        db.query(RemoteCommand).delete()
+        db.query(RemoteSession).delete()
+        db.query(Credential).delete()
+        db.query(PairingRequest).delete()
+        db.query(Device).delete()
         db.query(ExecutionEvent).delete()
         db.query(ApprovalRequest).delete()
         db.query(AuditLog).delete()
@@ -133,6 +155,14 @@ def _clean_db():
     finally:
         db.close()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _reset_remote_gate():
+    """Hermeticidade do gate anti brute-force do pairing entre testes."""
+    from app.remote.pairing import reset_pairing_gate
+
+    reset_pairing_gate()
 
 
 @pytest.fixture

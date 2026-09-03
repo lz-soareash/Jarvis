@@ -32,7 +32,26 @@ def init_db() -> None:
     from app import models  # noqa: F401 — registra tabelas no metadata
 
     Base.metadata.create_all(bind=engine)
+    _enable_wal_for_file_db()
     _ensure_schema()
+
+
+def _enable_wal_for_file_db() -> None:
+    """Fase 12.1: avaliação SQLite — WAL para bancos em arquivo.
+
+    WAL permite leitores concorrentes com um único escritor (útil quando o
+    transporte remoto e a API escrevem no mesmo arquivo). Banco de testes
+    (`:memory:`) não é afetado. Best-effort: falhas não bloqueiam o boot.
+    """
+    url = settings.database_url
+    if not url.startswith("sqlite:") or ":memory:" in url:
+        return
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("PRAGMA journal_mode=WAL"))
+            conn.commit()
+    except Exception:  # pragma: no cover — journal não configurável não bloqueia
+        pass
 
 def _ensure_schema() -> None:
     """Migrações idempotentes de schema para bancos já existentes.
