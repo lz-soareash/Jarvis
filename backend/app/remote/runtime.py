@@ -12,6 +12,7 @@ import logging
 from typing import Any
 
 from app.core.config import settings
+from app.db.session import SessionLocal
 from app.remote.agent import RemoteAgent
 from app.remote.config import is_remote_enabled
 from app.remote.connection import WebSocketConnection
@@ -97,18 +98,42 @@ def get_remote_status() -> dict[str, Any] | None:
     return agent.snapshot()
 
 
-def deliver_command_result(device_id: str, command_id: str, payload: dict[str, Any]) -> bool:
-    """Fase 12.4 — entrega best-effort do resultado à Gateway do device.
+def deliver_command_result(
+    device_id: str,
+    command_id: str,
+    payload: dict[str, Any],
+    db=None,
+) -> bool:
+    """Fase 12.4/12.7 — entrega best-effort do resultado à Gateway do device.
 
-    Só entrega se houver agente ativo E a conexão dele pertencer a este device
-    E a conexão estiver viva. Falhas/push desconectado são SILENCIOSOS (o
-    cliente recupera via `GET /remote/commands/{device}/{command}`).
+    Persiste o resultado no OUTBOX (tabela `remote_outbox`) de forma transacional
+    e, se houver agente ativo conectado a este device, tenta o push imediato e
+    marca a entrada como entregue em caso de sucesso. Quando o device está off,
+    o push imediato falha (retorna False) mas o resultado FICA na fila — o
+    `RemoteAgent` o re-entrega de forma direcionada no próximo reconnect.
+
+    `db` opcional: se omitido, abre e fecha uma sessão própria (para chamadas
+    fora de um endpoint — e.g. testes). Falhas/push desconectado são silenciosas.
     """
-    agent = _agent
-    if agent is None or agent.device_id != device_id:
-        return False
-    agent.deliver_result(command_id, payload)
-    return True
+    from app.remote import outbox as outbox_service
+
+    owns = db is None
+    sess = db if db is not None else SessionLocal()
+    try:
+        entry = outbox_service.enqueue_result(
+            sess, device_id=device_id, command_id=command_id, payload=payload
+        )
+        agent = _agent
+        if agent is None or agent.device_id != device_id:
+            return False
+        ok = agent.deliver_result(command_id, payload)
+        if ok:
+            sess.refresh(entry)
+            outbox_service.mark_delivered(sess, entry)
+        return ok
+    finally:
+        if owns:
+            sess.close()
 
 
 def reset_remote_gateway() -> None:

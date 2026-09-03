@@ -70,11 +70,13 @@ backend/
 │   ├── core/                      # config, logging estruturado, enums (estados/permissões)
 │   ├── db/                        # SQLAlchemy (Base, engine, sessão)
 │   ├── models/                    # Session / Message / Memory / ExecutionEvent / governança (SQLAlchemy 2.x)
-│   ├── remote/                    # Fase 12.1..12.4 — transporte Gateway + identidade + comandos
+│   ├── remote/                    # Fase 12.1..12.7 — transporte Gateway + identidade + comandos + eventos
 │   │   ├── protocol.py, connection.py, manager.py, gateway.py, runtime.py   # 12.1
 │   │   ├── crypto/devices/credentials/sessions/pairing/auth/registrar/identity_events  # 12.2
-│   │   └── agent/executor/remote_commands/jarvis_session/status            # 12.3
-│   │   └── resume                                                           # 12.4
+│   │   ├── agent/executor/remote_commands/jarvis_session/status            # 12.3
+│   │   ├── resume                                                           # 12.4
+│   │   ├── events.py            # 12.5 — barramento pub/sub p/ SSE + replay sanitizado
+│   │   └── outbox.py            # 12.7 — fila persistente de re-entrega de resultados
 │   ├── schemas/                   # modelos Pydantic base (inclui ToolCall/Declaration, ops)
 │   ├── services/                  # chat, memory, summarizer, agent, approvals, permissions, audit, ops, atlas
 │   ├── tools/                     # Tool Engine: base, registry, builtins (tempo, sistema, memória, computador)
@@ -88,8 +90,9 @@ O modelo **propõe** chamadas de ferramenta (declaradas no registro); o **Core d
 Nunca executa chamadas inventadas — só as registradas. Habilite o loop no chat com
 `"tools": true` (retorna SSE). Ferramentas embutidas: `get_current_time`, `get_system_info`,
 `store_memory`, `recall_memory`, `get_system_stats`, `list_processes`, `open_app`, `kill_process`
-(Fase 3/5), `list_dir`/`read_file`/`write_file`/`make_dir`/`delete_path` (Fase 7) e
-`dev_list_tools`/`dev_get_tool_schema`/`dev_get_config`/`dev_diagnostics` (Fase 8).
+(Fase 3/5), `list_dir`/`read_file`/`write_file`/`make_dir`/`delete_path` (Fase 7),
+`dev_list_tools`/`dev_get_tool_schema`/`dev_get_config`/`dev_diagnostics` (Fase 8) e
+`wake_on_lan` (Fase 12.6; nível 2, envia magic packet UDP).
 
 ## Computer (Fase 5)
 
@@ -291,6 +294,8 @@ O **AI Core** (`app/ai/core.py`) orquestra cada turno do chat e o **AI Router**
 | `GET /api/ops/providers` | estado dos provedores de IA do AI Router |
 | `GET /api/ops/providers/{name}/health` | healthcheck ao vivo de um provedor |
 | `GET /api/ops/events` | eventos observáveis recentes (sanitizados; `session_id`/`event_type`/`limit`) |
+| `GET /api/remote/events` | SSE de eventos remotos ao vivo + replay recente (identidade, conexão, comandos) — Fase 12.5 |
+| `GET /api/remote/status` | estado sanitizado do agente remoto (connection_state, pending_commands, …) |
 | `GET /health` | saúde da API + banco (SQLite) e device detectado pelo User-Agent |
 | `GET /docs` | OpenAPI (Swagger UI) |
 
@@ -315,8 +320,9 @@ Suíte de testes (do diretório `backend/`):
 ..\.venv\Scripts\python -m pytest -q
 ```
 
-**361 testes verdes** (282 da Fase 12.1 + 58 da Fase 12.2 + 13 da Fase 12.3 + 8 da Fase
-12.4). Os testes são
+**398 testes verdes**, cobrindo as Fases 12.1..12.7 (transporte, identidade/emparelhamento,
+agente/comandos, retomada pós-aprovação, hardening, WoL, outbox de re-entrega e SSE de eventos).
+Os testes são
 herméticos: forçam `ENV=test`, `GEMINI_API_KEY=""`, `DATABASE_URL=sqlite:///:memory:`,
 `ATLAS_ENABLED=false`, `AI_LOCAL_LLM_ENABLED=false` e `REMOTE_ENABLED=false` **antes** de
 importar o app — nunca tocam serviços reais nem o `.env` da máquina.
@@ -456,6 +462,50 @@ de `RemoteCommand` pós-aprovação, sem mudar a arquitetura (push best-effort +
   — SEM re-execução automática de operações não idempotentes; o comando terminal não é
   sobrescrito.
 
+## UI/SSE mobile de eventos remotos (Fase 12.5)
+
+Deixa a atividade remota **visível em tempo real** no frontend, sem expor segredos.
+
+- **Barramento de eventos** (`app/remote/events.py`): pub/sub em processo, thread-safe
+  (funciona de produtores síncronos e assíncronos), com **replay limitado** sanitizado.
+  Nunca persiste nem publica secrets — apenas metadados (device_id, status, command_id,
+  connection_state).
+- **Fontes**: identidade (`identity_events` → `remote.identity.*`), conexão do agente
+  (`remote.connection.connected/reconnecting/revoked`), transições de comando
+  (`remote.command.*` em `register/claim/mark_*`) e resultados.
+- **Endpoint SSE** (`GET /api/remote/events`): reenvia o histórico recente e depois transmite
+  eventos ao vivo com heartbeat; exige `REMOTE_ENABLED=true` (503 caso contrário).
+- **Painel Remote (mobile)** (`frontend/js/remote.js` + aba "Remote" no HUD): conecta um
+  `EventSource`, mostra status (dispositivo/conexão/count) e um feed tipado de eventos
+  (conexão, comando, identidade), com visual reutilizando os tokens da Central de Operações.
+
+## Wake-on-LAN (Fase 12.6)
+
+Ferramenta `wake_on_lan` (nível 2, aprovação) que envia um **magic packet UDP** para ligar um
+device remotamente:
+
+- `app/tools/wol.py`: `parse_mac` (remove separadores antes de fatiar), `build_magic_packet`
+  (6×`FF` + 16×MAC) e `_udp_sendto` (socket UDP, monkeypatchável para testes) que envia à
+  broadcast/porta configuradas.
+- Config (`REMOTE_`/`WOL_*` em `config` + `.env.example`): `WOL_ENABLED`, `WOL_DEFAULT_BROADCAST`,
+  `WOL_DEFAULT_PORT` (padrão 9).
+- O WoL **exige um ponto de entrada sempre-on** no device-alvo (BIOS/WoL habilitado); por isso
+  foi tratado como ferramenta e não como transporte.
+
+## Fila de re-entrega de resultados (Fase 12.7)
+
+Garante que nenhum `COMMAND_RESULT` se perca quando o device está offline no momento do push:
+
+- **`RemoteOutbox`** (tabela `remote_outbox`, UNIQUE `(device_id, command_id)`): persiste o
+  resultado de forma transacional antes do push imediato.
+- **`app/remote/outbox.py`**: `enqueue_result` (idempotente), `list_undelivered`,
+  `mark_delivered`, `payload_of`, `purge_delivered` (housekeeping).
+- **`runtime.deliver_command_result`**: enfileira e, se houver agente ativo conectado, tenta o
+  push imediato e marca entregue em caso de sucesso. Offline → o push devolve `False` e o
+  resultado **permanece na fila**.
+- **Re-entrega no reconnect** (`RemoteAgent._flush_pending_results`): após (re)conectar, o
+  agente entrega os resultados pendentes de forma direcionada e os marca como entregues.
+
 ## Roadmap (resumo)
 
 0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·
@@ -463,11 +513,11 @@ de `RemoteCommand` pós-aprovação, sem mudar a arquitetura (push best-effort +
 sanitização, provedores, SPEAKING) ✔ · 7. Filesystem ✔ · 8. Developer ✔ · 9. Mobile/Devices/PWA ✔ ·
 10. Atlas ✔ · 11. AI Core + Central de Operações ✔ · 12. Agent loop · 13. Web · 14. Visão ·
 15. Proativo · 16. Remote (foundation 12.1 ✔ + identidade/emparelhamento 12.2 ✔ + agente
-persistente/execução de comandos 12.3 ✔ + retomada pós-aprovação/entrega 12.4 ✔ + hardening 12.4-R1 ✔:
-transporte
+persistente/execução de comandos 12.3 ✔ + retomada pós-aprovação/entrega 12.4 ✔ + hardening
+12.4-R1 ✔ + UI/SSE mobile 12.5 ✔ + Wake-on-LAN 12.6 ✔ + fila de re-entrega 12.7 ✔: transporte
 outbound + dispositivos/credenciais/pairing + agente com reconnect/backoff, comandos executados
-só via Permission Engine com aprovação para níveis ≥ 2, e resultado da decisão entregue best-effort
-à Gateway + consultável offline; UI/SSE mobile e Wake-on-LAN chegam em fases futuras da 12.x —
-WoL exige ponto de entrada sempre-on) · 17. V1.
+só via Permission Engine com aprovação para níveis ≥ 2, resultado da decisão entregue best-effort
+à Gateway + consultável offline, eventos remotos em tempo real (SSE) no painel mobile, WoL via
+magic packet e outbox persistente que re-entrega resultados no reconnect) · 17. V1.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

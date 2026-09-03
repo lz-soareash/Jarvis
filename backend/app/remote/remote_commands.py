@@ -29,6 +29,21 @@ from app.models.session import ensure_utc, utcnow
 logger = logging.getLogger("jarvis.remote.commands")
 
 
+def publish_command_event(cmd: RemoteCommand, status: str | None = None) -> None:
+    """Fase 12.5 — streama a transição de comando ao barramento SSE (sanitizado)."""
+    from app.remote.events import publish_event
+
+    state = status or (cmd.status if getattr(cmd, "status", None) else "unknown")
+    publish_event(
+        "remote.command." + str(state),
+        {
+            "device_id": cmd.device_id,
+            "command_id": cmd.command_id,
+            "status": str(cmd.status) if getattr(cmd, "status", None) else str(state),
+        },
+    )
+
+
 class RemoteCommandError(ValueError):
     """Falha genérica de processamento de comando remoto."""
 
@@ -76,6 +91,7 @@ def register_command(
             f"comando duplicado (command_id={command_id})"
         ) from None
     db.refresh(cmd)
+    publish_command_event(cmd, RemoteCommandStatus.REGISTERED.value)
     return cmd
 
 
@@ -155,6 +171,7 @@ def _claim_for_execution(db: OrmSession, device_id: str, command_id: str) -> Rem
     claimed = get_command(db, device_id, command_id)
     if claimed is None:  # pragma: no cover — invariante interno
         raise RemoteCommandError(f"comando não registrado: {command_id}")
+    publish_command_event(claimed, RemoteCommandStatus.EXECUTING.value)
     return claimed
 
 
@@ -194,6 +211,7 @@ def mark_interrupted(
     claimed = get_command(db, device_id, command_id)
     if claimed is None:  # pragma: no cover — invariante interno
         raise RemoteCommandError(f"comando não registrado: {command_id}")
+    publish_command_event(claimed)
     return claimed
 
 
@@ -249,12 +267,14 @@ def mark_executed(
     if not ok:
         cmd.error = result[:2000]
     db.commit()
+    publish_command_event(cmd)
     return cmd
 
 
 def mark_pending_approval(db: OrmSession, cmd: RemoteCommand) -> RemoteCommand:
     cmd.status = RemoteCommandStatus.PENDING_APPROVAL.value
     db.commit()
+    publish_command_event(cmd, RemoteCommandStatus.PENDING_APPROVAL.value)
     return cmd
 
 

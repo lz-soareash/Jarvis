@@ -165,6 +165,11 @@ class RemoteAgent:
             )
             self._health.connected_at = _utcnow()
             delay = self._min_reconnect_delay  # reset do backoff após sucesso
+            self._publish_connection("connected")
+
+            # Fase 12.7 — re-entrega direcionada: no (re)connect, envia resultados
+            # pendentes do outbox que ficaram para trás quando o device estava off.
+            await self._flush_pending_results()
 
             # Aguarda desconexão (receive/heartbeat quebram) mantendo a nova
             # sessão ecossistema; detecta revogação via re-auth periódica.
@@ -352,22 +357,25 @@ class RemoteAgent:
             payload=payload,
         )
 
-    def deliver_result(self, command_id: str, payload: dict[str, Any]) -> None:
-        """Fase 12.4 — entrega best-effort de um resultado à Gateway ativa.
+    def deliver_result(self, command_id: str, payload: dict[str, Any]) -> bool:
+        """Fase 12.4/12.7 — entrega best-effort de um resultado à Gateway ativa.
 
-        NUNCA lança e NUNCA é requisito para a execução: o resultado já foi
-        persistido de forma transacional antes desta chamada. Se não houver
-        conexão ativa (device offline), o cliente recupera via endpoint de
-        consulta (`GET /remote/commands/{device}/{command}`).
+        Retorna True se havia conexão ativa e o envio foi disparado. NUNCA lança
+        e NUNCA é requisito para a execução: o resultado já foi persistido de
+        forma transacional antes desta chamada (e, na Fase 12.7, também no outbox
+        p/ re-entrega no reconnect). Se não houver conexão ativa (device offline),
+        o cliente recupera via endpoint de consulta (`GET /remote/commands/...`).
         """
         gateway = self._gateway
         if gateway is None or not getattr(gateway, "connected", False):
-            return
+            return False
         try:
             envelope = self._build_reply(command_id, payload)
             self._spawn_send(gateway, envelope)
+            return True
         except Exception as exc:  # noqa: BLE001 — push é best-effort
             logger.warning("push de resultado falhou (command=%s): %s", command_id, _brief(exc))
+            return False
 
     def _spawn_send(self, gateway: Any, envelope: RemoteEnvelope) -> None:
         """Dispara o envio sem bloquear/esperar (fire-and-forget)."""
@@ -382,6 +390,39 @@ class RemoteAgent:
         except Exception as exc:  # noqa: BLE001
             logger.warning("envio de resultado falhou: %s", _brief(exc))
 
+    async def _flush_pending_results(self) -> None:
+        """Fase 12.7 — re-entrega direcionada dos resultados pendentes do outbox.
+
+        Roda após a conexão ser estabelecida: entrega os `COMMAND_RESULT` que
+        ficaram no outbox (device esteve offline) e marca como entregues os que
+        foram enviados com sucesso. Best-effort — nunca lança e não interrompe o
+        supervisor por falha de re-entrega. Usa UMA sessão para listar/marcar, de
+        modo que as entradas permanecem ligadas à mesma transação.
+        """
+        from app.remote import outbox as outbox_service
+
+        try:
+            with SessionLocal() as db:
+                pending = outbox_service.list_undelivered(db, device_id=self.device_id)
+                for entry in pending:
+                    gateway = self._gateway
+                    if gateway is None or not getattr(gateway, "connected", False):
+                        return  # desconectou durante o flush; reste p/ próxima
+                    payload = outbox_service.payload_of(entry)
+                    envelope = self._build_reply(entry.command_id, payload)
+                    try:
+                        await gateway.send_message(envelope)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "re-entrega falhou (command=%s): %s",
+                            entry.command_id,
+                            _brief(exc),
+                        )
+                        continue
+                    outbox_service.mark_delivered(db, entry)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("flush de resultados pendentes falhou: %s", _brief(exc))
+
     # -- helpers --------------------------------------------------------------
 
     def _set_health(self, **kw: Any) -> None:
@@ -389,6 +430,12 @@ class RemoteAgent:
         for k, v in kw.items():
             if hasattr(h, k):
                 setattr(h, k, v)
+
+    def _publish_connection(self, state: str) -> None:
+        """Fase 12.5 — streama transições de conexão ao barramento SSE (sanitizado)."""
+        from app.remote.events import publish_event
+
+        publish_event("remote.connection." + state, {"device_id": self.device_id})
 
     async def _audit_started(self) -> None:
         try:
@@ -405,6 +452,7 @@ class RemoteAgent:
                 ops.record_event(db, event_type=OPS_REMOTE_AGENT_REVOKED, provider="remote", status="failed", meta={"device_id": self.device_id})
         except Exception:  # noqa: BLE001
             pass
+        self._publish_connection("revoked")
 
 
 def _brief(exc: BaseException, limit: int = 160) -> str:

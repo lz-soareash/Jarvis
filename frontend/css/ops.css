@@ -393,3 +393,58 @@
     gap: var(--space-3);
   }
 }
+
+/* ------------------ Painel Remote (Fase 12.5) ------------------ */
+.remote-scroll {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.remote-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.remote-badge {
+  font: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  text-transform: uppercase;
+}
+.remote-badge[data-state="ok"] { background: rgba(52, 199, 89, 0.16); color: #34c759; }
+.remote-badge[data-state="warn"] { background: rgba(255, 149, 0, 0.16); color: #ff9500; }
+.remote-badge[data-state="err"] { background: rgba(255, 69, 58, 0.16); color: #ff453a; }
+.remote-badge[data-state="off"] { background: rgba(142, 142, 147, 0.18); color: #8e8e93; }
+
+.remote-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.remote-evt {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 2px solid transparent;
+  list-style: none;
+}
+.remote-evt--ok { border-left-color: #34c759; }
+.remote-evt--warn { border-left-color: #ff9500; }
+.remote-evt--err { border-left-color: #ff453a; }
+.remote-evt--cmd { border-left-color: var(--accent, #0a84ff); }
+.remote-evt--ident { border-left-color: #bf5af2; }
+.remote-evt-tag {
+  font-weight: 600;
+  color: var(--text, #e4e8ef);
+}

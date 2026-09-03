@@ -130,6 +130,7 @@ def _clean_db():
         Message,
         PairingRequest,
         RemoteCommand,
+        RemoteOutbox,
         RemoteSession,
         Session,
         ToolPolicy,
@@ -140,6 +141,7 @@ def _clean_db():
     try:
         db.rollback()
         db.query(RemoteCommand).delete()
+        db.query(RemoteOutbox).delete()
         db.query(RemoteSession).delete()
         db.query(Credential).delete()
         db.query(PairingRequest).delete()

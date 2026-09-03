@@ -90,3 +90,7 @@ def log_identity_event(
             )
     except Exception as exc:  # noqa: BLE001 — telemetria nunca bloqueia identidade
         logger.error("Falha ao registrar evento de identidade (%s): %s", audit_action, exc)
+    # Fase 12.5 — streama ao barramento SSE (best-effort, sanitizado).
+    from app.remote.events import publish_event
+
+    publish_event(f"remote.identity.{audit_action}", {**meta, "status": status})

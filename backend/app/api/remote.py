@@ -8,6 +8,7 @@ sensível.
 """
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session as OrmSession
 
 from app.core.config import settings
@@ -279,3 +280,22 @@ def device_out(device) -> dict:
         "revoked_at": device.revoked_at,
         "metadata": load_meta(device.metadata_json),
     }
+
+
+@router.get("/remote/events")
+async def remote_events_stream() -> StreamingResponse:
+    """Fase 12.5 — SSE de eventos remotos (identidade, conexão, comandos, resultados).
+
+    Ao conectar, reenvia o histórico recente (replay) e então transmite eventos
+    ao vivo. Exige `REMOTE_ENABLED=true`. Eventos são sempre sanitizados — nunca
+    secrets. Usado pela UI mobile (painel Remote).
+    """
+    _require_remote()
+    from app.remote.events import remote_event_stream
+    from app.services.chat import sse_event
+
+    async def _stream():
+        async for entry in remote_event_stream():
+            yield sse_event(entry)
+
+    return StreamingResponse(_stream(), media_type="text/event-stream")

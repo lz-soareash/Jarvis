@@ -63,6 +63,10 @@ const OpsView = (() => {
     if (els.tabChat) els.tabChat.classList.toggle("is-active", !showOps);
     if (els.tabOps) els.tabOps.classList.toggle("is-active", showOps);
     if (showOps && open) load();
+    // Fase 12.5 — coordena com o painel Remote (só um sub-view ativo).
+    if (window.RemoteView && window.RemoteView.isOpen && window.RemoteView.isOpen()) {
+      window.RemoteView.setView(false);
+    }
   }
 
   function esc(s) {

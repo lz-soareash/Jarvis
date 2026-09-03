@@ -70,6 +70,7 @@ def build_default_registry() -> ToolRegistry:
     )
     from .developer import DevDiagnostics, DevGetConfig, DevGetToolSchema, DevListTools
     from .filesystem import DeletePath, ListDir, MakeDir, ReadFile, WriteFile
+    from .wol import WakeOnLan
 
     registry = ToolRegistry()
     # Builtin tools
@@ -114,6 +115,8 @@ def build_default_registry() -> ToolRegistry:
     registry.register(DevGetToolSchema())
     registry.register(DevGetConfig())
     registry.register(DevDiagnostics())
+    # Wake-on-LAN (Fase 12.6)
+    registry.register(WakeOnLan())
     return registry
 
 

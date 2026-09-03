@@ -121,6 +121,13 @@ class Settings(BaseSettings):
     remote_reconnect_max_delay: float = 60.0  # s — teto do backoff (também configurável acima)
     remote_reconnect_jitter: float = 0.1  # fração do delay usada como jitter
 
+    # Wake-on-LAN (Fase 12.6) — tool `wake_on_lan` que acorda uma máquina na LAN
+    # enviando o magic packet UDP. `wol_enabled` liga/desliga a tool; o resto são
+    # defaults (endereço de broadcast e porta) sobrescrevíveis por chamada.
+    wol_enabled: bool = True
+    wol_default_broadcast: str = "255.255.255.255"
+    wol_default_port: int = 9
+
     # Voz & Fala (Fase 6b) — configuração centralizada do TTS
     # Provedor ativo (edge por padrão; outros via tts_providers).
     tts_provider: str = "edge"

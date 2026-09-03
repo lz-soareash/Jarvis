@@ -57,6 +57,7 @@
       <nav class="hud-tabs" aria-label="Seções do JARVIS">
         <button class="hud-tab is-active" id="tab-chat" type="button">Chat</button>
         <button class="hud-tab" id="tab-ops" type="button">Central</button>
+        <button class="hud-tab" id="tab-remote" type="button">Remote</button>
       </nav>
 
       <div class="hud-status" role="status">
@@ -240,6 +241,41 @@
       </div>
     </section>
 
+    <section class="remote" id="remote-view" hidden aria-label="Remote">
+      <div class="remote-scroll">
+        <div class="remote-head">
+          <h2 class="ops-title">Remote</h2>
+          <span class="remote-badge" id="remote-badge" data-state="off">off</span>
+        </div>
+
+        <section class="ops-overview" aria-label="Estado remoto">
+          <div class="ops-ov-main">
+            <span class="ops-ov-name">Remote</span>
+            <span class="ops-ov-mode" id="remote-mode">—</span>
+            <span class="ops-ov-badge" id="remote-ov-badge">—</span>
+          </div>
+          <div class="ops-ov-facts">
+            <div class="ops-fact">
+              <span class="ops-fact-label">DISPOSITIVO</span>
+              <span class="ops-fact-value" id="remote-device">—</span>
+            </div>
+            <div class="ops-fact">
+              <span class="ops-fact-label">CONEXÃO</span>
+              <span class="ops-fact-value" id="remote-conn">—</span>
+            </div>
+            <div class="ops-fact">
+              <span class="ops-fact-label">EVENTOS</span>
+              <span class="ops-fact-value" id="remote-count">0</span>
+            </div>
+          </div>
+        </section>
+
+        <div class="remote-feed" id="remote-feed" aria-live="polite">
+          <p class="ops-muted" id="remote-empty">Conectando ao stream de eventos remotos…</p>
+        </div>
+      </div>
+    </section>
+
     <footer class="status-foot">
       <span class="status-item">Estado <b id="agent-state">idle</b></span>
       <span class="status-item">DB <b id="db-state">—</b></span>
@@ -250,6 +286,7 @@
 
   <script src="./js/speech.js?v=13"></script>
   <script src="./js/ops.js?v=18"></script>
+  <script src="./js/remote.js?v=1"></script>
   <script src="./js/markdown.js?v=15"></script>
   <script src="./js/app.js?v=18"></script>
 </body>

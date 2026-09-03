@@ -90,7 +90,7 @@ async def respond(
         except resume_service.RemoteResumeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         approval_service.mark_applied(db, approval)
-        deliver_command_result(device.id, command.command_id, result)
+        deliver_command_result(device.id, command.command_id, result, db=db)
         return JSONResponse({"status": "decided", "command_id": command.command_id, "result": result})
 
     if not decided:

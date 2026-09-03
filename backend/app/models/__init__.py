@@ -8,6 +8,7 @@ from app.models.remote import (
     Device,
     PairingRequest,
     RemoteCommand,
+    RemoteOutbox,
     RemoteSession,
 )
 from app.models.session import Message, Session, utcnow
@@ -25,5 +26,6 @@ __all__ = [
     "PairingRequest",
     "RemoteSession",
     "RemoteCommand",
+    "RemoteOutbox",
     "utcnow",
 ]

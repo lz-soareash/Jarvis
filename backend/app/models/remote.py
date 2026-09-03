@@ -226,3 +226,32 @@ class RemoteCommand(Base):
             "approval_id", name="uq_remote_commands_approval_id"
         ),
     )
+
+
+class RemoteOutbox(Base):
+    """Fila de re-entrega (Fase 12.7) — resultado de comando ainda não entregue.
+
+    Quando um `COMMAND_RESULT` não pôde ser entregue à Gateway (device offline no
+    momento do push best-effort), o resultado é persistido AQUI para re-entrega
+    direcionada no próximo reconnect — sem depender da conexão que falhou.
+
+    `(device_id, command_id)` é UNIQUE: cada comando tem no máximo uma entrada
+    de resultado pendente (idempotente; evitar duplicar reenvios).
+    """
+
+    __tablename__ = "remote_outbox"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    device_id: Mapped[str] = mapped_column(ForeignKey("remote_devices.id"), index=True)
+    command_id: Mapped[str] = mapped_column(String(128), index=True)
+    payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+    delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        Index("ix_remote_outbox_device_cmd", "device_id", "command_id", unique=True),
+    )
