@@ -72,6 +72,31 @@ def _ensure_schema() -> None:
     except Exception:  # pragma: no cover — plataformas/estados sem suporte não bloqueiam
         pass
 
+    _ensure_remote_commands_schema()
+
+
+def _ensure_remote_commands_schema() -> None:
+    """Fase 12.4-R1 — UNIQUE em `remote_commands.approval_id` p/ bancos legados.
+
+    Para bancos já criados antes da Fase 12.4-R1, `create_all` não reconstrói a
+    tabela e o `UniqueConstraint` declarado no modelo não é aplicado. Recriamos
+    a garantia (1:1 Approval↔Command) via UNIQUE INDEX idempotente. SQLite permite
+    múltiplos NULLs em índice UNIQUE, então comandos sem aprovação não são
+    afetados (não destrutivo). Falha não bloqueia o boot (best-effort).
+    """
+    try:
+        with engine.connect() as conn:
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS "
+                    "uq_remote_commands_approval_id "
+                    "ON remote_commands(approval_id)"
+                )
+            )
+            conn.commit()
+    except Exception:  # pragma: no cover — estados sem suporte não bloqueiam
+        pass
+
 
 def check_database() -> bool:
     """Healthcheck de conectividade com o banco."""

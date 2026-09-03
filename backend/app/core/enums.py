@@ -105,5 +105,6 @@ class RemoteCommandStatus(str, Enum):
     PENDING_APPROVAL = "pending_approval"  # nível ≥ 2 aguardando decisão
     EXECUTING = "executing"  # em execução
     EXECUTED = "executed"  # concluído com sucesso
-    FAILED = "failed"  # concluído com erro
+    FAILED = "failed"  # concluído com erro (incl. negação)
+    INTERRUPTED = "interrupted"  # execução interrompida/resultado desconhecido
     EXPIRED = "expired"  # excedeu o TTL antes de concluir

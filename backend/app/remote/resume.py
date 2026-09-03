@@ -94,7 +94,14 @@ async def resume_remote_command(
     if not tool_name:
         raise RemoteResumeError("comando sem tool válida para retomada")
 
-    claim = cmd_service._claim_for_execution(db, device.id, command.command_id)
+    try:
+        claim = cmd_service._claim_for_execution(db, device.id, command.command_id)
+    except cmd_service.DuplicateCommandError as exc:
+        # Já processado ou em execução por outra decisão concorrente (fecho de
+        # concorrência {A:APPROVE + B:APPROVE}): mensagem sanitizada p/ o cliente.
+        raise RemoteResumeError("comando já processado ou em execução") from exc
+    except cmd_service.CommandExpiredError as exc:
+        raise RemoteResumeError("comando expirou antes da retomada") from exc
     db.refresh(claim)
     try:
         call = ToolCall(name=tool_name, arguments=arguments or {}, call_id=command.command_id)

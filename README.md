@@ -433,6 +433,29 @@ via o pipeline interno (Tool Registry → Permission Engine → AuditLog → `ag
 - **Fora de escopo (futuras da 12.x)**: UI/SSE mobile, Wake-on-LAN, re-entrega direcionada
   por fila quando a Gateway assume o retry.
 
+## Hardening corretivo da 12.4 (Fase 12.4-R1)
+
+O 12.4 entregou a retomada; o **12.4-R1 endurece concorrência e consistência** na retomada
+de `RemoteCommand` pós-aprovação, sem mudar a arquitetura (push best-effort + consulta).
+
+- **Claim atômico** (`_claim_for_execution`): a transição `REGISTERED|PENDING_APPROVAL →
+  EXECUTING` virou um único `UPDATE ... WHERE status IN (...)` (rowcount == 1). Sob duas
+  tentativas concorrentes (`A:APPROVE + B:APPROVE`), apenas UMA vence; a outra recebe erro
+  sem re-execução — fecho de concorrência no nível do banco (SQLite WAL/file).
+- **Aprovação decidida uma única vez** (`mark_decided` usa `UPDATE ... WHERE status=pending`):
+  decisões concorrentes sobre o mesmo pedido só efetivam UMA; as demais retornam "já decidido".
+  Comando remoto é identificado por `approval_id` em QUALQUER estado — um pedido concorrente
+  nunca cai no loop local do agente.
+- **UNIQUE em `RemoteCommand.approval_id`** (1:1 Approval↔Command) + migração idempotente
+  (`uq_remote_commands_approval_id`) p/ bancos legados; um approval não governa dois comandos.
+- **Consistência Approval ↔ Command**: `applied` só é marcado APÓS a retomada bem sucedida —
+  nunca `applied=True` com o comando ainda `PENDING_APPROVAL`. Falha na retomada deixa o
+  approval não-aplicado (recuperável), jamais em estado falso.
+- **Estado `INTERRUPTED`**: um comando preso em `EXECUTING` (crash entre claim e resultado)
+  é recuperado explicitamente (`recover_executing`) para `INTERRUPTED` (resultado desconhecido)
+  — SEM re-execução automática de operações não idempotentes; o comando terminal não é
+  sobrescrito.
+
 ## Roadmap (resumo)
 
 0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·
@@ -440,7 +463,8 @@ via o pipeline interno (Tool Registry → Permission Engine → AuditLog → `ag
 sanitização, provedores, SPEAKING) ✔ · 7. Filesystem ✔ · 8. Developer ✔ · 9. Mobile/Devices/PWA ✔ ·
 10. Atlas ✔ · 11. AI Core + Central de Operações ✔ · 12. Agent loop · 13. Web · 14. Visão ·
 15. Proativo · 16. Remote (foundation 12.1 ✔ + identidade/emparelhamento 12.2 ✔ + agente
-persistente/execução de comandos 12.3 ✔ + retomada pós-aprovação/entrega 12.4 ✔: transporte
+persistente/execução de comandos 12.3 ✔ + retomada pós-aprovação/entrega 12.4 ✔ + hardening 12.4-R1 ✔:
+transporte
 outbound + dispositivos/credenciais/pairing + agente com reconnect/backoff, comandos executados
 só via Permission Engine com aprovação para níveis ≥ 2, e resultado da decisão entregue best-effort
 à Gateway + consultável offline; UI/SSE mobile e Wake-on-LAN chegam em fases futuras da 12.x —

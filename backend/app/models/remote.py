@@ -16,7 +16,15 @@ Entidades:
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.enums import (
@@ -173,8 +181,9 @@ class RemoteCommand(Base):
     (duas chegadas simultâneas do mesmo command_id não executam duas vezes).
 
     Estados: REGISTERED (chegou, ainda não avaliado), PENDING_APPROVAL (nível ≥ 2
-    aguardando decisão), EXECUTING, EXECUTED, FAILED, EXPIRED. `expires_at`
-    rejeita comandos/approvals velhos (TTL).
+    aguardando decisão), EXECUTING, EXECUTED, FAILED, INTERRUPTED, EXPIRED.
+    `expires_at` rejeita comandos/approvals velhos (TTL). Um comando é regido por
+    NO MÁXIMO uma aprovação (`approval_id` UNIQUE → 1:1 Approval↔Command).
     """
 
     __tablename__ = "remote_commands"
@@ -213,4 +222,7 @@ class RemoteCommand(Base):
 
     __table_args__ = (
         Index("ix_remote_commands_device_cmd", "device_id", "command_id", unique=True),
+        UniqueConstraint(
+            "approval_id", name="uq_remote_commands_approval_id"
+        ),
     )

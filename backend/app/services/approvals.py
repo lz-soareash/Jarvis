@@ -10,7 +10,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session as OrmSession
 
 from app.core.config import settings
@@ -94,18 +94,40 @@ def mark_applied(db: OrmSession, approval: ApprovalRequest) -> None:
     db.commit()
 
 
-def mark_decided(db: OrmSession, approval: ApprovalRequest, approved: bool) -> ApprovalRequest:
-    """Registra a decisão do usuário e libera a retomada do turno."""
-    approval.status = (
-        ApprovalStatus.APPROVED.value if approved else ApprovalStatus.DENIED.value
+def mark_decided(
+    db: OrmSession, approval: ApprovalRequest, approved: bool
+) -> tuple[ApprovalRequest, bool]:
+    """Registra a decisão do usuário de forma ATÔMICA (Fase 12.4-R1).
+
+    Usa `UPDATE ... WHERE status = pending` para que, sob decisões concorrentes
+    {A:APPROVE + B:APPROVE} (ou decisão posterior), apenas UMA efetive a decisão:
+    o retorno `True` indica que ESTA chamada foi a vencedora. A outra observa 0
+    linhas alteradas e deve ser tratada pelo chamador como "já decidido".
+    """
+    rows = db.execute(
+        update(ApprovalRequest)
+        .where(ApprovalRequest.id == approval.id)
+        .where(ApprovalRequest.status == ApprovalStatus.PENDING.value)
+        .values(
+            status=(
+                ApprovalStatus.APPROVED.value
+                if approved
+                else ApprovalStatus.DENIED.value
+            ),
+            responded_at=utcnow(),
+        )
     )
-    approval.responded_at = utcnow()
+    if rows.rowcount != 1:
+        db.rollback()
+        db.refresh(approval)
+        logger.info(
+            "Aprovação %s já decidida (concorrente): %s", approval.id, approval.status
+        )
+        return approval, False
     db.commit()
     db.refresh(approval)
-    logger.info(
-        "Aprovação %s (%s) pelo usuário", approval.id, approval.status
-    )
-    return approval
+    logger.info("Aprovação %s (%s) pelo usuário", approval.id, approval.status)
+    return approval, True
 
 
 def to_out(approval: ApprovalRequest) -> ApprovalOut:

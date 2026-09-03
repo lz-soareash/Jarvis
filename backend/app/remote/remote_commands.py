@@ -17,7 +17,7 @@ import logging
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as OrmSession
 
@@ -89,37 +89,151 @@ def get_command(db: OrmSession, device_id: str, command_id: str) -> RemoteComman
 
 
 def get_command_by_approval(db: OrmSession, approval_id: str) -> RemoteCommand | None:
-    """Fase 12.4 — comando aguardando um pedido de aprovação específico."""
+    """Fase 12.4 — comando regido pela aprovação dada (qualquer estado).
+
+    NÃO filtra por `status`: mesmo após concluído/negado o comando continua
+    ligado à aprovação (1:1 via `approval_id` UNIQUE), permitindo que um
+    pedido de decisão concorrente identifique corretamente o comando remoto e
+    responda "já processado" em vez de cair no loop local do agente.
+    """
     return db.scalars(
-        select(RemoteCommand).where(
-            RemoteCommand.approval_id == approval_id,
-            RemoteCommand.status == RemoteCommandStatus.PENDING_APPROVAL.value,
-        )
+        select(RemoteCommand).where(RemoteCommand.approval_id == approval_id)
     ).first()
 
 
 def _claim_for_execution(db: OrmSession, device_id: str, command_id: str) -> RemoteCommand:
-    """Marca um comando como EXECUTING (apenas se ainda estiver REGISTERED).
+    """Reclama um comando p/ execução de forma ATÔMICA (REGISTERED/
+    PENDING_APPROVAL → EXECUTING), garantindo que só UM executor prossiga.
 
-    Usado para impedir que duas execuções concorrentes do mesmo command_id
-    prossigam: a transição REGISTERED → EXECUTING é atômica sob o lock do agente
-    + o INSERT inicial já garantiu a unicidade na chegada.
+    Usa um único `UPDATE ... WHERE status IN (registered, pending_approval)`:
+    a instrução é atômica no banco, então duas tentativas concorrentes — mesmo
+    em conexões diferentes (SQLite WAL / file DB) — só permitem que UMA veja
+    `rowcount == 1` (a outra observa 0 linhas e recebe `DuplicateCommandError`).
+    Isso serve de fecho de concorrência {A:APPROVE + B:APPROVE} e impede
+    re-execução de comandos já em EXECUTING/tratamento ou terminais.
+
+    Comandos `EXECUTING` presos (crash entre claim e mark_executed) NÃO são
+    reclamados automaticamente aqui: permanecem para recuperação explícita via
+    `recover_executing` (resultado desconhecido → `INTERRUPTED`, sem re-exec).
     """
+    now = utcnow()
     cmd = get_command(db, device_id, command_id)
     if cmd is None:
         raise RemoteCommandError(f"comando não registrado: {command_id}")
+    if cmd.expires_at is not None and ensure_utc(cmd.expires_at) <= now:
+        cmd.status = RemoteCommandStatus.EXPIRED.value
+        db.commit()
+        raise CommandExpiredError(f"comando expirado: {command_id}")
     if cmd.status not in (
         RemoteCommandStatus.REGISTERED.value,
         RemoteCommandStatus.PENDING_APPROVAL.value,
     ):
         raise DuplicateCommandError(f"comando já processado: {command_id} ({cmd.status})")
-    if cmd.expires_at is not None and ensure_utc(cmd.expires_at) <= utcnow():
-        cmd.status = RemoteCommandStatus.EXPIRED.value
-        db.commit()
-        raise CommandExpiredError(f"comando expirado: {command_id}")
-    cmd.status = RemoteCommandStatus.EXECUTING.value
+
+    claimed_rows = db.execute(
+        update(RemoteCommand)
+        .where(
+            RemoteCommand.device_id == device_id,
+            RemoteCommand.command_id == command_id,
+            RemoteCommand.status.in_(
+                [
+                    RemoteCommandStatus.REGISTERED.value,
+                    RemoteCommandStatus.PENDING_APPROVAL.value,
+                ]
+            ),
+        )
+        .values(status=RemoteCommandStatus.EXECUTING.value)
+    )
+    if claimed_rows.rowcount != 1:
+        db.rollback()
+        current = get_command(db, device_id, command_id)
+        raise DuplicateCommandError(
+            f"comando já processado: {command_id} ({current.status if current else '?'})"
+        )
     db.commit()
-    return cmd
+    db.expire_all()
+    claimed = get_command(db, device_id, command_id)
+    if claimed is None:  # pragma: no cover — invariante interno
+        raise RemoteCommandError(f"comando não registrado: {command_id}")
+    return claimed
+
+
+def mark_interrupted(
+    db: OrmSession,
+    device_id: str,
+    command_id: str,
+    *,
+    reason: str = "execução interrompida / resultado desconhecido",
+) -> RemoteCommand:
+    """Transição atômica EXECUTING → INTERRUPTED (Fase 12.4-R1).
+
+    Usada para registrar que um comando ficou preso/resultado desconhecido sem
+    re-executar (não idempotente). Apenas estados EXECUTING são aceitos; um
+    comando já em estado terminal não é sobrescrito.
+    """
+    rows = db.execute(
+        update(RemoteCommand)
+        .where(
+            RemoteCommand.device_id == device_id,
+            RemoteCommand.command_id == command_id,
+            RemoteCommand.status == RemoteCommandStatus.EXECUTING.value,
+        )
+        .values(
+            status=RemoteCommandStatus.INTERRUPTED.value,
+            error=reason[:2000],
+        )
+    )
+    if rows.rowcount != 1:
+        db.rollback()
+        cmd = get_command(db, device_id, command_id)
+        if cmd is None:
+            raise RemoteCommandError(f"comando não registrado: {command_id}")
+        raise RemoteCommandError(f"comando não está em execução: {command_id} ({cmd.status})")
+    db.commit()
+    db.expire_all()
+    claimed = get_command(db, device_id, command_id)
+    if claimed is None:  # pragma: no cover — invariante interno
+        raise RemoteCommandError(f"comando não registrado: {command_id}")
+    return claimed
+
+
+def find_stuck_executing(
+    db: OrmSession,
+    *,
+    device_id: str | None = None,
+    older_than_seconds: int = 0,
+) -> list[RemoteCommand]:
+    """Encontra comandos presos em EXECUTING ('stuck') p/ recuperação manual.
+
+    Retorna apenas comandos naquele estado (não re-executa nada). O chamador
+    decide, por intervenção explícita, chamar `recover_executing`.
+    """
+    stmt = select(RemoteCommand).where(
+        RemoteCommand.status == RemoteCommandStatus.EXECUTING.value
+    )
+    if device_id is not None:
+        stmt = stmt.where(RemoteCommand.device_id == device_id)
+    if older_than_seconds > 0:
+        stmt = stmt.where(
+            RemoteCommand.created_at <= utcnow()
+        )
+    return list(db.scalars(stmt).all())
+
+
+def recover_executing(
+    db: OrmSession,
+    device_id: str,
+    command_id: str,
+    *,
+    reason: str = "execução interrompida / resultado desconhecido",
+) -> RemoteCommand:
+    """Recupera um comando preso em EXECUTING sem re-executar (Fase 12.4-R1).
+
+    Marca `INTERRUPTED` (resultado desconhecido) para que o rastreio não exiba
+    um comando eternamente 'em execução'. NÃO re-executa a operação: quem quiser
+    rodar de novo precisa registrar um novo comando explicitamente.
+    """
+    return mark_interrupted(db, device_id, command_id, reason=reason)
 
 
 def mark_executed(

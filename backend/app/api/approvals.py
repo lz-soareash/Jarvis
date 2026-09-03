@@ -56,12 +56,18 @@ async def respond(
     if approval_service.is_expired(approval):
         raise HTTPException(status_code=410, detail="Pedido de aprovação expirou")
 
-    approval_service.mark_decided(db, approval, approved=body.approved)
+    approval, decided = approval_service.mark_decided(db, approval, approved=body.approved)
 
     # Fase 12.4 — aprovação de um comando REMOTO: retoma o comando exato do
     # device (persiste de forma transacional e entrega best-effort à Gateway).
     # NÃO roda o loop do agente local: o comando remoto é executado pelo
     # pipeline interno e o resultado é consultável via /remote/commands.
+    #
+    # Fase 12.4-R1: `mark_decided` é ATÔMICO (WHERE status=pending), então sob
+    # decisões concorrentes apenas uma efetiva; o comando é localizado por
+    # `approval_id` em QUALQUER estado, evitando que um pedido concorrente caia
+    # no loop local do agente; e `mark_applied` só ocorre APÓS a retomada bem
+    # sucedida (nunca `applied=True` com comando ainda PENDING_APPROVAL).
     from app.models import Device
     from app.remote import resume as resume_service
     from app.remote.jarvis_session import get_or_create_jarvis_session
@@ -72,7 +78,6 @@ async def respond(
         device = db.get(Device, command.device_id)
         if device is None or not device.is_active:
             raise HTTPException(status_code=409, detail="Comando remoto inválido: device não ativo")
-        approval_service.mark_applied(db, approval)
         jarvis_session_id = get_or_create_jarvis_session(db, device)
         try:
             result = await resume_service.resume_remote_command(
@@ -84,8 +89,12 @@ async def respond(
             )
         except resume_service.RemoteResumeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        approval_service.mark_applied(db, approval)
         deliver_command_result(device.id, command.command_id, result)
         return JSONResponse({"status": "decided", "command_id": command.command_id, "result": result})
+
+    if not decided:
+        raise HTTPException(status_code=409, detail="Pedido de aprovação já decidido")
 
     generator = agent.run_agent(approval.session_id, provider, db, user_text="")
     return StreamingResponse(generator, media_type="text/event-stream", headers=SSE_HEADERS)
