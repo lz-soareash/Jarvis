@@ -140,11 +140,15 @@ class RemoteConnectionManager:
             try:
                 await self.send_heartbeat()
             except ConnectionError as exc:
+                # Conexão encerrada — o receive loop também quebrará; encerra
+                # p/ permitir reconexão supervisionada.
                 logger.info("Heartbeat falhou (conexão encerrada): %s", exc)
                 break
             except Exception as exc:  # noqa: BLE001
-                logger.error("Erro no heartbeat: %s", exc)
-                break
+                # Fase 12.8: falha transitória NÃO derruba o heartbeat —
+                # registra e tenta de novo no próximo ciclo (evita o ciclo
+                # completo de reconexão por um único blip).
+                logger.error("Erro no heartbeat (transitório): %s", exc)
 
     async def _send_reply(
         self,

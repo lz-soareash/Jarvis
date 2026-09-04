@@ -467,11 +467,26 @@ class SystemController:
         return self.kill_process(pid)
 
     def run_allowed_command(self, command: str) -> str:
-        """Executa um comando da allowlist de comandos seguros."""
+        """Executa um comando da allowlist de comandos seguros (sem shell).
+
+        Fase 12.8 (hardening): a execução usa `shell=False` — o comando é
+        dividido em argumentos via `shlex.split` (nunca interpretado por um
+        shell) — eliminando a superfície de injeção de comandos que existia com
+        `shell=True` + validação só do primeiro token (ex.: `ping x & calc`).
+        Apenas o comando base (primeiro token) deve estar na allowlist.
+        """
+        import shlex
+
         command = (command or "").strip()
         if not command:
             raise SystemControllerError("Comando é obrigatório")
-        base_cmd = command.split()[0].lower() if command.split() else ""
+        try:
+            argv = shlex.split(command, posix=True)
+        except ValueError as exc:
+            raise SystemControllerError(f"Comando inválido: {exc}") from exc
+        if not argv:
+            raise SystemControllerError("Comando é obrigatório")
+        base_cmd = argv[0].lower()
         if base_cmd not in _ALLOWED_COMMANDS:
             raise SystemControllerError(
                 f"Comando não autorizado: '{base_cmd}'. "
@@ -479,8 +494,8 @@ class SystemController:
             )
         try:
             proc = subprocess.run(
-                command,
-                shell=True,
+                argv,
+                shell=False,
                 capture_output=True,
                 text=True,
                 timeout=15,

@@ -16,7 +16,7 @@ import logging
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as OrmSession
 
@@ -88,16 +88,19 @@ def mark_delivered(db: OrmSession, entry: RemoteOutbox) -> RemoteOutbox:
 def purge_delivered(
     db: OrmSession, *, older_than_days: int = 7
 ) -> int:
-    """Remove entradas já entregues há mais de N dias (housekeeping)."""
+    """Remove entradas já entregues há mais de N dias (housekeeping).
+
+    Fase 12.8: a limpeza agora usa DELETE direto no banco com filtro SQL
+    (antes carregava todas as entregues em memória e filtrava em Python).
+    """
     cutoff = ensure_utc(utcnow()) - timedelta(days=older_than_days)
-    rows = db.scalars(
-        select(RemoteOutbox).where(RemoteOutbox.delivered_at.is_not(None))
-    ).all()
-    removed = 0
-    for row in rows:
-        if ensure_utc(row.delivered_at) <= cutoff:
-            db.delete(row)
-            removed += 1
+    rows = db.execute(
+        delete(RemoteOutbox).where(
+            RemoteOutbox.delivered_at.is_not(None),
+            RemoteOutbox.delivered_at <= cutoff,
+        )
+    )
+    removed = rows.rowcount
     if removed:
         db.commit()
     return removed

@@ -21,6 +21,7 @@ const STATIC_ASSETS = [
   "./js/speech.js?v=13",
   "./js/ops.js?v=18",
   "./js/markdown.js?v=15",
+  "./js/remote.js?v=18",
   "./js/app.js?v=18",
 ];
 

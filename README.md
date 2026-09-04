@@ -320,9 +320,11 @@ Suíte de testes (do diretório `backend/`):
 ..\.venv\Scripts\python -m pytest -q
 ```
 
-**398 testes verdes**, cobrindo as Fases 12.1..12.7 (transporte, identidade/emparelhamento,
-agente/comandos, retomada pós-aprovação, hardening, WoL, outbox de re-entrega e SSE de eventos).
-Os testes são
+**406 testes verdes**, cobrindo as Fases 12.1..12.8 (transporte, identidade/emparelhamento,
+agente/comandos, retomada pós-aprovação, hardening, WoL, outbox de re-entrega, SSE de eventos
+e a finalização/endurecimento da 12.8). Há ainda 9 falhas pré-existentes em `test_developer.py`
+(RuntimeError do `asyncio.get_event_loop()` removido no Python 3.14 — ambientais, sem relação
+com o Remote). Os testes são
 herméticos: forçam `ENV=test`, `GEMINI_API_KEY=""`, `DATABASE_URL=sqlite:///:memory:`,
 `ATLAS_ENABLED=false`, `AI_LOCAL_LLM_ENABLED=false` e `REMOTE_ENABLED=false` **antes** de
 importar o app — nunca tocam serviços reais nem o `.env` da máquina.
@@ -506,18 +508,45 @@ Garante que nenhum `COMMAND_RESULT` se perca quando o device está offline no mo
 - **Re-entrega no reconnect** (`RemoteAgent._flush_pending_results`): após (re)conectar, o
   agente entrega os resultados pendentes de forma direcionada e os marca como entregues.
 
+## Finalização e endurecimento do Remote (Fase 12.8)
+
+Fecha a Fase 12 com auditoria, correções de segurança/robustez e testes de validação das
+ETAPAS 2–17, sem mudar a arquitetura nem o default `REMOTE_ENABLED=false`.
+
+- **Segurança (shell injection)**: `run_allowed_command` (`app/computer/controller.py`) passou
+  de `shell=True` (allowlist só do primeiro token) para `shell=False` + `shlex.split` — a injeção
+  `ping x & calc` nunca mais é interpretada por um shell.
+- **Timeout no transporte**: `connection.receive()` usa `asyncio.wait_for(..., timeout)` e
+  converte `TimeOutError` → `ConnectionError` (evita leitura presa).
+- **Heartbeat resiliente**: `_heartbeat_loop` só encerra em `ConnectionError`; exceções genéricas
+  são logadas e o loop continua (sem derrubar o heartbeat em falha pontual).
+- **`find_stuck_executing`**: filtro de idade corrigido (`created_at <= cutoff`, em vez do
+  comparador quebrado que era sempre verdadeiro).
+- **`purge_delivered`**: virou um único `DELETE ... WHERE delivered_at IS NOT NULL AND
+  delivered_at <= cutoff` no banco (sem carregar tudo em memória).
+- **`end_session`**: removido branch morto.
+- **SSE**: eventos sanitizados (drops de aninhados/listas/secrets) e 503 quando `REMOTE_ENABLED=false`.
+- **Validação da 12.8** (`tests/test_remote_fase128.py`, ETAPAS 2–17): máquina de estados,
+  idempotência em restart, backoff com jitter e máximo, reconnect sem busy-loop, revogação
+  bloqueando retomada pós-aprovação, WoL com MAC inválido, concorrência, comando duplicado,
+  age filter, purge SQL, receive timeout e freios de injeção de shell.
+- **Frontend**: `js/remote.js` adicionado ao pré-cache do Service Worker (`sw.js`).
+
 ## Roadmap (resumo)
 
 0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·
 4. Permissions ✔ · 5. Computer ✔ · 6. Voz (STT/TTS no navegador) ✔ · 6b. Voz (UX de fala: fila,
 sanitização, provedores, SPEAKING) ✔ · 7. Filesystem ✔ · 8. Developer ✔ · 9. Mobile/Devices/PWA ✔ ·
-10. Atlas ✔ · 11. AI Core + Central de Operações ✔ · 12. Agent loop · 13. Web · 14. Visão ·
-15. Proativo · 16. Remote (foundation 12.1 ✔ + identidade/emparelhamento 12.2 ✔ + agente
-persistente/execução de comandos 12.3 ✔ + retomada pós-aprovação/entrega 12.4 ✔ + hardening
-12.4-R1 ✔ + UI/SSE mobile 12.5 ✔ + Wake-on-LAN 12.6 ✔ + fila de re-entrega 12.7 ✔: transporte
+10. Atlas ✔ · 11. AI Core + Central de Operações ✔ · 12. Remote (foundation 12.1 ✔ + identidade/
+emparelhamento 12.2 ✔ + agente persistente/execução de comandos 12.3 ✔ + retomada
+pós-aprovação/entrega 12.4 ✔ + hardening 12.4-R1 ✔ + UI/SSE mobile 12.5 ✔ + Wake-on-LAN 12.6 ✔ +
+fila de re-entrega 12.7 ✔ + **finalização/endurecimento 12.8 ✔ (Fase 12 COMPLETA)**: transporte
 outbound + dispositivos/credenciais/pairing + agente com reconnect/backoff, comandos executados
 só via Permission Engine com aprovação para níveis ≥ 2, resultado da decisão entregue best-effort
 à Gateway + consultável offline, eventos remotos em tempo real (SSE) no painel mobile, WoL via
-magic packet e outbox persistente que re-entrega resultados no reconnect) · 17. V1.
+magic packet, outbox persistente que re-entrega resultados no reconnect, e auditoria + correções
+de segurança/robustez — shell=False, receive timeout, heartbeat resiliente, filas e age filters
+corrigidos, idle timeout, injeção bloqueada, retomada pós-aprovação com revogação respeitada) ·
+13. Web (próxima — não iniciada) · 14. Visão · 15. Proativo · 17. V1.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

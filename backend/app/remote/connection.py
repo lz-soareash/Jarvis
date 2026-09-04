@@ -106,7 +106,14 @@ class WebSocketConnection(RemoteConnection):
 
     async def receive(self) -> RemoteEnvelope:
         self._require_connected()
-        raw = await self._ws.recv()
+        # Fase 12.8: timeout no recv p/ evitar bloqueio indefinido do loop em
+        # conexão meio-aberta (silenciosa). Em TimeoutError, levanta
+        # ConnectionError para o receive loop tratar como desconexão — o
+        # supervisor fará a reconexão/backoff (não morre em silêncio).
+        try:
+            raw = await asyncio.wait_for(self._ws.recv(), timeout=self.timeout)
+        except asyncio.TimeoutError as exc:
+            raise ConnectionError("timeout aguardando mensagem da Gateway") from exc
         return decode_message(raw)
 
     async def close(self) -> None:

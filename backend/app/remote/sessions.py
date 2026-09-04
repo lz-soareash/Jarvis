@@ -77,8 +77,6 @@ def end_session(db: OrmSession, session_id: str) -> RemoteSession:
     session = db.get(RemoteSession, session_id)
     if session is None:
         raise KeyError(f"session não encontrada: {session_id}")
-    if session.status not in _ACTIVE and session.status != RemoteSessionStatus.ENDED.value:
-        session.ended_at = utcnow()
     if session.status != RemoteSessionStatus.ENDED.value:
         session.status = RemoteSessionStatus.ENDED.value
         session.ended_at = utcnow()

@@ -232,8 +232,13 @@ def find_stuck_executing(
     if device_id is not None:
         stmt = stmt.where(RemoteCommand.device_id == device_id)
     if older_than_seconds > 0:
+        # Fase 12.8: filtro de idade CORRIGIDO — antes comparava
+        # `created_at <= utcnow()` (sempre verdadeiro), retornando todos os
+        # stuck independentemente da idade. Agora limita a comandos mais antigos
+        # que `older_than_seconds`.
+        cutoff = ensure_utc(utcnow()) - timedelta(seconds=older_than_seconds)
         stmt = stmt.where(
-            RemoteCommand.created_at <= utcnow()
+            RemoteCommand.created_at <= cutoff
         )
     return list(db.scalars(stmt).all())
 
