@@ -34,9 +34,11 @@ para múltiplos dispositivos e um futuro modo remoto.
   AI Orchestrator        Context Engine          Memory (SQLite)
   (Gemini via AIProvider)   (fases futuras)           (fases futuras)
                                 │
-                          ONION: IA → Tool Engine → Permission System → User Confirmation
-                                │
-                          LOCAL AGENT (processo separado)
+                           ONION: IA → Tool Engine → Permission System → User Confirmation
+                                 │
+                       Perception Layer (Fase 15) ← ComputerState (bounded, em memória)
+                                 │
+                           LOCAL AGENT (processo separado)
 ```
 
 O `AIProvider` é uma interface abstrata (`generate`, `stream`, `analyze`, `health_check`).
@@ -82,9 +84,10 @@ backend/
 │   │   └── outbox.py            # 12.7 — fila persistente de re-entrega de resultados
 │   ├── websearch/                 # Fase 14 — providers de busca (DDG) + registry
 │   ├── research/                  # Fase 14 — SSRF, fetcher, extração, evidência, agente, síntese, knowledge
+│   ├── perception/                # Fase 15 — Perception Layer: abstração, provider Windows, state, tool
 │   ├── schemas/                   # modelos Pydantic base (inclui ToolCall/Declaration, ops, research)
 │   ├── services/                  # chat, memory, summarizer, agent, approvals, permissions, audit, ops, atlas, agent_core, research_service
-│   ├── tools/                     # Tool Engine: base, registry, builtins + web_search/web_fetch (Fase 14)
+│   ├── tools/                     # Tool Engine: base, registry, builtins + web_search/web_fetch (Fase 14) + observe_computer (Fase 15)
 │   └── main.py
 └── tests/                   # pytest (Gemini 100% mockado)
 ```
@@ -97,13 +100,18 @@ Nunca executa chamadas inventadas — só as registradas. Habilite o loop no cha
 `store_memory`, `recall_memory`, `get_system_stats`, `list_processes`, `open_app`, `kill_process`
 (Fase 3/5), `list_dir`/`read_file`/`write_file`/`make_dir`/`delete_path` (Fase 7),
 `dev_list_tools`/`dev_get_tool_schema`/`dev_get_config`/`dev_diagnostics` (Fase 8) e
-`wake_on_lan` (Fase 12.6; nível 2, envia magic packet UDP).
+`wake_on_lan` (Fase 12.6; nível 2, envia magic packet UDP),
+`web_search`/`web_fetch` (Fase 14; nível 0/1) e `observe_computer`
+(Fase 15; nível 0; percepção estruturada do computador via Perception Layer).
 
 ## Computer (Fase 5)
 
 Controle do computador com segurança em camadas:
 
 - `get_system_stats`/`list_processes` — **nível 0**, somente leitura, automáticas.
+- `observe_computer` — **nível 0** (Fase 15): observação estruturada do computador via Perception Layer
+  (capacidades detectadas reflexivamente, janela ativa, stats, processos — sem inventar capacidades;
+  screenshot opcional e manual, nunca automático; binário nunca em logs/eventos).
 - `open_app` — **nível 1** (risco médio): abre app ou arquivo via `os.startfile`.
 - `kill_process` — **nível 3** (risco alto): encerra processo por PID; bloqueado por padrão,
   só executa com aprovação explícita do usuário (fluxo `approval_pending` da Fase 4).
@@ -112,6 +120,31 @@ O `SystemController` (`app/computer/controller.py`) usa **PowerShell nativo + st
 dependências extras) com `CREATE_NO_WINDOW` e nunca toca na IA. Os mesmos dados ficam
 disponíveis na API read-only `/api/system/stats` e `/api/system/processes` para demos e
 integrações.
+
+## Perception Layer (Fase 15)
+
+Fundação da camada de **PERCEBER** do futuro Computer Use (PERCEBER→INTERPRETAR→
+PLANEJAR→AGIR→OBSERVAR→VERIFICAR→RECUPERAR). **SEM agente autônomo de controle
+de UI, sem OCR, sem loops de Computer Use.** A percepção é:
+
+- **Independente do LLM**: o modelo recebe `ComputerObservation` estruturado,
+  nunca tenta adivinhar o estado da máquina.
+- **L0 segura/determinística**: somente leitura, via APIs nativas do Windows
+  (ctypes para janela ativa, PowerShell para stats/processos), sem dependências
+  externas obrigatórias.
+- **Capability discovery reflexiva**: capacidades reais descobertas do ambiente
+  (OS, bibliotecas opcionais) — nunca inventadas (screenshot/OCR/vision/A11Y = False
+  se a biblioteca não estiver presente).
+- **Screenshot opcional e manual**: nunca automático/contínuo; exige
+  `perception_screenshot_enabled=true` e bibliotecas `PIL`/`mss` (ausentes por padrão);
+  apenas metadata (timestamp/dimensões/hash) entra na memória; binário nunca em
+  logs, eventos ou payloads.
+- **ComputerState bounded em memória**: histórico de observações com TTL e teto de
+  entradas; screenshots NUNCA mantidos indefinidamente.
+- **Integração no Agentic Core**: passo `kind="observe"` e tool `observe_computer`
+  (LEVEL_0), seguindo o pipeline existente Tool Registry → Permission Engine → Audit.
+- **Eventos sanitizados**: `computer.observation.*` na Central de Operações, sem
+  binário de screenshot nem segredos.
 
 ## Permissions (Fase 4)
 
@@ -374,7 +407,7 @@ Core como nova capacidade `kind="research"` e exposta por tools `web_search`/`we
 | `GET /api/device/info` | tipo de dispositivo detectado (`device` + `touch`) |
 | `GET /api/atlas/status` | estado do Atlas (habilitado/configurado/base_url) |
 | `GET /api/atlas/health` | healthcheck do Atlas (login real) — veja acima |
-| `GET /api/ops/overview` | Central de Operações: AI Core, provedores, memória, tarefas, tools, Atlas |
+| `GET /api/ops/overview` | Central de Operações: AI Core, provedores, memória, tarefas, tools, Atlas, percepção |
 | `GET /api/ops/providers` | estado dos provedores de IA do AI Router |
 | `GET /api/ops/providers/{name}/health` | healthcheck ao vivo de um provedor |
 | `GET /api/ops/events` | eventos observáveis recentes (sanitizados; `session_id`/`event_type`/`limit`) |
@@ -412,12 +445,16 @@ Suíte de testes (do diretório `backend/`):
 ..\.venv\Scripts\python -m pytest -q
 ```
 
-**531 testes verdes**, cobrindo as Fases 12.1..12.8 (transporte, identidade/emparelhamento,
+**559 testes verdes**, cobrindo as Fases 12.1..12.8 (transporte, identidade/emparelhamento,
 agente/comandos, retomada pós-aprovação, hardening, WoL, outbox de re-entrega, SSE de eventos
 e a finalização/endurecimento da 12.8), a **Fase 13** (pipeline agêntico TASK→PLAN→EXECUTE→
 OBSERVE→VERIFY→RECOVER→COMPLETION, recuperação com retry/skip, pausa e retomada por aprovação
-e a Workspace API) e a **Fase 14** (Web Search + Research Agent + Knowledge, com SSRF/DDG/
-Fetcher/Extrator/Síntese/ledger/hermeticidade). As 9 falhas ambientais do `test_developer.py`
+e a Workspace API), a **Fase 14** (Web Search + Research Agent + Knowledge, com SSRF/DDG/
+Fetcher/Extrator/Síntese/ledger/hermeticidade) e a **Fase 15** (Perception Layer: contratos
+de percepção, provider Windows (L0), ComputerState bounded em memória, screenshot seguro
+só metadata, tool `observe_computer` LEVEL_0 no Registry, passo `kind="observe"` no
+Agentic Core, eventos `computer.observation.*` sanitizados, capability discovery reflexiva
+e 28 testes de contracts/provider/store/tool/agentic/segurança).
 (`asyncio.get_event_loop()` no Python 3.13) foram corrigidas. Os testes são
 herméticos: forçam `ENV=test`, `GEMINI_API_KEY=""`, `DATABASE_URL=sqlite:///:memory:`,
 `ATLAS_ENABLED=false`, `AI_LOCAL_LLM_ENABLED=false` e `REMOTE_ENABLED=false` **antes** de
@@ -652,6 +689,14 @@ orçamentos e síntese via Router (local→gemini→determinístico) com citaç�
 e anti prompt-injection, ledger `KnowledgeRecord` com confiança/proveniência/dedup/conflito,
 política `ATLAS_WRITE_MODE` (default `suggest`, nunca escreve sem confirmação), capacidade
 `kind="research"` no Agentic Core, tools `web_search`/`web_fetch`, API `/api/research` SSE e
-bloco `research` na Central de Operações) · 15. Visão · 16. Proativo · 17. V1.
+bloco `research` na Central de Operações) · 15. Perception Layer & Computer State ✔ (Fase 15 COMPLETA:
+percepção L0 segura/determinística — `PerceptionProvider` abstrato + `WindowsPerceptionProvider`
+via ctypes/PowerShell nativos, `ComputerObservation` estruturado sem binário, capability discovery
+reflexiva (OS/bibliotecas reais), `ObservationStore` bounded/TTL em memória, screenshot seguro
+só metadata (binário nunca em logs/eventos), tool `observe_computer` LEVEL_0 no Tool Registry,
+passo `kind="observe"` no Agentic Core (reutilizando pipeline Registry→Permission→Audit),
+eventos `computer.observation.*` sanitizados, bloco `perception` na Central de Operações,
+config `perception_enabled`/`perception_screenshot_enabled` e 28 testes herméticos de
+contracts/provider/store/tool/agentic/segurança) · 16. Proativo · 17. V1.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

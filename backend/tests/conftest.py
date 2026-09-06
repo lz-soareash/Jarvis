@@ -182,3 +182,15 @@ def fake_ai():
     app.dependency_overrides[get_ai_provider] = lambda: provider
     yield provider
     app.dependency_overrides.pop(get_ai_provider, None)
+
+
+@pytest.fixture
+def db_session():
+    """Sessão SQLAlchemy isolada por teste (mesmo banco in-memory do conftest)."""
+    from app.db.session import SessionLocal
+
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

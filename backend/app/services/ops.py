@@ -51,6 +51,11 @@ EVENT_KNOWLEDGE_RECORDED = "knowledge.recorded"
 EVENT_KNOWLEDGE_CONFLICT = "knowledge.conflict"
 EVENT_KNOWLEDGE_ATLAS = "knowledge.atlas"
 
+# Fase 15 — Perception Layer & Computer State: eventos sanitizados (sem
+# screenshots/segredos) da observação do computador.
+EVENT_COMPUTER_OBSERVED = "computer.observation.observed"
+EVENT_COMPUTER_OBSERVATION_FAILED = "computer.observation.failed"
+
 
 # ---------------------------------------------------------------------------
 # Persistência
@@ -254,6 +259,50 @@ def _system_stats() -> dict:
     return {"db": check_database(), "version": settings.version}
 
 
+def _perception_stats(db: OrmSession) -> dict:
+    """Fase 15 — estatísticas da Perception Layer (sanitizadas, sem binário).
+
+    Apenas contagens/metadata — nunca screenshots nem conteúdo sensível.
+    """
+    from app.perception.service import get_computer_state, get_provider
+
+    try:
+        provider = get_provider()
+        caps = provider.discover_capabilities()
+        available = provider.available()
+    except Exception:  # noqa: BLE001
+        caps = None
+        available = False
+
+    observed = db.scalar(
+        select(func.count(ExecutionEvent.id)).where(
+            ExecutionEvent.event_type == EVENT_COMPUTER_OBSERVED
+        )
+    ) or 0
+    failed = db.scalar(
+        select(func.count(ExecutionEvent.id)).where(
+            ExecutionEvent.event_type == EVENT_COMPUTER_OBSERVATION_FAILED
+        )
+    ) or 0
+
+    state = get_computer_state()
+    snap = state.snapshot()
+    return {
+        "provider": provider.name if available else "unavailable",
+        "available": available,
+        "capabilities": caps.to_dict() if caps else None,
+        "observations_total": observed,
+        "observations_failed": failed,
+        "history_count": snap.get("history_count", 0),
+        "last_screenshot": snap.get("last_screenshot"),
+        "active_window": (
+            (snap.get("observation") or {}).get("active_window", {}).get("title")
+            if snap.get("observation")
+            else None
+        ),
+    }
+
+
 def build_overview(db: OrmSession) -> OpsOverview:
     """Agrega o quadro atual do JARVIS para a Central de Operações (sem rede)."""
     from app.ai.registry import get_ai_router
@@ -287,6 +336,7 @@ def build_overview(db: OrmSession) -> OpsOverview:
         tools=_tools_stats(),
         atlas=_atlas_stats(),
         research=_research_stats(db),
+        perception=_perception_stats(db),
         system=_system_stats(),
         recent_events=[to_out(e) for e in list_events(db, limit=20)],
         context=context_meta,

@@ -70,6 +70,13 @@ _RESEARCH = re.compile(
     r"|quem\s+(?:é|são)|\bwhat\s+is|\bhow\s+to|notícias|not[ií]cias|atualidade)\b",
     re.IGNORECASE,
 )
+# Fase 15 — Percepção do computador como capacidade (o passo é {"kind": "observe"}).
+_OBSERVE = re.compile(
+    r"\b(?:observ[ae]|percep[çc][ãa]o|perceba|status\s+do\s+computador|o\s+que\s+está"
+    r"\s+aberto?|ver\s+o\s+computador|inspecion[ae]r\s+o\s+computador|janela\s+ativa"
+    r"|como\s+est[áa]\s+o\s+(?:pc|computador|sistema))\b",
+    re.IGNORECASE,
+)
 
 
 def _research_plan(objective: str) -> list[dict]:
@@ -80,6 +87,19 @@ def _research_plan(objective: str) -> list[dict]:
             "kind": "research",
             "arguments": {"objective": objective[:500]},
             "verify": {"kind": "research"},
+            "guard": "skip",
+        }
+    ]
+
+
+def _observe_plan(objective: str) -> list[dict]:
+    """Plano de Percepção: um único passo da capacidade observe."""
+    return [
+        {
+            "description": "Observar o estado atual do computador",
+            "kind": "observe",
+            "arguments": {"include_processes": True},
+            "verify": {"kind": "observe"},
             "guard": "skip",
         }
     ]
@@ -153,6 +173,8 @@ def plan_for(objective: str) -> list[dict]:
     objective = (objective or "").strip()
     if _RESEARCH.search(objective):
         steps = _research_plan(objective)
+    elif _OBSERVE.search(objective):
+        steps = _observe_plan(objective)
     elif _TESTS.search(objective):
         steps = _tests_plan()
     elif _CODE.search(objective):
@@ -219,6 +241,51 @@ async def _execute_research_step(
         return events, ToolResult.success(answer[:8000])
     error = outcome.error or "Pesquisa sem evidências (nenhuma resposta)."
     return events, ToolResult.failure(error)
+
+
+async def _execute_observe_step(
+    db: OrmSession,
+    session_id: str,
+    step: dict,
+) -> tuple[list[str], ToolResult]:
+    """Executa um passo `{"kind": "observe"}` reutilizando a Perception Layer.
+
+    PERCEBER é independente do LLM: o modelo recebe dados estruturados, nunca
+    adivinha o estado. Sem screenshot automático (nunca contínuo). Devolve
+    (eventos SSE, ToolResult) para os loops do Agentic Core.
+    """
+    from app.perception.service import run_perception
+
+    args = step.get("arguments") or {}
+    events: list[str] = []
+
+    async def sink(payload: dict) -> None:
+        events.append(sse_event(payload))
+
+    result = await run_perception(
+        db,
+        session_id,
+        sink=sink,
+        include_processes=bool(args.get("include_processes", False)),
+        max_processes=int(args.get("max_processes") or 30),
+        capture_screenshot=bool(args.get("capture_screenshot", False)),
+    )
+    if not result.available:
+        return events, ToolResult.failure(result.error or "Observação indisponível.")
+
+    obs = result.observation
+    lines = [f"Capacidades: {obs.capabilities.summary}"]
+    active = obs.active_window
+    if active and (active.title or active.process_name):
+        lines.append(f"Janela ativa: {active.title or '?'}" + (f" ({active.process_name})" if active.process_name else ""))
+    if obs.system_stats:
+        cpu = obs.system_stats.get("cpu_percent")
+        lines.append(f"CPU: {cpu}%" if cpu is not None else "CPU: indisponível")
+    if obs.processes:
+        lines.append(f"Processos observados: {len(obs.processes)}")
+    if obs.errors:
+        lines.append("Avisos: " + "; ".join(obs.errors))
+    return events, ToolResult.success("\n".join(lines)[:4000])
 
 
 # ---------------------------------------------------------------------------
@@ -389,6 +456,32 @@ async def run_agent_task(
             yield sse_event({"type": "tool_done", "name": "web_research", "ok": result.ok})
             yield sse_event(
                 {"type": "agent_task_step", "task_id": task.id, "index": index, "tool": "web_research", "ok": ok}
+            )
+            task = db.get(AgentTask, task.id)
+            task.steps_done = _steps_done_count(task)
+            db.commit()
+            index += 1
+            continue
+
+        # Fase 15 — passo da capacidade percepção (kind="observe"), nível L0.
+        if step.get("kind") == "observe":
+            yield sse_event({"type": "tool_start", "round": index + 1, "names": ["observe_computer"]})
+            events, result = await _execute_observe_step(db, session_id, step)
+            for ev in events:
+                yield ev
+            ok = verify_step(step, result)
+            _set_progress(
+                db,
+                task,
+                index,
+                status=StepStatus.DONE.value if ok else StepStatus.SKIPPED.value,
+                ok=ok,
+                summary=(result.output or "")[:500],
+                attempts=attempts + 1,
+            )
+            yield sse_event({"type": "tool_done", "name": "observe_computer", "ok": result.ok})
+            yield sse_event(
+                {"type": "agent_task_step", "task_id": task.id, "index": index, "tool": "observe_computer", "ok": ok}
             )
             task = db.get(AgentTask, task.id)
             task.steps_done = _steps_done_count(task)
@@ -637,6 +730,17 @@ async def resume_agent_task(
             yield sse_event(
                 {"type": "agent_task_step", "task_id": task.id, "index": index, "tool": "web_research", "ok": ok}
             )
+        elif step.get("kind") == "observe":
+            yield sse_event({"type": "tool_start", "round": index + 1, "names": ["observe_computer"]})
+            events, result = await _execute_observe_step(db, task.session_id, step)
+            for ev in events:
+                yield ev
+            ok = verify_step(step, result)
+            _set_progress(db, task, index, status=StepStatus.DONE.value if ok else StepStatus.SKIPPED.value, ok=ok, summary=(result.output or "")[:500])
+            yield sse_event({"type": "tool_done", "name": "observe_computer", "ok": result.ok})
+            yield sse_event(
+                {"type": "agent_task_step", "task_id": task.id, "index": index, "tool": "observe_computer", "ok": ok}
+            )
         elif approval.status == ApprovalStatus.DENIED.value:
             audit_service.log_action(
                 db,
@@ -692,6 +796,19 @@ async def _continue_plan(
             yield sse_event({"type": "tool_done", "name": "web_research", "ok": result.ok})
             yield sse_event(
                 {"type": "agent_task_step", "task_id": task.id, "index": index, "tool": "web_research", "ok": ok}
+            )
+            continue
+
+        if step.get("kind") == "observe":
+            yield sse_event({"type": "tool_start", "round": index + 1, "names": ["observe_computer"]})
+            events, result = await _execute_observe_step(db, task.session_id, step)
+            for ev in events:
+                yield ev
+            ok = verify_step(step, result)
+            _set_progress(db, task, index, status=StepStatus.DONE.value if ok else StepStatus.SKIPPED.value, ok=ok, summary=(result.output or "")[:500])
+            yield sse_event({"type": "tool_done", "name": "observe_computer", "ok": result.ok})
+            yield sse_event(
+                {"type": "agent_task_step", "task_id": task.id, "index": index, "tool": "observe_computer", "ok": ok}
             )
             continue
 

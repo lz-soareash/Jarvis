@@ -79,11 +79,19 @@ class Settings(BaseSettings):
     # Permissions (Fase 4)
     approval_ttl_seconds: int = 600  # validade de um pedido de aprovação pendente
 
+    # Perception Layer (Fase 15) — PERCEPÇÃO segura/determinística do computador.
+    # `perception_enabled` liga/desliga a camada de percepção; `perception_screenshot_enabled`
+    # habilita a captura OPCIONAL e MANUAL de screenshot (nunca contínua, nunca automática;
+    # exige bibliotecas opcionais; binário nunca entra em logs/eventos).
+    perception_enabled: bool = True
+    perception_screenshot_enabled: bool = True
+    # Teto de processos incluídos numa observação (evita payloads grandes).
+    perception_max_processes: int = 30
+
     # Filesystem (Fase 7) — raiz-sandbox das ferramentas de arquivos
     files_root: str = "~"
 
-    # Web Research (Fase 14) — busca, coleta e síntese independentes do Gemini.
-    # A coleta NUNCA depende de LLM/API externa (local-first); o LLM só entra na
+    # Web Research (Fase 14) — busca, coleta e síntese independentes do Gemini.    # A coleta NUNCA depende de LLM/API externa (local-first); o LLM só entra na
     # síntese (Router: local → gemini → determinístico).
     web_search_enabled: bool = True  # gate global da camada de busca
     web_search_provider: str = "duckduckgo"  # provider default (provider registry)
