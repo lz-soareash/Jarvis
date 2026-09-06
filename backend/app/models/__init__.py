@@ -3,6 +3,7 @@
 from app.models.governance import ApprovalRequest, AuditLog, ToolPolicy
 from app.models.memory import Memory
 from app.models.ops import ExecutionEvent
+from app.models.tasks import AgentTask
 from app.models.remote import (
     Credential,
     Device,
@@ -21,6 +22,7 @@ __all__ = [
     "AuditLog",
     "ToolPolicy",
     "ExecutionEvent",
+    "AgentTask",
     "Device",
     "Credential",
     "PairingRequest",

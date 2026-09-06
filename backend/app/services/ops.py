@@ -36,6 +36,13 @@ EVENT_LOCAL_STARTED = "local_model.started"
 EVENT_LOCAL_COMPLETED = "local_model.completed"
 EVENT_LOCAL_FAILED = "local_model.failed"
 
+# Fase 13 — Agentic Core: eventos da camada de tarefas compostas.
+EVENT_TASK_STARTED = "agent.task.started"
+EVENT_TASK_PLANNED = "agent.task.planned"
+EVENT_TASK_STEP = "agent.task.step"
+EVENT_TASK_COMPLETED = "agent.task.completed"
+EVENT_TASK_FAILED = "agent.task.failed"
+
 
 # ---------------------------------------------------------------------------
 # Persistência
@@ -139,11 +146,20 @@ def _tasks_stats(db: OrmSession) -> dict:
             select(AuditLog).order_by(AuditLog.id.desc()).limit(6)
         ).all()
     ]
+    # Fase 13 — tarefas agênticas (Agentic Core) por status.
+    from app.models import AgentTask
+
+    agent_tasks: dict[str, int] = {}
+    for row in db.execute(
+        select(AgentTask.status, func.count(AgentTask.id)).group_by(AgentTask.status)
+    ):
+        agent_tasks[row[0]] = row[1]
     return {
         "pending_approvals": pending,
         "approved": approved,
         "denied": denied,
         "recent_executions": executed,
+        "agent_tasks": agent_tasks or {},
     }
 
 

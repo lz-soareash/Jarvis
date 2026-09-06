@@ -57,6 +57,31 @@ class MemoryKind(str, Enum):
     SUMMARY = "summary"
 
 
+class TaskStatus(str, Enum):
+    """Ciclo de vida de uma tarefa agêntica (Fase 13 — Agentic Core).
+
+    Fluxo alvo: PLANNED → RUNNING → (por passo) → COMPLETED / FAILED.
+    `CANCELLED` cobre interrupção; `COMPLETED` só chega após falhas parciais
+    serem contornadas ou verificadas.
+    """
+
+    PLANNED = "planned"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class StepStatus(str, Enum):
+    """Status de um passo indiviliável dentro do plano de uma tarefa (Fase 13)."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
 class DeviceType(str, Enum):
     """Tipos de dispositivo (Trusted Devices — fases futuras)."""
 

@@ -71,6 +71,11 @@ class Settings(BaseSettings):
     # Tool Engine (Fase 3)
     max_tool_rounds: int = 3  # rodadas máx. de chamadas de ferramenta por turno
 
+    # Agentic Core (Fase 13) — camada de tarefas compostas (plano multi-passos).
+    agent_core_enabled: bool = True
+    agent_core_max_steps: int = 12  # teto de passos por plano (evita loops)
+    agent_core_max_retries: int = 1  # nova tentativa por passo em falha recuperável
+
     # Permissions (Fase 4)
     approval_ttl_seconds: int = 600  # validade de um pedido de aprovação pendente
 

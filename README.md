@@ -14,8 +14,11 @@ para múltiplos dispositivos e um futuro modo remoto.
   último (Fase 11 — independência total de internet / chave de API).
 - `GEMINI_API_KEY` nunca sai do backend (nunca no frontend/mobile/agente).
 - A IA **não executa** nada: ela apenas *sugere* `tool + params`. A execução passa
-  obrigatoriamente pelo Tool Engine e pelo Permission System (implementados em fases futuras).
-- O **Core** não acessa filesystem/subprocess/terminal. O **Local Agent** é o executor.
+  obrigatoriamente pelo **Tool Engine** e pelo **Permission System**.
+- O **Core** executa as ferramentas **pelo pipeline interno** (Tool Engine → Permission
+  System → Auditoria), sempre com operações determinísticas e controladas. O **Agentic Core**
+  (Fase 13) executa planos de tarefa reutilizando exatamente esse pipeline, respeitando os
+  níveis de permissão e a aprovação do usuário.
 - O JARVIS funciona sem o Atlas; Atlas é integração opcional (via API real, sem tocar no banco).
 
 ## Arquitetura (Fase 0)
@@ -65,7 +68,7 @@ backend/
 │   │   ├── core.py                # AI Core (Fase 11) — orquestra provedor + caminho + observabilidade
 │   │   ├── registry.py            # AI Router (Fase 11) — seleção/fallback de provedores
 │   │   └── providers/             # base.py (AIProvider) + gemini.py + local_llm.py + deterministic.py (safety)
-│   ├── api/                       # rotas (health, chat, memory, approvals, permissions, audit, system, ops)
+│   ├── api/                       # rotas (health, chat, memory, approvals, permissions, audit, system, ops, workspace)
 │   ├── computer/                  # SystemController (stats, processos, abrir/encerrar apps) — Fase 5
 │   ├── core/                      # config, logging estruturado, enums (estados/permissões)
 │   ├── db/                        # SQLAlchemy (Base, engine, sessão)
@@ -78,8 +81,9 @@ backend/
 │   │   ├── events.py            # 12.5 — barramento pub/sub p/ SSE + replay sanitizado
 │   │   └── outbox.py            # 12.7 — fila persistente de re-entrega de resultados
 │   ├── schemas/                   # modelos Pydantic base (inclui ToolCall/Declaration, ops)
-│   ├── services/                  # chat, memory, summarizer, agent, approvals, permissions, audit, ops, atlas
+│   ├── services/                  # chat, memory, summarizer, agent, approvals, permissions, audit, ops, atlas, agent_core
 │   ├── tools/                     # Tool Engine: base, registry, builtins (tempo, sistema, memória, computador)
+│   ├── websearch/                 # Fase 13 — esqueleto de busca (base.py + duckduckgo.py, sem rede ainda)
 │   └── main.py
 └── tests/                   # pytest (Gemini 100% mockado)
 ```
@@ -262,6 +266,40 @@ O **AI Core** (`app/ai/core.py`) orquestra cada turno do chat e o **AI Router**
   provedores, memória, tarefas, tools, Atlas), `GET /api/ops/providers`,
   `GET /api/ops/providers/{name}/health`, `GET /api/ops/events`.
 
+## Agentic Core & Workspace (Fase 13)
+
+Camada de **tarefas agênticas**: o JARVIS transforma metas de alto nível em planos de passos
+executáveis e os processa de ponta a ponta — TASK → PLAN → EXECUTE → OBSERVE → VERIFY →
+RECOVER → COMPLETION → RESPONSE — **reutilizando todo o pipeline existente** (Tool Registry,
+Permission Engine, Auditoria, `agent._run_tool`). Nenhum loop de agente novo foi criado.
+
+- **Modelo `AgentTask`** (`app/models/tasks.py`): id, sessão, objetivo, status
+  (`planned/running/completed/failed/cancelled`), `plan_json`/`progress_json` (passo a passo
+  com status `pending/running/done/failed/skipped`, tentativas e sumário), `steps_done/total`,
+  erro e ponte `approval_id` para a "pausa" por aprovação.
+- **Planner determinístico** (`app/services/agent_core.py` → `plan_for`): classifica o
+  objetivo por regex (`análise` → lista arquivos + diagnóstico; `testes` → diagnóstico +
+  comando permitido; `código` → listagem somente leitura) e monta planos **sem reflexão de
+  prompt para o LLM** — determinístico, audável e limitado por `agent_core_max_steps`.
+- **Execução**: `run_agent_task` (async generator SSE) percorre o plano passo a passo,
+  verificando cada resultado (`verify_step`: `exit_ok`/`contains`). Falha com guard `retry`
+  re-executa o **mesmo passo** até `agent_core_max_retries`; `skip` ignora o passo sem derrubar
+  a tarefa; `stop` marca `failed` e encerra. A completude só é marcada se a tarefa ainda está
+  `running` (cancelada não é ressuscitada).
+- **Aprovações (L2/L3)**: passo de nível ≥ 2 cria um `ApprovalRequest` que vincula
+  `task.approval_id`, pausa a tarefa e emite `approval_request/approval_pending` (mesma
+  mecânica do chat). `POST /api/approvals/{id}/respond` detecta a ligação e **retoma a tarefa**
+  via `resume_agent_task` (aplicado, uma única vez; negado → `cancelled`; 409 se já decidido).
+- **Workspace API** (`app/api/workspace.py`): `GET /api/workspace/tasks` (lista),
+  `POST /api/workspace/tasks` (cria e roda — SSE), `GET/DELETE /api/workspace/tasks/{id}` e
+  `POST /api/workspace/tasks/{id}/cancel`.
+- **Config**: `agent_core_enabled`, `agent_core_max_steps` (12), `agent_core_max_retries` (1).
+- **Web Search (esqueleto)**: `app/websearch/` com ABC `SearchProvider` + `SearchResult`/
+  `SearchQuery` e um `DuckDuckGoSearchProvider` **placeholder (`enabled=False`, sem rede)** —
+  contrato pronto para o provedor real futuro.
+- **Observabilidade**: eventos `agent.task.*` (started/planned/step/completed/failed) e
+  contadores `agent_tasks` por status na Central de Operações.
+
 ## Endpoints
 
 | Rota | Descrição |
@@ -294,6 +332,10 @@ O **AI Core** (`app/ai/core.py`) orquestra cada turno do chat e o **AI Router**
 | `GET /api/ops/providers` | estado dos provedores de IA do AI Router |
 | `GET /api/ops/providers/{name}/health` | healthcheck ao vivo de um provedor |
 | `GET /api/ops/events` | eventos observáveis recentes (sanitizados; `session_id`/`event_type`/`limit`) |
+| `GET /api/workspace/tasks` | lista tarefas agênticas (Fase 13) |
+| `POST /api/workspace/tasks` | cria e executa uma tarefa (SSE; plano via `agent_core`) |
+| `GET/DELETE /api/workspace/tasks/{id}` | detalhe / exclusão de tarefa |
+| `POST /api/workspace/tasks/{id}/cancel` | cancela uma tarefa em execução |
 | `GET /api/remote/events` | SSE de eventos remotos ao vivo + replay recente (identidade, conexão, comandos) — Fase 12.5 |
 | `GET /api/remote/status` | estado sanitizado do agente remoto (connection_state, pending_commands, …) |
 | `GET /health` | saúde da API + banco (SQLite) e device detectado pelo User-Agent |
@@ -320,11 +362,12 @@ Suíte de testes (do diretório `backend/`):
 ..\.venv\Scripts\python -m pytest -q
 ```
 
-**406 testes verdes**, cobrindo as Fases 12.1..12.8 (transporte, identidade/emparelhamento,
+**429 testes verdes**, cobrindo as Fases 12.1..12.8 (transporte, identidade/emparelhamento,
 agente/comandos, retomada pós-aprovação, hardening, WoL, outbox de re-entrega, SSE de eventos
-e a finalização/endurecimento da 12.8). Há ainda 9 falhas pré-existentes em `test_developer.py`
-(RuntimeError do `asyncio.get_event_loop()` removido no Python 3.14 — ambientais, sem relação
-com o Remote). Os testes são
+e a finalização/endurecimento da 12.8) e a **Fase 13** (pipeline agêntico TASK→PLAN→EXECUTE→
+OBSERVE→VERIFY→RECOVER→COMPLETION, recuperação com retry/skip, pausa e retomada por aprovação
+e a Workspace API). As 9 falhas ambientais do `test_developer.py`
+(`asyncio.get_event_loop()` no Python 3.13) foram corrigidas. Os testes são
 herméticos: forçam `ENV=test`, `GEMINI_API_KEY=""`, `DATABASE_URL=sqlite:///:memory:`,
 `ATLAS_ENABLED=false`, `AI_LOCAL_LLM_ENABLED=false` e `REMOTE_ENABLED=false` **antes** de
 importar o app — nunca tocam serviços reais nem o `.env` da máquina.
@@ -547,6 +590,10 @@ só via Permission Engine com aprovação para níveis ≥ 2, resultado da decis
 magic packet, outbox persistente que re-entrega resultados no reconnect, e auditoria + correções
 de segurança/robustez — shell=False, receive timeout, heartbeat resiliente, filas e age filters
 corrigidos, idle timeout, injeção bloqueada, retomada pós-aprovação com revogação respeitada) ·
-13. Web (próxima — não iniciada) · 14. Visão · 15. Proativo · 17. V1.
+13. Web Search + Agentic Core & Workspace ✔ (Fase 13 COMPLETA: modelo `AgentTask` + pipeline
+agêntico TASK→PLAN→EXECUTE→OBSERVE→VERIFY→RECOVER→COMPLETION reutilizando Tool Engine/
+Permission/Auditoria, recuperação com retry/skip, pausa por aprovação (nível ≥ 2) com retomada
+pelo `respond`, Workspace API + SSE, esqueleto de Web Search sem rede, eventos `agent.task.*`
+na Central de Operações) · 14. Visão · 15. Proativo · 17. V1.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

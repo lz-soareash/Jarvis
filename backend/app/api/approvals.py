@@ -93,6 +93,19 @@ async def respond(
         deliver_command_result(device.id, command.command_id, result, db=db)
         return JSONResponse({"status": "decided", "command_id": command.command_id, "result": result})
 
+    # Fase 13 — tarefa agêntica pausada por aprovação: a decisão do usuário
+    # retoma o AGENT CORE exatamente do passo pendente (approved → executa,
+    # denied → pula) e segue o plano; respeita a vencedora de `mark_decided`.
+    # Fase 12.4-R1: apenas a decisão vencedora retoma (nada de dupla execução).
+    from app.services import agent_core as agent_core_service
+
+    task = agent_core_service.get_task_by_approval(db, approval.id)
+    if task is not None:
+        if not decided:
+            raise HTTPException(status_code=409, detail="Pedido de aprovação já decidido")
+        generator = agent_core_service.resume_agent_task(db, task, provider, approval)
+        return StreamingResponse(generator, media_type="text/event-stream", headers=SSE_HEADERS)
+
     if not decided:
         raise HTTPException(status_code=409, detail="Pedido de aprovação já decidido")
 

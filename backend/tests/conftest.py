@@ -121,6 +121,7 @@ def _clean_db():
     """Isola o banco in-memory compartilhado: cria tabelas e limpa a cada teste."""
     from app.db.session import SessionLocal, init_db
     from app.models import (
+        AgentTask,
         ApprovalRequest,
         AuditLog,
         Credential,
@@ -152,6 +153,7 @@ def _clean_db():
         db.query(ToolPolicy).delete()
         db.query(Memory).delete()
         db.query(Message).delete()
+        db.query(AgentTask).delete()
         db.query(Session).delete()
         db.commit()
     finally:
