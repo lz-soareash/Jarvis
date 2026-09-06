@@ -181,6 +181,31 @@ class Settings(BaseSettings):
     # Nunca use "*". Ex.: "https://app.meudominio.com,http://127.0.0.1:4200"
     remote_cors_origins: str = ""
 
+    # Proactive Agent (Fase 17) — infraestrutura de proatividade controlada.
+    # Tudo começa DESLIGADO (conservador): ligue explicitamente via env/.env.
+    # Capacidade geral: é o que permite ao JARVIS agir por iniciativa própria,
+    # SEM nunca derrubar o fluxo conversacional nem ignorar limites do usuário.
+    proactive_enabled: bool = False
+    # Scheduler persistente (one-shot/interval/cron-lite) — liga os triggers
+    # agendados no banco. Mesmo desligado, a API de schedules responde.
+    proactive_scheduler_enabled: bool = False
+    # Tetos de notificações proativas (defaults conservadores).
+    proactive_max_per_hour: int = 12
+    proactive_max_per_day: int = 48
+    # Cooldown mínimo entre notificações do MESMO tipo de evento (s).
+    proactive_default_cooldown_seconds: int = 600
+    # Janela de silêncio "HH:MM-HH:MM" (cruzando meia-noite é permitido).
+    # Em quiet hours, LOW/NORMAL/HIGH são adiados (DEFER); CRITICAL só interrompe
+    # se `proactive_interrupt_on_critical` for explicitamente True.
+    proactive_quiet_hours: str = "22:00-07:00"
+    # Deslocamento de fuso local usado para avaliar quiet hours (minutos, UTC+).
+    proactive_timezone_offset_minutes: int = -180  # BRT padrão
+    proactive_interrupt_on_critical: bool = False
+    # Ciclo do worker proativo (respeita o FastAPI lifespan; sem thread infinita).
+    proactive_tick_seconds: int = 30
+    # TTL de mensagens proativas pendentes (s) antes de serem expiradas.
+    proactive_message_ttl_seconds: int = 86400  # 24h
+
     # Wake-on-LAN (Fase 12.6) — tool `wake_on_lan` que acorda uma máquina na LAN
     # enviando o magic packet UDP. `wol_enabled` liga/desliga a tool; o resto são
     # defaults (endereço de broadcast e porta) sobrescrevíveis por chamada.

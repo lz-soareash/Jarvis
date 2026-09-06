@@ -29,6 +29,7 @@ const OpsView = (() => {
     toolsBody: document.getElementById("ops-tools-body"),
     tasksBody: document.getElementById("ops-tasks-body"),
     atlasBody: document.getElementById("ops-atlas-body"),
+    proactiveBody: document.getElementById("ops-proactive-body"),
     eventsBody: document.getElementById("ops-events-body"),
   };
 
@@ -215,6 +216,23 @@ const OpsView = (() => {
     `;
   }
 
+  function renderProactive(pro) {
+    if (!els.proactiveBody) return;
+    if (!pro) return;
+    const by = pro.events_by_decision || {};
+    const notified = by.notify ?? 0;
+    els.proactiveBody.innerHTML = `
+      <div class="ops-row"><span>Capacidade</span><b>${pro.enabled ? "habilitada" : "desabilitada"}</b></div>
+      <div class="ops-row"><span>Scheduler</span><b>${pro.scheduler_enabled ? "ativo" : "inativo"}</b></div>
+      <div class="ops-row"><span>Eventos recebidos</span><b>${pro.events_received}</b></div>
+      <div class="ops-row"><span>Notificações (web/remoto)</span><b>${pro.messages_delivered_web} / ${pro.messages_delivered_remote}</b></div>
+      <div class="ops-row"><span>Pendentes (adiadas)</span><b>${pro.deferred_pending}</b></div>
+      <div class="ops-row"><span>Schedules (ativos)</span><b>${pro.schedules_total} (${pro.schedules_enabled})</b></div>
+      <div class="ops-row"><span>Silêncio</span><b>${esc(pro.quiet_hours || "—")}</b></div>
+      <div class="ops-muted ops-note">ignoradas ${by.ignore ?? 0} · adiadas ${by.defer ?? 0} · notificadas ${notified} · LLM ${pro.llm_invocations}</div>
+    `;
+  }
+
   function renderEvents(events) {
     if (!els.eventsBody) return;
     if (!events || !events.length) {
@@ -320,6 +338,7 @@ const OpsView = (() => {
       renderTools(data.tools);
       renderTasks(data.tasks);
       renderAtlas(data.atlas);
+      renderProactive(data.proactive);
       renderEvents(data.recent_events);
     } catch (err) {
       const bodies = Object.values(els).filter((b) => b && b.classList?.contains("ops-body"));
@@ -332,6 +351,21 @@ const OpsView = (() => {
     if (els.tabChat) els.tabChat.addEventListener("click", () => setView(false));
     if (els.tabOps) els.tabOps.addEventListener("click", () => setView(true));
     if (els.refresh) els.refresh.addEventListener("click", () => load());
+    // Fase 17: stream proativo — nova mensagem proativa atualiza o card.
+    if (window.EventSource) {
+      const es = new EventSource("/api/proactive/stream");
+      es.onmessage = (e) => {
+        try {
+          const entry = JSON.parse(e.data);
+          if (entry && entry.type === "proactive.message") load();
+        } catch (_) {
+          /* ignora heartbeat/linhas não-JSON */
+        }
+      };
+      es.onerror = () => {
+        /* EventSource reconecta sozinho; sem ação decorativa aqui */
+      };
+    }
   }
 
   return { init, load, setView, notifyOrb, isOpen: () => open };

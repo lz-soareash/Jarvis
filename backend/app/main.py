@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 import json
 import re
 import uuid
@@ -47,12 +48,41 @@ async def lifespan(app: FastAPI):
     gateway = await start_remote_gateway()
     if gateway is not None:
         app.state.remote_gateway = gateway
+    # Fase 17: worker proativo — apenas quando alguma capacidade está ligada
+    # (default dos dois é False; sem thread/loop infinita no padrão).
+    app.state.proactive_worker = None
+    if settings.proactive_enabled or settings.proactive_scheduler_enabled:
+        from app.proactive.engine import worker_loop
+
+        task = asyncio.create_task(worker_loop())
+        app.state.proactive_worker = task
+        if settings.proactive_enabled:
+            emit_proactive("system.ready", source="system")
     try:
         yield
     finally:
+        if app.state.proactive_worker is not None:
+            app.state.proactive_worker.cancel()
+            try:
+                await app.state.proactive_worker
+            except asyncio.CancelledError:
+                pass
+            app.state.proactive_worker = None
+        if settings.proactive_enabled:
+            emit_proactive("system.shutdown", source="system")
         await stop_remote_gateway()
         if hasattr(app.state, "remote_gateway"):
             del app.state.remote_gateway
+
+
+def emit_proactive(event_type: str, *, source: str = "system") -> None:
+    """Publica um evento proativo sem nunca derrubar o startup/shutdown."""
+    try:
+        from app.proactive.events import emit
+
+        emit(event_type, source=source)
+    except Exception:  # noqa: BLE001 — eventos best-effort no lifecycle
+        pass
 
 
 def create_app() -> FastAPI:

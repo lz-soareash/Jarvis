@@ -131,6 +131,9 @@ def _clean_db():
         Memory,
         Message,
         PairingRequest,
+        ProactiveMessage,
+        ProactiveInboxEvent,
+        ProactiveSchedule,
         RemoteCommand,
         RemoteOutbox,
         RemoteSession,
@@ -143,6 +146,9 @@ def _clean_db():
     db = SessionLocal()
     try:
         db.rollback()
+        db.query(ProactiveInboxEvent).delete()
+        db.query(ProactiveMessage).delete()
+        db.query(ProactiveSchedule).delete()
         db.query(RemoteCommand).delete()
         db.query(RemoteOutbox).delete()
         db.query(RemoteSession).delete()
@@ -181,6 +187,14 @@ def _reset_remote_limits():
 
     reset_limits()
     reset_events()
+
+
+@pytest.fixture(autouse=True)
+def _reset_proactive():
+    """Hermeticidade da camada proativa (Fase 17) entre testes."""
+    from app.proactive.engine import reset_engine
+
+    reset_engine()
 
 
 @pytest.fixture

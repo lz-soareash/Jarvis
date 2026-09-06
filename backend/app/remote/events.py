@@ -111,16 +111,19 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-async def remote_event_stream(*, limit: int | None = None) -> Any:
-    """Gerador SSE de eventos remotos (Fase 12.5) — replay + ao vivo.
+async def consume_broker(
+    broker: RemoteEventBroker,
+    *,
+    limit: int | None = None,
+    ready_event_type: str | None = None,
+) -> Any:
+    """Drena um broker: replay + ao vivo (Fase 12.5, generalizado p/ Fase 17).
 
     Reenvia o histórico recente e então entradas ao vivo. Quando `limit` é
     informado (testes), para após entregar esse número de eventos; caso
     contrário transmite indefinidamente com heartbeat.
     """
-    from app.services.chat import sse_event
-
-    queue, history = subscribe_events()
+    queue, history = broker.subscribe()
     sent = 0
     try:
         for entry in history:
@@ -128,10 +131,11 @@ async def remote_event_stream(*, limit: int | None = None) -> Any:
                 return
             yield entry
             sent += 1
-        ready = {"type": "remote.connected", "data": {"ready": True}}
-        if limit is None or sent < limit:
-            yield ready
-            sent += 1
+        if ready_event_type is not None:
+            ready = {"type": ready_event_type, "data": {"ready": True}}
+            if limit is None or sent < limit:
+                yield ready
+                sent += 1
         while True:
             if limit is not None and sent >= limit:
                 return
@@ -148,4 +152,12 @@ async def remote_event_stream(*, limit: int | None = None) -> Any:
                     return  # sem mais dados em modo limitado
                 await asyncio.sleep(1.0)
     finally:
-        unsubscribe_events(queue)
+        broker.unsubscribe(queue)
+
+
+async def remote_event_stream(*, limit: int | None = None) -> Any:
+    """Gerador SSE de eventos remotos (Fase 12.5) — replay + ao vivo."""
+    async for entry in consume_broker(
+        _broker, limit=limit, ready_event_type="remote.connected"
+    ):
+        yield entry

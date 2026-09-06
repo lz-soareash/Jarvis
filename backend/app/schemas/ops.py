@@ -49,3 +49,4 @@ class OpsOverview(APIModel):
     local_first: bool = False  # Fase 11.3 (#3): política LOCAL_FIRST
     research: dict = {}  # Fase 14: Web Research & Knowledge (runs/ledger)
     perception: dict = {}  # Fase 15: Perception Layer (capabilities/observations)
+    proactive: dict = {}  # Fase 17: Proactive Agent (enabled/events/schedules)

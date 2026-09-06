@@ -90,6 +90,7 @@ backend/
 │   ├── websearch/                 # Fase 14 — providers de busca (DDG) + registry
 │   ├── research/                  # Fase 14 — SSRF, fetcher, extração, evidência, agente, síntese, knowledge
 │   ├── perception/                # Fase 15 — Perception Layer: abstração, provider Windows, state, tool
+│   ├── proactive/                 # Fase 17 — Proactive Agent: events, policy, decision, delivery, scheduler, engine, observer, api
 │   ├── schemas/                   # modelos Pydantic base (inclui ToolCall/Declaration, ops, research)
 │   ├── services/                  # chat, memory, summarizer, agent, approvals, permissions, audit, ops, atlas, agent_core, research_service
 │   ├── tools/                     # Tool Engine: base, registry, builtins + web_search/web_fetch (Fase 14) + observe_computer (Fase 15)
@@ -425,6 +426,11 @@ Core como nova capacidade `kind="research"` e exposta por tools `web_search`/`we
 | `GET /api/research/{run_id}/sources` | fontes reais usadas na síntese |
 | `POST /api/research/{run_id}/knowledge/promote` | promove candidatos ao conhecimento (política `ATLAS_WRITE_MODE`)
 | `GET /api/remote/events` | SSE de eventos remotos ao vivo + replay recente (identidade, conexão, comandos) — Fase 12.5 |
+| `GET /api/proactive/status` | estado sanitizado da camada proativa (flags + contagens) — Fase 17 |
+| `GET /api/proactive/schedules` | lista os schedules proativos persistentes — Fase 17 |
+| `POST /api/proactive/schedules` | cria um schedule (one-shot/interval/cron), auditado — Fase 17 |
+| `PATCH/DELETE /api/proactive/schedules/{id}` | atualiza / remove um schedule (auditado) — Fase 17 |
+| `GET /api/proactive/stream` | SSE de mensagens proativas (replay + ao vivo) — Fase 17 |
 | `GET /api/remote/status` | estado sanitizado do agente remoto (connection_state, pending_commands, …) |
 | `GET /health` | saúde da API + banco (SQLite) e device detectado pelo User-Agent |
 | `GET /docs` | OpenAPI (Swagger UI) |
@@ -450,16 +456,18 @@ Suíte de testes (do diretório `backend/`):
 ..\.venv\Scripts\python -m pytest -q
 ```
 
-**559 testes verdes**, cobrindo as Fases 12.1..12.8 (transporte, identidade/emparelhamento,
+**559+57 testes verdes**, cobrindo as Fases 12.1..12.8 (transporte, identidade/emparelhamento,
 agente/comandos, retomada pós-aprovação, hardening, WoL, outbox de re-entrega, SSE de eventos
 e a finalização/endurecimento da 12.8), a **Fase 13** (pipeline agêntico TASK→PLAN→EXECUTE→
 OBSERVE→VERIFY→RECOVER→COMPLETION, recuperação com retry/skip, pausa e retomada por aprovação
 e a Workspace API), a **Fase 14** (Web Search + Research Agent + Knowledge, com SSRF/DDG/
-Fetcher/Extrator/Síntese/ledger/hermeticidade) e a **Fase 15** (Perception Layer: contratos
+Fetcher/Extrator/Síntese/ledger/hermeticidade), a **Fase 15** (Perception Layer: contratos
 de percepção, provider Windows (L0), ComputerState bounded em memória, screenshot seguro
 só metadata, tool `observe_computer` LEVEL_0 no Registry, passo `kind="observe"` no
 Agentic Core, eventos `computer.observation.*` sanitizados, capability discovery reflexiva
-e 28 testes de contracts/provider/store/tool/agentic/segurança).
+e 28 testes de contracts/provider/store/tool/agentic/segurança), a **Fase 16** (Remote Access
+Layer & Agent Access, 18 testes herméticos) e a **Fase 17** (Proactive Agent: 39 testes herméticos
+de events/policy/scheduler/delivery/segurança/API/SSE) — **616 no total**.
 (`asyncio.get_event_loop()` no Python 3.13) foram corrigidas. Os testes são
 herméticos: forçam `ENV=test`, `GEMINI_API_KEY=""`, `DATABASE_URL=sqlite:///:memory:`,
 `ATLAS_ENABLED=false`, `AI_LOCAL_LLM_ENABLED=false` e `REMOTE_ENABLED=false` **antes** de
@@ -698,6 +706,47 @@ duplica o AI Core** — cada mensagem remota entra no MESMO fluxo do chat local.
   brute-force 429, payload 413, mensagem reply/SSE via FakeProvider (sem rede), TTL/expiração/
   limpeza/revogação granular e CORS nunca `*`.
 
+## Proactive Agent (Fase 17)
+
+Infraestrutura a partir da qual o JARVIS **age sem ser perguntado**, de forma **opt-in,
+controlada e auditável**. Tudo é **OFF por padrão** (`PROACTIVE_ENABLED=false`): enquanto
+desligado, nenhum worker, item de inbox ou mensagem proativa é criado.
+
+- **Event engine determinístico SEM LLM** (`app/proactive/events.py`): catálogo de eventos
+  **aberto** (`ns.sub`), sanitização obrigatória de payload (nunca secrets — tokens, senhas,
+  credentials são descartados por fragmento de chave), dedup por `event_id` (UNIQUE). A métrica
+  `proactive.llm_invocations` é **sempre 0** (o caminho de decisão não chama LLM).
+- **Policy conservadora** (`app/proactive/policy.py`): quiet hours (`22:00-07:00`,
+  `proactive_quiet_hours`), cooldown por tipo de evento (`proactive_default_cooldown_seconds`),
+  rate limit via `RateLimiter` (reuso Fase 16; `max_per_hour=12` / `max_per_day=48`), prioridade
+  (`low` nunca notifica — anti-spam). Reavalia adiados quando a janela reabre (`deferred_sweep`).
+- **Decisão** (`app/proactive/decision.py`): `IGNORE/DEFER/NOTIFY/ASK/EXECUTE`. **EXECUTE nunca
+  é livre**: a ÚNICA porta é `gate_execute` — Tool Registry → Permission Engine → Auditoria.
+  L0/L1 (leitura segura) executam; **L2/L3 → ASK** (mensagem acionável, sem auto-run); tool
+  desconhecida ou device revogado → IGNORE + audit `proactive.blocked`.
+- **Scheduler persistente** (`app/proactive/scheduler.py`): one-shot / interval / cron com
+  fuso horário (`proactive_timezone_offset_minutes`), reconstruído do banco a cada restart
+  (catch-up sem dupla execução), habilitação global via `proactive_scheduler_enabled`.
+- **Entrega idempotente** (`app/proactive/delivery.py`): `ProactiveMessage` dedup por
+  `dedup_key` UNIQUE + TTL (`proactive_message_ttl_seconds`). Web via SSE
+  `/api/proactive/stream` (reuso `consume_broker`/`RemoteEventBroker`, replay + vivo); se
+  `remote_enabled`, o MESMO evento vai também à camada remota (Fase 12.5).
+- **Worker no lifespan** (`app/proactive/engine.py`): async, **só ativa com alguma flag ligada**;
+  `tick()` sincroniza (fire_due + deferred_sweep + expire_old) com lock e isolamento de falha;
+  emite `system.ready`/`system.shutdown` no start/stop.
+- **API** (`/api/proactive/*`): `status` (flags + contagens sanitizadas), CRUD auditado de
+  schedules (`/schedules`), stream SSE. Bloco `proactive` em `GET /api/ops/overview` e card +
+  `EventSource` no frontend (`js/ops.js`).
+- **Config** (`.env.example`): `PROACTIVE_ENABLED`, `PROACTIVE_SCHEDULER_ENABLED`,
+  `PROACTIVE_MAX_PER_HOUR`, `PROACTIVE_MAX_PER_DAY`, `PROACTIVE_DEFAULT_COOLDOWN_SECONDS`,
+  `PROACTIVE_QUIET_HOURS`, `PROACTIVE_TIMEZONE_OFFSET_MINUTES`, `PROACTIVE_INTERRUPT_ON_CRITICAL`,
+  `PROACTIVE_TICK_SECONDS`, `PROACTIVE_MESSAGE_TTL_SECONDS`.
+- **Testes** (`tests/test_proactive_fase17.py`, 39 herméticos): sanitização/dedup, quiet
+  hours/cooldown/rate/prioridade, scheduler (incl. cron com timezone, restart e catch-up),
+  delivery (web/remote/offline/replay/idempotência/expiração), segurança (tool desconhecida,
+  L1 executa/L2 ask/L3 ask/device revogado), anti-spam (100 eventos → 1 notificação), LLM-off,
+  API (status/CRUD/validação/auditoria/overview) e SSE (replay + connected sem bloquear).
+
 ## Roadmap (resumo)
 
 0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·
@@ -745,6 +794,18 @@ do AI Core; `POST /api/remote/message` conversacional REUTILIZANDO o AI Core —
 (dependency `get_ai_provider`, mesma do chat local), tools via Permission Engine existente (sem bypass),
 resposta JSON ou SSE enriquecido com `request_id`/`session_id`; CORS restritivo configurável
 (`REMOTE_CORS_ORIGINS`, nunca `*`); tudo OFF por padrão (503) e 18 testes herméticos novos —
-577 testes verdes) · 17. Proativo · 18. V1.
+577 testes verdes) · 17. Proactive Agent ✔ (Fase 17 COMPLETA: infraestrutura de proatividade
+controlada e opt-in — event engine determinístico SEM LLM com catálogo aberto, sanitização
+obrigatória de payloads (nunca secrets) e dedup por `event_id`; policy conservadora com quiet
+hours (`22:00-07:00`), cooldown, rate limit (`max_per_hour=12`/`max_per_day=48` via `RateLimiter`)
+e prioridade; decisão `IGNORE/DEFER/NOTIFY/ASK/EXECUTE` onde a ÚNICA porta de execução é
+`gate_execute` (Tool Registry → Permission Engine → Auditoria; L2/L3 → ASK, tool desconhecida/
+device revogado → IGNORE, nunca auto-run); scheduler persistente one-shot/interval/cron
+(recovery de restart, catch-up, sem dupla execução); entrega Web SSE `/api/proactive/stream`
+(reuso `consume_broker`/`RemoteEventBroker`) + Remoto quando habilitado, idempotente por
+`dedup_key` com TTL; worker async no lifespan (tick: fire_due + deferred_sweep + expire_old)
+que só ativa com flags ligadas; API `/api/proactive/*` (status/CRUD de schedules auditado), bloco
+`proactive` na Central de Operações e card/EventSource no frontend; tudo OFF por padrão
+(`PROACTIVE_ENABLED=false`) e 39 testes herméticos novos — 616 testes verdes) · 18. V1.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

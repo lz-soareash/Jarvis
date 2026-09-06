@@ -13,6 +13,11 @@ from app.models.remote import (
     RemoteOutbox,
     RemoteSession,
 )
+from app.models.proactive import (
+    ProactiveInboxEvent,
+    ProactiveMessage,
+    ProactiveSchedule,
+)
 from app.models.session import Message, Session, utcnow
 
 __all__ = [
@@ -32,5 +37,8 @@ __all__ = [
     "RemoteSession",
     "RemoteCommand",
     "RemoteOutbox",
+    "ProactiveInboxEvent",
+    "ProactiveSchedule",
+    "ProactiveMessage",
     "utcnow",
 ]

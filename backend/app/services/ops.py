@@ -341,6 +341,7 @@ def build_overview(db: OrmSession) -> OpsOverview:
         recent_events=[to_out(e) for e in list_events(db, limit=20)],
         context=context_meta,
         local_first=bool(settings.local_first),
+        proactive=_proactive_stats(db),
     )
 
 
@@ -351,6 +352,12 @@ def _to_provider_out(status) -> OpsProvider:
         configured=status.status == "ok",
         status=status.status,
     )
+
+
+def _proactive_stats(db: OrmSession) -> dict:
+    from app.proactive.observer import proactive_stats
+
+    return proactive_stats(db)
 
 
 def json_safe_meta(**kwargs: Any) -> dict:
