@@ -159,6 +159,28 @@ class Settings(BaseSettings):
     remote_reconnect_max_delay: float = 60.0  # s — teto do backoff (também configurável acima)
     remote_reconnect_jitter: float = 0.1  # fração do delay usada como jitter
 
+    # Remote Layer (Fase 16) — fronteira de acesso controlada ao agente local.
+    # Sessões: TTL de atividade em segundos (0 = sem expiração). Sessões com
+    # `last_seen_at` além do TTL são expiradas (ENDED) pela limpeza automática.
+    remote_session_ttl_seconds: int = 3600  # 1h
+    # Autorização do transporte HTTP remoto: os mesmos níveis L0-L3 do Permission
+    # Engine se aplicam — sessões remotas nunca burlam confirmações/auditoria.
+    # Payload máximo (bytes) de requisições HTTP a `/api/remote/*` (413 se maior).
+    remote_max_payload_bytes: int = 256 * 1024  # 256 KiB
+    # Rate limiting de autenticação (token bucket, compartilhado por processo):
+    # capacidade de rajada e refill por segundo, por origem (IP) + um bucket global.
+    remote_auth_rate_capacity: float = 10.0
+    remote_auth_rate_refill: float = 0.5
+    # Rate limiting de mensagens, POR DEVICE autenticado (token bucket).
+    remote_message_rate_capacity: float = 20.0
+    remote_message_rate_refill: float = 1.0
+    # Máximo de mensagens remotas em processamento simultâneo (semáforo process-local).
+    remote_max_concurrent_messages: int = 4
+    # CORS do acesso remoto: lista separada por vírgula. VAZIO por padrão =
+    # restritivo (nenhum origin liberado; browsers cross-origin são bloqueados).
+    # Nunca use "*". Ex.: "https://app.meudominio.com,http://127.0.0.1:4200"
+    remote_cors_origins: str = ""
+
     # Wake-on-LAN (Fase 12.6) — tool `wake_on_lan` que acorda uma máquina na LAN
     # enviando o magic packet UDP. `wol_enabled` liga/desliga a tool; o resto são
     # defaults (endereço de broadcast e porta) sobrescrevíveis por chamada.

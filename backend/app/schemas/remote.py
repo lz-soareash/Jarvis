@@ -81,6 +81,22 @@ class AuthOut(APIModel):
     credential_id: str
 
 
+class RemoteMessageIn(APIModel):
+    """Corpo de uma mensagem conversacional remota (Fase 16).
+
+    Usa o MESMO modelo de autenticação do `/remote/auth` (token no corpo,
+    transport-meta opcional) para não duplicar contratos. O `request_id` vai no
+    header `X-Request-ID` — nunca no corpo — e é ecoado na resposta.
+    """
+
+    token: str
+    content: str
+    stream: bool = False
+    tools: bool = True  # tools autorizadas respeitam o Permission Engine existente
+    claimed_device_id: str | None = None
+    transport_meta: dict[str, Any] | None = None
+
+
 class RemoteStatusOut(APIModel):
     enabled: bool
     configured: bool

@@ -7,10 +7,13 @@ bruto aparece apenas na resposta de pairing (emissão única) e em `/remote/auth
 sensível.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session as OrmSession
 
+from app.ai.providers.base import AIProvider
+from app.api.deps import get_ai_provider
+from app.api.remote_deps import RemoteRequestContext, get_remote_context
 from app.core.config import settings
 from app.db.session import get_db
 from app.remote.auth import RemoteAuthError, authenticate_bearer
@@ -20,6 +23,8 @@ from app.remote.devices import (
     load_meta,
     revoke_device,
 )
+from app.remote.errors import RemoteError, RemoteErrorCode
+from app.remote.limits import check_auth_rate
 from app.remote.pairing import (
     PairingError,
     PairingInvalid,
@@ -29,7 +34,7 @@ from app.remote.pairing import (
     list_pairings,
     submit_code,
 )
-from app.remote.sessions import end_session, list_sessions
+from app.remote.sessions import end_session, list_sessions, revoke_session
 from app.schemas.remote import (
     AuthIn,
     AuthOut,
@@ -40,8 +45,11 @@ from app.schemas.remote import (
     PairingOut,
     PairingSubmitIn,
     PairingSubmitOut,
+    RemoteMessageIn,
     RemoteStatusOut,
 )
+
+from app.api.chat import SSE_HEADERS
 
 router = APIRouter(prefix="/api", tags=["remote"])
 
@@ -249,9 +257,19 @@ def remote_get_command(
 
 
 @router.post("/remote/auth", response_model=AuthOut)
-def remote_authenticate(body: AuthIn, db: OrmSession = Depends(get_db)) -> AuthOut:
-    """Autentica um Bearer token (integração futura do transporte)."""
+def remote_authenticate(
+    body: AuthIn,
+    request: Request,
+    db: OrmSession = Depends(get_db),
+) -> AuthOut:
+    """Autentica um Bearer token (integração futura do transporte).
+
+    Fase 16: aplica rate limiting por origem+global ANTES do lookup (anti
+    brute-force). A mensagem de falha é a mesma em todos os casos.
+    """
     _require_remote()
+    origin = request.client.host if request.client else None
+    check_auth_rate(origin)
     try:
         authed = authenticate_bearer(
             db,
@@ -260,13 +278,89 @@ def remote_authenticate(body: AuthIn, db: OrmSession = Depends(get_db)) -> AuthO
             claimed_device_id=body.claimed_device_id,
         )
     except (RemoteAuthError, CredentialLimitError) as exc:
-        raise HTTPException(status_code=401, detail="autenticação negada") from exc
+        raise RemoteError(
+            RemoteErrorCode.UNAUTHORIZED, "autenticação negada", detail=f"auth failed"
+        ) from exc
     return AuthOut(
         authenticated=True,
         device=DeviceOut(**device_out(authed.device)),
         session_id=authed.session_id,
         credential_id=authed.credential.id,
     )
+
+
+@router.post(
+    "/remote/sessions/{session_id}/revoke", response_model=Empty
+)
+def remote_revoke_session(session_id: str, db: OrmSession = Depends(get_db)) -> Empty:
+    """Fase 16 — revoga uma sessão remota individual (REVOKED).
+
+    Diferente do `/end` (fechamento normal), revogação invalida a sessão de
+    imediato e propaga `session.revoked` ao SSE — nem o device nem as demais
+    sessões são afetados (revogação granular, seção 31).
+    """
+    _require_remote()
+    try:
+        revoke_session(db, session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Empty(ok=True)
+
+
+@router.post("/remote/message")
+async def remote_message(
+    body: RemoteMessageIn,
+    request: Request,
+    ctx: RemoteRequestContext = Depends(get_remote_context),
+    db: OrmSession = Depends(get_db),
+    provider: AIProvider = Depends(get_ai_provider),
+):
+    """Fase 16 — mensagem conversacional remota (reutiliza o AI Core).
+
+    Autentica com o mesmo contrato Bearer, valida a sessão remota (TTL/estado),
+    aplica limites e então entrega o conteúdo ao `ai_core.handle_message` — o
+    MESMO fluxo do chat local (provider agnóstico; tools via Permission Engine).
+    Com `stream=true` retorna o SSE existente com `request_id` em cada evento.
+
+    Estrutura da resposta (não-stream): `{"type":"response", "request_id",
+    "session_id", "status":"completed", "content": ...}`.
+    """
+    _require_remote()
+    try:
+        authed = authenticate_bearer(
+            db,
+            body.token,
+            transport_meta=body.transport_meta or {"http": True},
+            claimed_device_id=body.claimed_device_id,
+        )
+    except (RemoteAuthError, CredentialLimitError) as exc:
+        raise RemoteError(
+            RemoteErrorCode.UNAUTHORIZED, "autenticação necessária", detail="auth failed"
+        ) from exc
+
+    from app.remote.message import RemoteMessageError, handle_remote_message
+
+    try:
+        outcome = await handle_remote_message(
+            db,
+            authed=authed,
+            content=body.content,
+            stream=body.stream,
+            tools=body.tools,
+            ctx=ctx,
+            requested=provider,
+        )
+    except RemoteMessageError as exc:
+        raise RemoteError(
+            RemoteErrorCode.INVALID_REQUEST, str(exc), detail="mensagem inválida"
+        ) from exc
+    if outcome["kind"] == "stream":
+        headers = dict(SSE_HEADERS)
+        headers["X-Request-ID"] = ctx.request_id
+        return StreamingResponse(
+            outcome["generator"], media_type="text/event-stream", headers=headers
+        )
+    return outcome["body"]
 
 
 def device_out(device) -> dict:

@@ -173,6 +173,16 @@ def _reset_remote_gate():
     reset_pairing_gate()
 
 
+@pytest.fixture(autouse=True)
+def _reset_remote_limits():
+    """Hermeticidade dos rate limits da camada remota (Fase 16) entre testes."""
+    from app.remote.events import reset_events
+    from app.remote.limits import reset_limits
+
+    reset_limits()
+    reset_events()
+
+
 @pytest.fixture
 def fake_ai():
     """Override da dependency get_ai_provider com um FakeProvider."""

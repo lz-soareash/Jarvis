@@ -81,7 +81,12 @@ backend/
 │   │   ├── agent/executor/remote_commands/jarvis_session/status            # 12.3
 │   │   ├── resume                                                           # 12.4
 │   │   ├── events.py            # 12.5 — barramento pub/sub p/ SSE + replay sanitizado
-│   │   └── outbox.py            # 12.7 — fila persistente de re-entrega de resultados
+│   │   ├── outbox.py            # 12.7 — fila persistente de re-entrega de resultados
+│   │   ├── errors.py            # 16 — RemoteError estruturado (taxonomia estável, never stack)
+│   │   ├── limits.py            # 16 — rate limit (auth/mensagem) + concorrência, reset em testes
+│   │   ├── sessions.py          # 16 — TTL/expiração/limpeza + revogação individual de sessões
+│   │   ├── message.py           # 16 — mensagem conversacional via AI Core (reply + SSE)
+│   │   └── config.py            # 16 — TTL/CORS/helpers centralizados da camada de acesso
 │   ├── websearch/                 # Fase 14 — providers de busca (DDG) + registry
 │   ├── research/                  # Fase 14 — SSRF, fetcher, extração, evidência, agente, síntese, knowledge
 │   ├── perception/                # Fase 15 — Perception Layer: abstração, provider Windows, state, tool
@@ -487,9 +492,8 @@ worker ou conexão é criado**: o flag é a chave para ativar tudo.
 
 ## Identidade, credenciais e emparelhamento (Fase 12.2)
 
-Camada de **identidade local** que a Fase 16 (Remote) usará para autenticar devices. Também
-aditiva e **desabilitada por padrão** — todos os endpoints devolvem `503` com
-`REMOTE_ENABLED=false`.
+Camada de **identidade local** consumida pela Fase 16 (Remote Access Layer) para autenticar devices.
+Aditiva e **desabilitada por padrão** — todos os endpoints devolvem `503` com `REMOTE_ENABLED=false`.
 
 - Modelos (`Device`, `Credential`, `PairingRequest`, `RemoteSession`) com as tabelas
   `remote_*`; **tokens e pair-codes são armazenados somente como hash `sha256:`** e nunca
@@ -506,12 +510,12 @@ aditiva e **desabilitada por padrão** — todos os endpoints devolvem `503` com
   cria o root device na primeira subida (idempotente; device revogado não ressuscita). O
   `.env` é a fonte do segredo inicial; o banco guarda apenas o hash.
 - API (`/api/remote/*`, package `app/remote/`): `status`, `pairings` (create/submit),
-  `validate`, `devices`, `credentials`, `sessions`, `auth`. Regra mestre: **identidade nunca
+  `validate`, `devices`, `credentials`, `sessions`, `auth`, **`sessions/{id}/revoke`** (Fase 16),
+  **`message`** (Fase 16 — conversação via AI Core). Regra mestre: **identidade nunca
   concede bypass ao Permission Engine** — nenhum comando é executado por este caminho.
 - Auditoria/ops próprios (`remote.identity`): `device_created/authenticated/…`, `credential_*`,
   `pairing_*`, `session_*` — com metadados sanitizados.
-- Fora de escopo desta fase (futuras da 12.x): execução remota de tools, Permission Engine
-  remoto, UI mobile, SSE, Wake-on-LAN e sync de sessões entre devices.
+- Fora de escopo desta fase (executadas na Fase 16): Remote Access Layer — mensagens conversacionais via AI Core, rate limiting, payload guard, sessões com TTL/expiração/revogação individual, erros estruturados com correlação, CORS restritivo.
 
 ## Agente remoto persistente e execução de comandos (Fase 12.3)
 
@@ -663,6 +667,37 @@ ETAPAS 2–17, sem mudar a arquitetura nem o default `REMOTE_ENABLED=false`.
   age filter, purge SQL, receive timeout e freios de injeção de shell.
 - **Frontend**: `js/remote.js` adicionado ao pré-cache do Service Worker (`sw.js`).
 
+## Remote Access Layer & Agent Access (Fase 16)
+
+Fronteira de acesso remoto **controlada** sobre a fundação 12.x para um cliente autenticado
+conversar com o agente local. Mantém o default `REMOTE_ENABLED=false` (tudo `503`) e **nunca
+duplica o AI Core** — cada mensagem remota entra no MESMO fluxo do chat local.
+
+- **Erros estruturados** (`app/remote/errors.py`): taxonomia estável (`REMOTE_DISABLED`,
+  `UNAUTHORIZED`, `FORBIDDEN`, `INVALID_REQUEST`, `INVALID_SESSION`, `SESSION_EXPIRED`,
+  `SESSION_REVOKED`, `PAYLOAD_TOO_LARGE`, `RATE_LIMITED`, `TIMEOUT`, `INTERNAL_ERROR`) com
+  `http_status` mapeado; o middleware `RemoteErrorHandlerMiddleware` converte em
+  `{"type":"error","request_id","code","message"}` — **nunca stack trace / paths / detalhes**.
+- **Correlação** (`X-Request-ID`, UUID): ecoa no header, nos erros, na auditoria e em cada evento
+  SSE das respostas em streaming; `request_id` ausente/inválido é gerado pelo servidor.
+- **Sessão com TTL** (`app/remote/sessions.py`): `ensure_session_valid` (expirada → `ENDED` +
+  `session.expired`; revogada → `SESSION_REVOKED`; device inativo → `FORBIDDEN`), limpeza em
+  lote `expire_stale_sessions` e revogação individual `POST /api/remote/sessions/{id}/revoke`
+  (evento `session.revoked`). A sessão é o resultado da autenticação, nunca o segredo.
+- **Limites** (`app/remote/limits.py`): rate limit de autenticação (token-bucket por IP + global,
+  anti brute-force) e de mensagens por device, teto de mensagens simultâneas e payload guard
+  HTTP `413` antes de qualquer processamento (`RemotePayloadGuardMiddleware`).
+- **Mensagem conversacional** (`POST /api/remote/message`): autentica com o mesmo contrato
+  Bearer, valida sessão/limites e chama `ai_core.handle_message` — provider vindo da dependency
+  `get_ai_provider` (mesma do chat local; override nos testes), tools via Permission Engine
+  existente, streaming reusa o SSE enriquecido com `request_id`/`session_id`.
+- **CORS restritivo**: apenas com `REMOTE_ENABLED=true` e `REMOTE_CORS_ORIGINS` configurado;
+  `*` é sempre rejeitado pelo helper `remote_cors_origin_list()` (`app/remote/config.py`).
+- **Config** (`app/core/config.py`, seção "Remote Layer (Fase 16)"): TTL, payload, rate, CORS.
+- **Testes** (`tests/test_remote_fase16.py`, 18 testes herméticos): contrato de erro, request_id,
+  brute-force 429, payload 413, mensagem reply/SSE via FakeProvider (sem rede), TTL/expiração/
+  limpeza/revogação granular e CORS nunca `*`.
+
 ## Roadmap (resumo)
 
 0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·
@@ -697,6 +732,19 @@ só metadata (binário nunca em logs/eventos), tool `observe_computer` LEVEL_0 n
 passo `kind="observe"` no Agentic Core (reutilizando pipeline Registry→Permission→Audit),
 eventos `computer.observation.*` sanitizados, bloco `perception` na Central de Operações,
 config `perception_enabled`/`perception_screenshot_enabled` e 28 testes herméticos de
-contracts/provider/store/tool/agentic/segurança) · 16. Proativo · 17. V1.
+contracts/provider/store/tool/agentic/segurança) · 16. Remote Access Layer & Agent Access ✔ (Fase 16 COMPLETA:
+fronteira de acesso remoto controlada sobre a fundação 12.x — `RemoteError` estruturado com taxonomia
+estável (`REMOTE_DISABLED/UNAUTHORIZED/FORBIDDEN/INVALID_REQUEST/INVALID_SESSION/SESSION_EXPIRED/
+SESSION_REVOKED/PAYLOAD_TOO_LARGE/RATE_LIMITED/TIMEOUT/INTERNAL_ERROR`) convertido por middleware em
+`{"type":"error","request_id",...}` sem stack trace; `request_id` corrido via header X-Request-ID em
+respostas/erros/auditoria/SSE; sessões com TTL de atividade (`REMOTE_SESSION_TTL_SECONDS`),
+expiração/limpeza (`ensure_session_valid`/`expire_stale_sessions`) e revogação individual
+`POST /api/remote/sessions/{id}/revoke` com evento `session.revoked`; rate limiting de autenticação
+(anti brute-force por IP + global) e por device, teto de concorrência e payload guard HTTP (413) antes
+do AI Core; `POST /api/remote/message` conversacional REUTILIZANDO o AI Core — provider agnóstico
+(dependency `get_ai_provider`, mesma do chat local), tools via Permission Engine existente (sem bypass),
+resposta JSON ou SSE enriquecido com `request_id`/`session_id`; CORS restritivo configurável
+(`REMOTE_CORS_ORIGINS`, nunca `*`); tudo OFF por padrão (503) e 18 testes herméticos novos —
+577 testes verdes) · 17. Proativo · 18. V1.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.
