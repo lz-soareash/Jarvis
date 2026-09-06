@@ -82,12 +82,37 @@ class Settings(BaseSettings):
     # Filesystem (Fase 7) — raiz-sandbox das ferramentas de arquivos
     files_root: str = "~"
 
+    # Web Research (Fase 14) — busca, coleta e síntese independentes do Gemini.
+    # A coleta NUNCA depende de LLM/API externa (local-first); o LLM só entra na
+    # síntese (Router: local → gemini → determinístico).
+    web_search_enabled: bool = True  # gate global da camada de busca
+    web_search_provider: str = "duckduckgo"  # provider default (provider registry)
+    web_search_timeout: float = 10.0  # s — timeout de uma consulta de busca
+    web_search_max_results: int = 8  # resultados por consulta devolvidos (teto)
+    web_search_retries: int = 1  # nova tentativa por consulta em falha recuperável
+    web_fetch_timeout: float = 10.0  # s — timeout de um fetch
+    web_fetch_max_bytes: int = 512 * 1024  # 512 KiB — teto de corpo baixado
+    web_fetch_max_redirects: int = 3  # teto de redirects (cada hop é revalidado)
+    web_fetch_user_agent: str = "JarvisBot/0.1 (local-first research; contact: localhost)"
+    web_research_max_queries: int = 3  # teto de consultas por pesquisa
+    web_research_max_pages: int = 4  # teto de páginas coletadas por pesquisa
+    web_research_max_total_bytes: int = 2 * 1024 * 1024  # 2 MiB — bytes totais
+    web_research_max_duration: float = 40.0  # s — teto de duração da pesquisa
+    web_research_min_evidence: int = 2  # evidências p/ considerar suficiente
+    web_research_synthesis_tokens: int = 400  # teto de tokens da síntese
+    # Nível de risco padrão das tools web (web_search/web_fetch). Via Permission
+    # Engine, com override persistente por ferramenta.
+    web_tools_status: str = "enabled"
+
     # Atlas (Fase 10) — camada externa de inteligência (Django separado).
     atlas_enabled: bool = False
     atlas_base_url: str = "http://127.0.0.1:8000"
     atlas_email: str = ""
     atlas_password: str = ""
     atlas_timeout: float = 30.0  # s — timeout de conexão/leitura com o Atlas
+    # Fase 14 — política de escrita de conhecimento (AtlasWriteMode).
+    # Default conservador: sugerir (nunca escrever sem visibilidade).
+    atlas_write_mode: str = "suggest"
 
     # Remote (Fase 12.1) — transporte com a Gateway (PC é cliente WebSocket;
     # nenhuma porta de entrada é aberta no Windows). Desabilitado por padrão;

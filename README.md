@@ -80,10 +80,11 @@ backend/
 │   │   ├── resume                                                           # 12.4
 │   │   ├── events.py            # 12.5 — barramento pub/sub p/ SSE + replay sanitizado
 │   │   └── outbox.py            # 12.7 — fila persistente de re-entrega de resultados
-│   ├── schemas/                   # modelos Pydantic base (inclui ToolCall/Declaration, ops)
-│   ├── services/                  # chat, memory, summarizer, agent, approvals, permissions, audit, ops, atlas, agent_core
-│   ├── tools/                     # Tool Engine: base, registry, builtins (tempo, sistema, memória, computador)
-│   ├── websearch/                 # Fase 13 — esqueleto de busca (base.py + duckduckgo.py, sem rede ainda)
+│   ├── websearch/                 # Fase 14 — providers de busca (DDG) + registry
+│   ├── research/                  # Fase 14 — SSRF, fetcher, extração, evidência, agente, síntese, knowledge
+│   ├── schemas/                   # modelos Pydantic base (inclui ToolCall/Declaration, ops, research)
+│   ├── services/                  # chat, memory, summarizer, agent, approvals, permissions, audit, ops, atlas, agent_core, research_service
+│   ├── tools/                     # Tool Engine: base, registry, builtins + web_search/web_fetch (Fase 14)
 │   └── main.py
 └── tests/                   # pytest (Gemini 100% mockado)
 ```
@@ -300,6 +301,51 @@ Permission Engine, Auditoria, `agent._run_tool`). Nenhum loop de agente novo foi
 - **Observabilidade**: eventos `agent.task.*` (started/planned/step/completed/failed) e
   contadores `agent_tasks` por status na Central de Operações.
 
+## Web Research + Knowledge + Atlas (Fase 14)
+
+Pesquisa web **real e local-first** com segurança de entrada punitiva (SSRF), coleta que
+**nunca depende de LLM**, e síntese com citações estruturais reais — integrada ao Agentic
+Core como nova capacidade `kind="research"` e exposta por tools `web_search`/`web_fetch`.
+
+- **Hall de busca** (`app/websearch/`): ABC `SearchProvider` (`search`/`health`/`capabilities`),
+  `SearchResult` com fonte/rank/fetched_at/metadata, `DuckDuckGoSearchProvider` real (endpoint
+  HTML/Lite, sem API key; transporte injetável) e `SearchProviderRegistry` (singleton, reset
+  para testes). Config `WEB_SEARCH_ENABLED`/`WEB_SEARCH_PROVIDER`/`WEB_SEARCH_TIMEOUT`/
+  `WEB_SEARCH_MAX_RESULTS`/`WEB_SEARCH_RETRIES`.
+- **Fetcher com SSRF em 3 camadas e sem exceções inseguras** (`app/research/ssrf.py` +
+  `fetcher.py`): só `http`/`https` com allow-list de portas {80,443,8080,8443} (extensível por
+  teste); credenciais embutidas/`user@host` rejeitadas; resolução DNS obrigatória para TODO IP
+  do hostname (localhost/RFC1918/link-local/CGNAT/multicast/reservado/IPv6-mapped/NAT64/metadata
+  de nuvem bloqueados); **re-validação a cada redirect** (anti DNS-rebinding); limite de
+  bytes/redirects/timeout; MIME binário rejeitado; charset do header/`<meta>`. Resolver é
+  injetável — testes nunca tocam a rede interna.
+- **Extração** (`extract.py`): parser apenas-stdlib remove script/style/nav/footer/form,
+  captura título/headings/links absolutos http(s) e texto principal limitado. Conteúdo web é
+  sempre dado **NÃO-CONFIÁVEL** (anti prompt-injection).
+- **Research Agent** (`app/research/agent.py`): orçamento de consultas/páginas/bytes/duração;
+  coleta agrega evidência por URL com `build_search_evidence`; Síntese **local-first** no Router
+  (primário → fallback → determinístico dentro do orçamento de tokens) com separação
+  rígida `<web-content>` vs instruções confiáveis; **citações reescritas estruturalmente** —
+  nenhuma URL inventada sobrevive ao parser (`parse_synthesis_answer`); detector de
+  prompt-injection registra em `uncertainties` (nunca obedece).
+- **Knowledge ledger** (`knowledge.py` + modelo `KnowledgeRecord`): candidatos só nascem de
+  evidências reais; confiança `SOURCE_CONFIRMED`/`MULTI_SOURCE_CONFIRMED`/`MODEL_INFERRED`;
+  dedup por `content_hash`/claim; conflito NUNCA sobrescreve silenciosamente (só registra);
+  textos sanitizados (secrets mascarados) antes da persistência.
+- **Política do Atlas** (`ATLAS_WRITE_MODE` = `suggest` default): `suggest` apenas marca
+  `suggested` no ledger; `auto`/`user_confirmed` escrevem via `POST /api/knowledge/`
+  (`store_knowledge` com retry pós-login); falha do Atlas nunca derruba a pesquisa.
+- **Integração**: `plan_for("Pesquise na web…")` → `kind="research"`; passo pesquisa roda
+  `run_web_research` (wrapper único API/agente) com eventos `research.*` e contadores no bloco
+  `research` da Central de Operações. Tools `web_search` (L0) e `web_fetch` (L1) registradas no
+  Tool Registry (→ Permission → Audit).
+- **API** (`app/api/research.py`): `POST /api/research` (SSE: `research.started` →
+  coleta/síntese → `research.result` → `done`), `GET /api/research/{run_id}`,
+  `GET /api/research/{run_id}/sources`, `POST /api/research/{run_id}/knowledge/promote`.
+- **Config**: `web_search_*`, `web_fetch_*`, `web_research_*` (queries 3, páginas 4, 2 MiB,
+  40 s, min 2 evidências), `web_tools_status`, `atlas_write_mode` — ver `.env.example`. O
+  modelo `ResearchRun` e `KnowledgeRecord` entram nos testes/hermeticidade (nunca rede real).
+
 ## Endpoints
 
 | Rota | Descrição |
@@ -336,6 +382,10 @@ Permission Engine, Auditoria, `agent._run_tool`). Nenhum loop de agente novo foi
 | `POST /api/workspace/tasks` | cria e executa uma tarefa (SSE; plano via `agent_core`) |
 | `GET/DELETE /api/workspace/tasks/{id}` | detalhe / exclusão de tarefa |
 | `POST /api/workspace/tasks/{id}/cancel` | cancela uma tarefa em execução |
+| `POST /api/research` | pesquisa web (SSE; `session_id` obrigatório) — Fase 14 |
+| `GET /api/research/{run_id}` | resultado da pesquisa (fatos, inferências, incertezas, citações) |
+| `GET /api/research/{run_id}/sources` | fontes reais usadas na síntese |
+| `POST /api/research/{run_id}/knowledge/promote` | promove candidatos ao conhecimento (política `ATLAS_WRITE_MODE`)
 | `GET /api/remote/events` | SSE de eventos remotos ao vivo + replay recente (identidade, conexão, comandos) — Fase 12.5 |
 | `GET /api/remote/status` | estado sanitizado do agente remoto (connection_state, pending_commands, …) |
 | `GET /health` | saúde da API + banco (SQLite) e device detectado pelo User-Agent |
@@ -362,11 +412,12 @@ Suíte de testes (do diretório `backend/`):
 ..\.venv\Scripts\python -m pytest -q
 ```
 
-**429 testes verdes**, cobrindo as Fases 12.1..12.8 (transporte, identidade/emparelhamento,
+**531 testes verdes**, cobrindo as Fases 12.1..12.8 (transporte, identidade/emparelhamento,
 agente/comandos, retomada pós-aprovação, hardening, WoL, outbox de re-entrega, SSE de eventos
-e a finalização/endurecimento da 12.8) e a **Fase 13** (pipeline agêntico TASK→PLAN→EXECUTE→
+e a finalização/endurecimento da 12.8), a **Fase 13** (pipeline agêntico TASK→PLAN→EXECUTE→
 OBSERVE→VERIFY→RECOVER→COMPLETION, recuperação com retry/skip, pausa e retomada por aprovação
-e a Workspace API). As 9 falhas ambientais do `test_developer.py`
+e a Workspace API) e a **Fase 14** (Web Search + Research Agent + Knowledge, com SSRF/DDG/
+Fetcher/Extrator/Síntese/ledger/hermeticidade). As 9 falhas ambientais do `test_developer.py`
 (`asyncio.get_event_loop()` no Python 3.13) foram corrigidas. Os testes são
 herméticos: forçam `ENV=test`, `GEMINI_API_KEY=""`, `DATABASE_URL=sqlite:///:memory:`,
 `ATLAS_ENABLED=false`, `AI_LOCAL_LLM_ENABLED=false` e `REMOTE_ENABLED=false` **antes** de
@@ -594,6 +645,13 @@ corrigidos, idle timeout, injeção bloqueada, retomada pós-aprovação com rev
 agêntico TASK→PLAN→EXECUTE→OBSERVE→VERIFY→RECOVER→COMPLETION reutilizando Tool Engine/
 Permission/Auditoria, recuperação com retry/skip, pausa por aprovação (nível ≥ 2) com retomada
 pelo `respond`, Workspace API + SSE, esqueleto de Web Search sem rede, eventos `agent.task.*`
-na Central de Operações) · 14. Visão · 15. Proativo · 17. V1.
+na Central de Operações) · 14. Web Research + Knowledge + Atlas ✔ (Fase 14 COMPLETA:
+pesquisa web real local-first sem API key — DDG HTML/Lite — com SSRF em 3 camadas e sem
+exceções inseguras, Fetcher com revalidação por redirect, extração stdlib, Research Agent com
+orçamentos e síntese via Router (local→gemini→determinístico) com citações estruturais reais
+e anti prompt-injection, ledger `KnowledgeRecord` com confiança/proveniência/dedup/conflito,
+política `ATLAS_WRITE_MODE` (default `suggest`, nunca escreve sem confirmação), capacidade
+`kind="research"` no Agentic Core, tools `web_search`/`web_fetch`, API `/api/research` SSE e
+bloco `research` na Central de Operações) · 15. Visão · 16. Proativo · 17. V1.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

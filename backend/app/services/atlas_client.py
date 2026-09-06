@@ -27,6 +27,7 @@ logger = logging.getLogger("jarvis.atlas")
 _PATH_TOKEN = "/api/auth/token/"
 _PATH_TOKEN_REFRESH = "/api/auth/token/refresh/"
 _PATH_CHAT = "/api/assistant/chat/"
+_PATH_KNOWLEDGE = "/api/knowledge/"
 
 
 class AtlasError(RuntimeError):
@@ -215,6 +216,68 @@ class AtlasClient:
     def _parse_chat(resp: httpx.Response) -> AtlasChatResponse:
         payload = AtlasClient._json_or_unavailable(resp, "chat")
         return AtlasChatResponse.model_validate(payload)
+
+    # ------------------------------------------------------------------
+    # Knowledge (Fase 14) — escrita de conhecimento validado
+    # ------------------------------------------------------------------
+    def store_knowledge(
+        self,
+        *,
+        claim: str,
+        facts: list[str] | None = None,
+        sources: list[str] | None = None,
+        confidence: str = "source_confirmed",
+        project: str | None = None,
+    ) -> dict[str, Any]:
+        """Envia um item de conhecimento validado ao Atlas (`/api/knowledge/`).
+
+        Regra da casa: o JARVIS só chama isto após validação (dedup/conflito) e
+        dentro da política `AtlasWriteMode` — default `suggest` não escreve.
+        O payload já chega sanitizado (sem secrets). Falhas levantam
+        AtlasUnavailable/AtlasAuthError — o chamador isola para NÃO quebrar a
+        pesquisa.
+        """
+        if not self._access:
+            self._login()
+        payload: dict[str, Any] = {
+            "claim": claim,
+            "confidence": confidence,
+        }
+        if facts:
+            payload["facts"] = facts
+        if sources:
+            payload["sources"] = sources
+        if project:
+            payload["project"] = project
+        try:
+            resp = self._http.post(
+                self.base_url + _PATH_KNOWLEDGE,
+                json=payload,
+                headers=self._auth_headers(),
+            )
+        except httpx.HTTPError as exc:
+            raise AtlasUnavailable(f"Falha de conexão com o Atlas (knowledge): {exc}") from exc
+        if resp.status_code == 401:
+            self._refresh_access()
+            return self._retry_store_knowledge(payload)
+        if resp.status_code not in (200, 201):
+            self._raise_http(resp)
+        return AtlasClient._json_or_unavailable(resp, "knowledge")
+
+    def _retry_store_knowledge(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if not self._access:  # pragma: no cover — defensivo
+            raise AtlasAuthError("Autenticação com o Atlas falhou.")
+        try:
+            resp = self._http.post(
+                self.base_url + _PATH_KNOWLEDGE,
+                json=payload,
+                headers=self._auth_headers(),
+            )
+        except httpx.HTTPError as exc:
+            raise AtlasUnavailable(f"Falha de conexão com o Atlas (knowledge): {exc}") from exc
+        if resp.status_code not in (200, 201):
+            self._raise_http(resp)
+        return AtlasClient._json_or_unavailable(resp, "knowledge")
 
     def auth_test(self) -> None:
         """Valida URL + credenciais realizando um login real.

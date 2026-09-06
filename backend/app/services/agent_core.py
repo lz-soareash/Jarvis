@@ -14,7 +14,10 @@ RECOVER/CONTINUE→COMPLETION→RESPONSE):
 Reuso (nada é reescrito): execução via `agent._run_tool` (mesmo fluxo do loop
 conversacional e do Remote); permissão via `permissions.effective_level`;
 auditoria via `audit.log_action`; aprovações via `approvals` (nível ≥ 2 pausa a
-tarefa e retoma pelo mesmo ApprovalRequest). Web Search NÃO executa nesta fase.
+tarefa e retoma pelo mesmo ApprovalRequest). Fase 14: a Web Research é uma
+CAPACIDADE do Core — passos `{"kind": "research"}` rodam pelo Research Agent
+(Search Provider → Fetch SSRF → Síntese local-first) e as tools `web_search`/
+`web_fetch` ficam disponíveis ao Modelo via Tool Registry.
 """
 
 import json
@@ -60,6 +63,26 @@ _CODE = re.compile(
     r"|adicione|adicionar|refator|feature|funcionalidade)\b",
     re.IGNORECASE,
 )
+# Fase 14 — Web Research como capacidade do Agentic Core (o passo é {"kind": "research"}).
+_RESEARCH = re.compile(
+    r"\b(?:pesquisar|pesquisa|buscar\s+na?\s+web|pesquise|investiga\s+na?\s+web|search"
+    r"|procure|v[ée]r(?:ificar)?\s+na?\s+web|descobrir|source|tend[eê]ncias"
+    r"|quem\s+(?:é|são)|\bwhat\s+is|\bhow\s+to|notícias|not[ií]cias|atualidade)\b",
+    re.IGNORECASE,
+)
+
+
+def _research_plan(objective: str) -> list[dict]:
+    """Plano de Web Research: um único passo da capacidade research."""
+    return [
+        {
+            "description": "Pesquisar na web e sintetizar com citações",
+            "kind": "research",
+            "arguments": {"objective": objective[:500]},
+            "verify": {"kind": "research"},
+            "guard": "skip",
+        }
+    ]
 
 
 def _analysis_plan() -> list[dict]:
@@ -128,7 +151,9 @@ def plan_for(objective: str) -> list[dict]:
     `agent_core_max_steps`.
     """
     objective = (objective or "").strip()
-    if _TESTS.search(objective):
+    if _RESEARCH.search(objective):
+        steps = _research_plan(objective)
+    elif _TESTS.search(objective):
         steps = _tests_plan()
     elif _CODE.search(objective):
         steps = _code_plan()
@@ -154,6 +179,46 @@ def verify_step(step: dict, result: ToolResult) -> bool:
         expected = verify.get("expect") or ""
         return expected in (result.output or "")
     return True
+
+
+# ---------------------------------------------------------------------------
+# RESEARCH — passo da capacidade de Web Research (Fase 14)
+# ---------------------------------------------------------------------------
+
+async def _execute_research_step(
+    db: OrmSession,
+    session_id: str,
+    provider: AIProvider,
+    step: dict,
+) -> tuple[list[str], ToolResult]:
+    """Executa um passo `{"kind": "research"}` reutilizando o Research Agent.
+
+    Sem chamadas à rede não protegia: provê search provider + fetcher + router
+    à síntese (local-first, fallback determinístico). Devolve (eventos SSE,
+    ToolResult) para os loops do Agentic Core.
+    """
+    from app.services.research_service import run_web_research
+
+    objective = (step.get("arguments") or {}).get("objective") or ""
+    events: list[str] = []
+
+    async def sink(payload: dict) -> None:
+        events.append(sse_event(payload))
+
+    outcome = await run_web_research(
+        db,
+        session_id,
+        provider,
+        objective or "Pesquisa web",
+        sink=sink,
+    )
+    if outcome.status != "failed" and outcome.answer:
+        answer = f"{outcome.answer}\n\nFontes da pesquisa:"
+        for c in outcome.citations[:8]:
+            answer += f"\n- {c.get('title') or ''} ({c.get('source_url')})"
+        return events, ToolResult.success(answer[:8000])
+    error = outcome.error or "Pesquisa sem evidências (nenhuma resposta)."
+    return events, ToolResult.failure(error)
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +369,33 @@ async def run_agent_task(
         attempts = int(current.get("attempts") or 0)
         tool_name = step.get("tool", "")
         args = step.get("arguments") or {}
+
+        # Fase 14 — passo da capacidade pesquisa (kind="research"), nível L0.
+        if step.get("kind") == "research":
+            yield sse_event({"type": "tool_start", "round": index + 1, "names": ["web_research"]})
+            events, result = await _execute_research_step(db, session_id, provider, step)
+            for ev in events:
+                yield ev
+            ok = verify_step(step, result)
+            _set_progress(
+                db,
+                task,
+                index,
+                status=StepStatus.DONE.value if ok else StepStatus.SKIPPED.value,
+                ok=ok,
+                summary=(result.output or "")[:500],
+                attempts=attempts + 1,
+            )
+            yield sse_event({"type": "tool_done", "name": "web_research", "ok": result.ok})
+            yield sse_event(
+                {"type": "agent_task_step", "task_id": task.id, "index": index, "tool": "web_research", "ok": ok}
+            )
+            task = db.get(AgentTask, task.id)
+            task.steps_done = _steps_done_count(task)
+            db.commit()
+            index += 1
+            continue
+
         level = permission_service.effective_level(db, tool_name)
 
         # Pausa por aprovação (nível ≥ 2): mesma mecânica do loop conversacional.
@@ -534,7 +626,18 @@ async def resume_agent_task(
         step = task.plan[index]
         tool_name = step.get("tool", "")
         args = step.get("arguments") or {}
-        if approval.status == ApprovalStatus.DENIED.value:
+        if step.get("kind") == "research":
+            yield sse_event({"type": "tool_start", "round": index + 1, "names": ["web_research"]})
+            events, result = await _execute_research_step(db, task.session_id, provider, step)
+            for ev in events:
+                yield ev
+            ok = verify_step(step, result)
+            _set_progress(db, task, index, status=StepStatus.DONE.value if ok else StepStatus.SKIPPED.value, ok=ok, summary=(result.output or "")[:500])
+            yield sse_event({"type": "tool_done", "name": "web_research", "ok": result.ok})
+            yield sse_event(
+                {"type": "agent_task_step", "task_id": task.id, "index": index, "tool": "web_research", "ok": ok}
+            )
+        elif approval.status == ApprovalStatus.DENIED.value:
             audit_service.log_action(
                 db,
                 action="agent_task.decided",
@@ -577,6 +680,19 @@ async def _continue_plan(
         progress = _progress_snapshot(task)
         current = progress[index] if index < len(progress) else {}
         if current.get("status") in (StepStatus.DONE.value, StepStatus.SKIPPED.value):
+            continue
+
+        if step.get("kind") == "research":
+            yield sse_event({"type": "tool_start", "round": index + 1, "names": ["web_research"]})
+            events, result = await _execute_research_step(db, task.session_id, provider, step)
+            for ev in events:
+                yield ev
+            ok = verify_step(step, result)
+            _set_progress(db, task, index, status=StepStatus.DONE.value if ok else StepStatus.SKIPPED.value, ok=ok, summary=(result.output or "")[:500])
+            yield sse_event({"type": "tool_done", "name": "web_research", "ok": result.ok})
+            yield sse_event(
+                {"type": "agent_task_step", "task_id": task.id, "index": index, "tool": "web_research", "ok": ok}
+            )
             continue
 
         tool_name = step.get("tool", "")

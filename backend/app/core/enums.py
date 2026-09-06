@@ -123,6 +123,33 @@ class RemoteSessionStatus(str, Enum):
     REVOKED = "revoked"
 
 
+class AtlasWriteMode(str, Enum):
+    """Política de escrita de conhecimento no Atlas (Fase 14).
+
+    Default conservador (`SUGGEST`): nada é persistido sem decisão/visibilidade
+    do usuário. `AUTO` habilita escrita automática após dedup/conflito.
+    """
+
+    DISABLED = "disabled"  # nunca escreve no Atlas
+    SUGGEST = "suggest"  # só apresenta candidatos (non-destructive)
+    AUTO = "auto"  # persiste candidatos validados automaticamente
+    USER_CONFIRMED = "user_confirmed"  # persiste apenas o que o usuário confirmar
+
+
+class KnowledgeConfidence(str, Enum):
+    """Proveniência/confiança de um KnowledgeCandidate (Fase 14 — section 20).
+
+    `MODEL_INFERRED` JAMAIS é tratado como fato: a persistência exige
+    confiança >= `SOURCE_CONFIRMED` (ou confirmação explícita do usuário).
+    """
+
+    UNVERIFIED = "unverified"  # sem origem verificável
+    SOURCE_CONFIRMED = "source_confirmed"  # 1 fonte coletada
+    MULTI_SOURCE_CONFIRMED = "multi_source_confirmed"  # 2+ fontes independentes
+    MODEL_INFERRED = "model_inferred"  # dedução do modelo, não verificada
+    USER_CONFIRMED = "user_confirmed"  # validado explicitamente pelo usuário
+
+
 class RemoteCommandStatus(str, Enum):
     """Fase 12.3 — ciclo de vida de um comando remoto (idempotência/rastreio)."""
 

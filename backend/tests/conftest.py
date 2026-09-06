@@ -127,12 +127,14 @@ def _clean_db():
         Credential,
         Device,
         ExecutionEvent,
+        KnowledgeRecord,
         Memory,
         Message,
         PairingRequest,
         RemoteCommand,
         RemoteOutbox,
         RemoteSession,
+        ResearchRun,
         Session,
         ToolPolicy,
     )
@@ -150,6 +152,8 @@ def _clean_db():
         db.query(ExecutionEvent).delete()
         db.query(ApprovalRequest).delete()
         db.query(AuditLog).delete()
+        db.query(KnowledgeRecord).delete()
+        db.query(ResearchRun).delete()
         db.query(ToolPolicy).delete()
         db.query(Memory).delete()
         db.query(Message).delete()

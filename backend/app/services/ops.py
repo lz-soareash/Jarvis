@@ -43,6 +43,14 @@ EVENT_TASK_STEP = "agent.task.step"
 EVENT_TASK_COMPLETED = "agent.task.completed"
 EVENT_TASK_FAILED = "agent.task.failed"
 
+# Fase 14 — Web Research & Knowledge: eventos observáveis da pesquisa.
+EVENT_RESEARCH_STARTED = "research.started"
+EVENT_RESEARCH_COMPLETED = "research.completed"
+EVENT_RESEARCH_FAILED = "research.failed"
+EVENT_KNOWLEDGE_RECORDED = "knowledge.recorded"
+EVENT_KNOWLEDGE_CONFLICT = "knowledge.conflict"
+EVENT_KNOWLEDGE_ATLAS = "knowledge.atlas"
+
 
 # ---------------------------------------------------------------------------
 # Persistência
@@ -163,6 +171,47 @@ def _tasks_stats(db: OrmSession) -> dict:
     }
 
 
+def _research_stats(db: OrmSession) -> dict:
+    """Fase 14 — estatísticas recentes de Web Research & Knowledge (sanitizadas)."""
+    from app.models import KnowledgeRecord, ResearchRun
+
+    runs_total = db.scalar(select(func.count(ResearchRun.id))) or 0
+    records_total = db.scalar(select(func.count(KnowledgeRecord.id))) or 0
+    by_status: dict[str, int] = {}
+    for row in db.execute(
+        select(KnowledgeRecord.status, func.count(KnowledgeRecord.id)).group_by(KnowledgeRecord.status)
+    ):
+        by_status[row[0]] = row[1]
+    by_atlas: dict[str, int] = {}
+    for row in db.execute(
+        select(KnowledgeRecord.atlas_status, func.count(KnowledgeRecord.id)).group_by(KnowledgeRecord.atlas_status)
+    ):
+        key = row[0] or "n/a"
+        by_atlas[key] = row[1]
+    runs = [
+        {
+            "objective": r.objective[:120],
+            "status": r.status,
+            "provider": r.provider,
+            "fallback_used": r.fallback_used,
+            "duration_ms": r.duration_ms,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in db.scalars(
+            select(ResearchRun).order_by(ResearchRun.created_at.desc()).limit(5)
+        ).all()
+    ]
+    return {
+        "enabled": bool(settings.web_search_enabled),
+        "provider": settings.web_search_provider,
+        "runs_total": runs_total,
+        "records_total": records_total,
+        "knowledge_by_status": by_status or {},
+        "knowledge_atlas_status": by_atlas or {},
+        "recent_runs": runs,
+    }
+
+
 def _tools_stats() -> dict:
     from app.tools.registry import get_tool_registry
 
@@ -237,6 +286,7 @@ def build_overview(db: OrmSession) -> OpsOverview:
         tasks=_tasks_stats(db),
         tools=_tools_stats(),
         atlas=_atlas_stats(),
+        research=_research_stats(db),
         system=_system_stats(),
         recent_events=[to_out(e) for e in list_events(db, limit=20)],
         context=context_meta,

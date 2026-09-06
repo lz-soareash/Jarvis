@@ -10,6 +10,7 @@ from .memory import router as memory_router
 from .ops import router as ops_router
 from .permissions import router as permissions_router
 from .remote import router as remote_router
+from .research import router as research_router
 from .system import router as system_router
 from .tts import router as tts_router
 from .workspace import router as workspace_router
@@ -28,3 +29,4 @@ api_router.include_router(atlas_router)
 api_router.include_router(ops_router)
 api_router.include_router(remote_router)
 api_router.include_router(workspace_router)
+api_router.include_router(research_router)

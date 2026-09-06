@@ -70,6 +70,7 @@ def build_default_registry() -> ToolRegistry:
     )
     from .developer import DevDiagnostics, DevGetConfig, DevGetToolSchema, DevListTools
     from .filesystem import DeletePath, ListDir, MakeDir, ReadFile, WriteFile
+    from .web import WebFetch, WebSearch
     from .wol import WakeOnLan
 
     registry = ToolRegistry()
@@ -117,6 +118,9 @@ def build_default_registry() -> ToolRegistry:
     registry.register(DevDiagnostics())
     # Wake-on-LAN (Fase 12.6)
     registry.register(WakeOnLan())
+    # Web Research (Fase 14)
+    registry.register(WebSearch())  # LEVEL_0 — busca
+    registry.register(WebFetch())  # LEVEL_1 — fetch (confirmação)
     return registry
 
 
