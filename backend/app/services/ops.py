@@ -342,6 +342,7 @@ def build_overview(db: OrmSession) -> OpsOverview:
         context=context_meta,
         local_first=bool(settings.local_first),
         proactive=_proactive_stats(db),
+        computer_actions=_computer_action_stats(db),
     )
 
 
@@ -358,6 +359,12 @@ def _proactive_stats(db: OrmSession) -> dict:
     from app.proactive.observer import proactive_stats
 
     return proactive_stats(db)
+
+
+def _computer_action_stats(db: OrmSession) -> dict:
+    from app.action.observer import action_stats
+
+    return action_stats(db)
 
 
 def json_safe_meta(**kwargs: Any) -> dict:

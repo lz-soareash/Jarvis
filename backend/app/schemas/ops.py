@@ -50,3 +50,4 @@ class OpsOverview(APIModel):
     research: dict = {}  # Fase 14: Web Research & Knowledge (runs/ledger)
     perception: dict = {}  # Fase 15: Perception Layer (capabilities/observations)
     proactive: dict = {}  # Fase 17: Proactive Agent (enabled/events/schedules)
+    computer_actions: dict = {}  # Fase 18: Computer Action Layer (enabled/adapter/stats)

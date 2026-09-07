@@ -90,7 +90,8 @@ backend/
 │   ├── websearch/                 # Fase 14 — providers de busca (DDG) + registry
 │   ├── research/                  # Fase 14 — SSRF, fetcher, extração, evidência, agente, síntese, knowledge
 │   ├── perception/                # Fase 15 — Perception Layer: abstração, provider Windows, state, tool
-│   ├── proactive/                 # Fase 17 — Proactive Agent: events, policy, decision, delivery, scheduler, engine, observer, api
+    │   ├── proactive/                 # Fase 17 — Proactive Agent: events, policy, decision, delivery, scheduler, engine, observer, api
+    │   ├── action/                    # Fase 18 — Computer Action Layer: models, registry, validator, safety, executor, adapters, state, observer, tool, service
 │   ├── schemas/                   # modelos Pydantic base (inclui ToolCall/Declaration, ops, research)
 │   ├── services/                  # chat, memory, summarizer, agent, approvals, permissions, audit, ops, atlas, agent_core, research_service
 │   ├── tools/                     # Tool Engine: base, registry, builtins + web_search/web_fetch (Fase 14) + observe_computer (Fase 15)
@@ -107,8 +108,10 @@ Nunca executa chamadas inventadas — só as registradas. Habilite o loop no cha
 (Fase 3/5), `list_dir`/`read_file`/`write_file`/`make_dir`/`delete_path` (Fase 7),
 `dev_list_tools`/`dev_get_tool_schema`/`dev_get_config`/`dev_diagnostics` (Fase 8) e
 `wake_on_lan` (Fase 12.6; nível 2, envia magic packet UDP),
-`web_search`/`web_fetch` (Fase 14; nível 0/1) e `observe_computer`
-(Fase 15; nível 0; percepção estruturada do computador via Perception Layer).
+`web_search`/`web_fetch` (Fase 14; nível 0/1), `observe_computer`
+(Fase 15; nível 0; percepção estruturada do computador via Perception Layer) e
+`computer_action` (Fase 18; nível 1; ações controladas de mouse/teclado/janela via
+Computer Action Layer — validada, autorizada e auditada; desabilitada por padrão).
 
 ## Computer (Fase 5)
 
@@ -747,6 +750,60 @@ desligado, nenhum worker, item de inbox ou mensagem proativa é criado.
   L1 executa/L2 ask/L3 ask/device revogado), anti-spam (100 eventos → 1 notificação), LLM-off,
   API (status/CRUD/validação/auditoria/overview) e SSE (replay + connected sem bloquear).
 
+## Computer Action Layer (Fase 18)
+
+Fundação para a futura camada de **AGIR** do JARVIS sobre o computador, de forma
+**segura, validada, autorizada e auditável**. Não é o Computer Use Agent completo
+(loops Percepção→Ação→Observação, visão/OCR, planner automático e recuperação
+autônoma chegam em fases posteriores) — é a **infraestrutura de ações** sobre a
+qual o agente computadorizado será construído.
+
+- **Única porta de execução** (`app/action/executor.py`): `ActionExecutor.execute()`
+  executa o pipeline obrigatório `request → validação → safety → permission →
+  rate limit → cancellation/timeout → OS adapter → audit → event → result`.
+  Não existe `/execute_anything`, `/shell` nem `/raw_input` — bypass, em qualquer
+  forma, está excluído por construção.
+- **Única tool estruturada** (`computer_action`, nível 1, risco médio): recebe
+  `action_type` + `params` (dict JSON validado por tipo) e delega ao executor.
+  Tipos: `mouse_move`, `click`, `double_click`, `right_click`, `scroll`,
+  `key_press`, `hotkey`, `type_text`, `focus_window`.
+- **Segurança em camadas**: `ActionSafetyPolicy` bloqueia permanentemente
+  combinações perigosas (`CTRL+ALT+DEL`, `CTRL+SHIFT+ESC`, `ALT+F4`, `CTRL+ALT+F2`),
+  exige confirmação para `ALT+TAB`, e trata `type_text` como **dado puro**
+  (nunca executa shell; padrões de comando são rejeitados). A lista de bloqueadas
+  é extensível por config (`COMPUTER_ACTION_BLOCKED_HOTKEYS`).
+- **dry_run** (`dry_run=true`): executa toda a cadeia de validação/segurança/
+  autorização/rate-limit **sem chamar o adapter** — retorno claro do que seria
+  executado. Não há bypass do Permission Engine nem no dry-run.
+- **Decisão combinada** (Safety + Permission): `effective_level` existente decide
+  confirmação/bloqueio; L2 exige `metadata.confirmed`, L3 bloqueado por padrão.
+- **Reuso obrigatório**: Tool Registry, Permission Engine, `RateLimiter`,
+  `log_action` (auditoria), `record_event`/`ExecutionEvent` (ops), e o padrão de
+  capability discovery de `ComputerCapabilities` (agora `ActionCapabilities`).
+- **Adaptadores** (`app/action/adapters/`): ABC (`ComputerAdapter`) + `WindowsAdapter`
+  (ctypes/user32: SetCursorPos, SendInput, mouse_event, FindWindow) +
+  `UnavailableComputerAdapter` (reporta `UNAVAILABLE`, nunca finge sucesso).
+  Sem dependências externas.
+- **Estados observáveis**: eventos sanitizados `computer.action.*`
+  (`requested/accepted/executed/failed/rejected/timeout/cancelled/unavailable/dry_run`)
+  e bloco `computer_actions` na Central de Operações (`GET /api/ops/overview`) +
+  card no frontend — só contagens/metadata, nunca payloads ou combinações.
+- **Auditoria sanitizada**: `log_action` registra `action_id + ação + resumo`
+  (ex.: `type_text(chars=19)`), **nunca** o texto digitado nem o conteúdo completo.
+- **OFF por padrão** (`COMPUTER_ACTIONS_ENABLED=false`): a Fase 18 nunca ativa
+  controle de mouse/teclado silenciosamente em instalações existentes.
+- **Config** (`.env.example`): `COMPUTER_ACTIONS_ENABLED`,
+  `COMPUTER_ACTION_TIMEOUT_SECONDS`, `COMPUTER_ACTION_MAX_TYPE_TEXT_CHARS`,
+  `COMPUTER_ACTION_MAX_SCROLL_AMOUNT`, `COMPUTER_ACTION_MAX_HOTKEY_KEYS`,
+  `COMPUTER_ACTION_RATE_CAPACITY`, `COMPUTER_ACTION_RATE_REFILL_PER_SECOND`,
+  `COMPUTER_ACTION_MAX_ACTIONS_PER_MINUTE`, `COMPUTER_ACTION_BLOCKED_HOTKEYS`.
+- **Testes** (`tests/test_computer_action_fase18.py`, 61 herméticos, sem hardware
+  real — `FakeComputerAdapter`): validação, segurança (bloqueadas/confirmação/
+  text), permissionamento (L1/L2/L3), rate limit, timeout, cancelamento, dry-run
+  (sem chamada física), adapter unavailable/failure, auditoria e sanitização,
+  ausência de bypass (sem `execute_anything`/`shell`/`raw_input` no Registry) e
+  comportamento com `COMPUTER_ACTIONS_ENABLED=false`.
+
 ## Roadmap (resumo)
 
 0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·
@@ -806,6 +863,22 @@ device revogado → IGNORE, nunca auto-run); scheduler persistente one-shot/inte
 `dedup_key` com TTL; worker async no lifespan (tick: fire_due + deferred_sweep + expire_old)
 que só ativa com flags ligadas; API `/api/proactive/*` (status/CRUD de schedules auditado), bloco
 `proactive` na Central de Operações e card/EventSource no frontend; tudo OFF por padrão
-(`PROACTIVE_ENABLED=false`) e 39 testes herméticos novos — 616 testes verdes) · 18. V1.
+(`PROACTIVE_ENABLED=false`) e 39 testes herméticos novos — 616 testes verdes) ·
+18. Computer Action Layer ✔ (Fase 18 COMPLETA: infraestrutura de ações controladas
+de mouse/teclado/janela com **única porta de execução** (`ActionExecutor`) e pipeline
+`request→validação→safety→permission→rate limit→cancellation/timeout→OS adapter→audit→event→result`,
+sem APIs de bypass (`/execute_anything`, `/shell`, `/raw_input`); única tool
+estruturada `computer_action` (nível 1) com `action_type`+`params` validados por tipo;
+`ActionSafetyPolicy` bloqueando `CTRL+ALT+DEL`/`CTRL+SHIFT+ESC`/`ALT+F4`/`CTRL+ALT+F2`
+e exigindo confirmação para `ALT+TAB`, extensível por config; `type_text` tratado como
+dado puro (nunca shell); `dry_run` valida/autoriza toda a cadeia SEM chamada física;
+reuso de Tool Registry, Permission Engine, `RateLimiter`, `log_action`,
+`record_event`/`ExecutionEvent` e padrão `ComputerCapabilities`; adaptadores ABC +
+Windows (ctypes/user32) + Unavailable (nunca finge sucesso); eventos sanitizados
+`computer.action.*` + bloco `computer_actions` na Central de Operações + card no
+frontend; auditoria sanitizada (nunca payloads/combinações); tudo OFF por padrão
+(`COMPUTER_ACTIONS_ENABLED=false`) e 61 testes herméticos novos — 677 testes verdes) ·
+19. Computer Use Agent (próxima: loops Percepção→Ação→Observação e planner sobre
+esta fundação) · 20. V1.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

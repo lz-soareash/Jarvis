@@ -30,6 +30,7 @@ const OpsView = (() => {
     tasksBody: document.getElementById("ops-tasks-body"),
     atlasBody: document.getElementById("ops-atlas-body"),
     proactiveBody: document.getElementById("ops-proactive-body"),
+    computerBody: document.getElementById("ops-computer-body"),
     eventsBody: document.getElementById("ops-events-body"),
   };
 
@@ -233,6 +234,25 @@ const OpsView = (() => {
     `;
   }
 
+  function renderComputerActions(c) {
+    if (!els.computerBody) return;
+    if (!c) return;
+    const caps = c.capabilities || {};
+    const ev = c.events || {};
+    const byType = Object.entries(c.actions_by_type || {})
+      .map(([k, v]) => `${k}:${v}`)
+      .join(" · ");
+    els.computerBody.innerHTML = `
+      <div class="ops-row"><span>Camada</span><b>${c.enabled ? "habilitada" : "desabilitada"}</b></div>
+      <div class="ops-row"><span>Adapter</span><b>${esc((c.adapter || {}).name || "—")} (${(c.adapter || {}).available ? "disponível" : "indisponível"})</b></div>
+      <div class="ops-row"><span>Ações executadas</span><b>${c.actions_total}</b></div>
+      <div class="ops-row"><span>Rate limitadas</span><b>${c.rate_limited_count}</b></div>
+      <div class="ops-row"><span>Por tipo</span><b>${esc(byType || "—")}</b></div>
+      <div class="ops-row"><span>Eventos (ok/falha/negada)</span><b>${ev.executed ?? 0} / ${ev.failed ?? 0} / ${ev.rejected ?? 0}</b></div>
+      <div class="ops-muted ops-note">caps: mouse ${caps.mouse ? "sim" : "não"} · teclado ${caps.keyboard ? "sim" : "não"} · janela ${caps.window_focus ? "sim" : "não"}</div>
+    `;
+  }
+
   function renderEvents(events) {
     if (!els.eventsBody) return;
     if (!events || !events.length) {
@@ -339,6 +359,7 @@ const OpsView = (() => {
       renderTasks(data.tasks);
       renderAtlas(data.atlas);
       renderProactive(data.proactive);
+      renderComputerActions(data.computer_actions);
       renderEvents(data.recent_events);
     } catch (err) {
       const bodies = Object.values(els).filter((b) => b && b.classList?.contains("ops-body"));

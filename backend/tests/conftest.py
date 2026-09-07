@@ -197,6 +197,20 @@ def _reset_proactive():
     reset_engine()
 
 
+@pytest.fixture(autouse=True)
+def _reset_action_layer():
+    """Hermeticidade da Computer Action Layer (Fase 18) entre testes."""
+    from app.action.registry import reset_action_registry
+    from app.action.state import reset_action_state
+    from app.action.adapters.base import reset_adapter as reset_adapter_ref
+    from app.action.executor import reset_executor
+
+    reset_action_registry()
+    reset_action_state()
+    reset_adapter_ref()
+    reset_executor()
+
+
 @pytest.fixture
 def fake_ai():
     """Override da dependency get_ai_provider com um FakeProvider."""

@@ -213,6 +213,27 @@ class Settings(BaseSettings):
     wol_default_broadcast: str = "255.255.255.255"
     wol_default_port: int = 9
 
+    # Computer Action Layer (Fase 18) — ações controladas de mouse/teclado.
+    # DESLIGADO por padrão: a Fase 18 nunca ativa controle de mouse/teclado
+    # silenciosamente em instalações existentes. `dry_run` também funciona
+    # desligado NÃO executa física — mas aqui a camada inteira fica inativa.
+    computer_actions_enabled: bool = False
+    # Tempo máximo (s) de execução física de uma ação antes de TIME-OUT.
+    computer_action_timeout_seconds: float = 10.0
+    # Limites por tipo (validator): dimensões seguras de ação.
+    computer_action_max_type_text_chars: int = 500
+    computer_action_max_scroll_amount: int = 10
+    computer_action_max_hotkey_keys: int = 3
+    # Rate limit: token bucket global para TODAS as ações (rajada/dreno).
+    computer_action_rate_capacity: float = 20.0
+    computer_action_rate_refill_per_second: float = 2.0
+    # Tetos adicionais de segurança (por minuto, extra ao bucket).
+    computer_action_max_actions_per_minute: int = 60
+    # Combinações de teclas permanentemente bloqueadas (formato: "A+B+C").
+    # Defaults mapeados em app/action/safety.py: CTRL+ALT+DEL, CTRL+SHIFT+ESC,
+    # ALT+F4, CTRL+ALT+F2. Estes aqui são ADICIONAIS à lista padrão.
+    computer_action_blocked_hotkeys: list[str] = []
+
     # Voz & Fala (Fase 6b) — configuração centralizada do TTS
     # Provedor ativo (edge por padrão; outros via tts_providers).
     tts_provider: str = "edge"

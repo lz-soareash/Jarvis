@@ -73,6 +73,7 @@ def build_default_registry() -> ToolRegistry:
     from .web import WebFetch, WebSearch
     from .wol import WakeOnLan
     from app.perception.tool import ObserveComputer
+    from app.action.tool import ComputerActionTool
 
     registry = ToolRegistry()
     # Builtin tools
@@ -121,6 +122,8 @@ def build_default_registry() -> ToolRegistry:
     registry.register(WakeOnLan())
     # Perception (Fase 15) — LEVEL_0, leitura segura do computador
     registry.register(ObserveComputer())
+    # Computer Action Layer (Fase 18) — LEVEL_1, ações controladas e auditadas
+    registry.register(ComputerActionTool())
     # Web Research (Fase 14)
     registry.register(WebSearch())  # LEVEL_0 — busca
     registry.register(WebFetch())  # LEVEL_1 — fetch (confirmação)
