@@ -234,6 +234,33 @@ class Settings(BaseSettings):
     # ALT+F4, CTRL+ALT+F2. Estes aqui são ADICIONAIS à lista padrão.
     computer_action_blocked_hotkeys: list[str] = []
 
+    # Computer Agent (Fase 19) — Computer Use Agent sobre Perception + Action.
+    # DESLIGADO por padrão: o agente de computador NUNCA atua silenciosamente.
+    # Enquanto falso, nenhuma tarefa de Computer Use inicia (API retorna 503).
+    computer_agent_enabled: bool = False
+    # Nível de autonomia do agente (C0 observe-only ... C4 ações críticas com
+    # autorização explícita). O LLM/agente NUNCA pode alterar o próprio nível.
+    computer_agent_autonomy: str = "C1"
+    # Limites rígidos do loop (evita loops indefinidos e rajadas).
+    computer_agent_max_steps: int = 12
+    computer_agent_max_actions: int = 24
+    computer_agent_max_retries: int = 2
+    computer_agent_timeout_seconds: float = 180.0
+    # Exige confirmação (approval existente) para ações nível 2 durante o loop.
+    computer_agent_require_confirmation_l2: bool = True
+    # Teto de tentativas de planificação reprovadas pela verificação antes de FAIL.
+    computer_agent_max_plan_retries: int = 3
+
+    # Identity / Personality (Fase 19) — identidade do assistente separada do
+    # provider de IA. `assistant_name` é o NOME DE EXIBIÇÃO (VEGA); o nome
+    # técnico do projeto/repositório permanece JARVIS.
+    assistant_name: str = "VEGA"
+    assistant_tone: str = "professional"
+    assistant_verbosity: str = "adaptive"
+    assistant_proactivity: str = "controlled"
+    assistant_humor: str = "subtle"
+    assistant_formality: str = "adaptive"
+
     # Voz & Fala (Fase 6b) — configuração centralizada do TTS
     # Provedor ativo (edge por padrão; outros via tts_providers).
     tts_provider: str = "edge"

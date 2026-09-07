@@ -92,6 +92,8 @@ backend/
 │   ├── perception/                # Fase 15 — Perception Layer: abstração, provider Windows, state, tool
     │   ├── proactive/                 # Fase 17 — Proactive Agent: events, policy, decision, delivery, scheduler, engine, observer, api
     │   ├── action/                    # Fase 18 — Computer Action Layer: models, registry, validator, safety, executor, adapters, state, observer, tool, service
+    │   ├── computer_agent/            # Fase 19 — Computer Use Agent: models, store, planner (unit + Router), verifier, recovery, security, events, agent, service, atlas, tool
+    │   ├── identity/                  # Fase 19 — identidade do assistente (display name VEGA; bloco system prompt + overview)
 │   ├── schemas/                   # modelos Pydantic base (inclui ToolCall/Declaration, ops, research)
 │   ├── services/                  # chat, memory, summarizer, agent, approvals, permissions, audit, ops, atlas, agent_core, research_service
 │   ├── tools/                     # Tool Engine: base, registry, builtins + web_search/web_fetch (Fase 14) + observe_computer (Fase 15)
@@ -111,7 +113,9 @@ Nunca executa chamadas inventadas — só as registradas. Habilite o loop no cha
 `web_search`/`web_fetch` (Fase 14; nível 0/1), `observe_computer`
 (Fase 15; nível 0; percepção estruturada do computador via Perception Layer) e
 `computer_action` (Fase 18; nível 1; ações controladas de mouse/teclado/janela via
-Computer Action Layer — validada, autorizada e auditada; desabilitada por padrão).
+Computer Action Layer — validada, autorizada e auditada; desabilitada por padrão) e
+`computer_use` (Fase 19; nível 2; cria uma tarefa de Computer Use Agent com goal —
+planeja, verifica, executa e observa; desabilitada por padrão).
 
 ## Computer (Fase 5)
 
@@ -804,6 +808,58 @@ qual o agente computadorizado será construído.
   ausência de bypass (sem `execute_anything`/`shell`/`raw_input` no Registry) e
   comportamento com `COMPUTER_ACTIONS_ENABLED=false`.
 
+## Computer Use Agent & Identity (Fase 19)
+
+Agente de **Computer Use** (loops Percepção→Ação→Observação) sobre a fundação
+das Fases 15/18 + Agentic Core da Fase 13, além da fundação de **identidade**
+(display name **VEGA**, independente do provider de IA).
+
+- **Pipeline do agente** (`app/computer_agent/`): **Planner** (unitário ou Router
+  via provider de IA com contrato JSON) → **Executor** (`ComputerAgent`)
+  Percebe→Planeja→**Verifica** (estrutural, invariantes, reuso do Pipeline de
+  Verificação da Fase 13 sem duplicação) → Executa `ActionExecutor` → Observa →
+  **Recuperação** (retry/skip/replan com tetos) → Conclusão. Autonomia C0–C4
+  (LLM **nunca** altera o próprio nível); C2+ exige confirmação
+  (`require_confirmation_l2`), C4 exige `explicit_authorization` → cria approval
+  (WAITING_CONFIRMATION) retomável por `POST /api/approvals/{id}/respond`.
+- **Limites rígidos**: `max_steps`/`max_actions`/`max_retries`/timeout + detector
+  de loop (`computer.loop.prevented`); prompt-injection na observação bloqueado
+  (`computer.security.prompt_injection`); autonomia acima do nível de `effective_level`
+  bloqueada (`computer.security.autonomy_blocked`).
+- **Reuso obrigatório, zero duplicação**: Perception (`run_perception`), Action
+  Layer (`ActionExecutor` + options com `requested_by/session_id/device_id/
+  cancelled_cb`), Tool Registry + Permission Engine + Auditoria, Approvals (as
+  mesmas `create_approval/mark_decided` da Fase 13, com ramo de retomada no
+  `/respond`), `sse_event` (SSE), Ops (`record_event` com eventos sanitizados
+  `computer.task.*`/`computer.observation.*`/`computer.action.*`/`computer.verification.*`/
+  `computer.recovery.*`) e Knowledge Store (`KnowledgeCandidateTx` + `store_candidate`
+  com `sanitize_text`; conhecimento autônomo apenas quando `can_write_atlas`).
+- **API** (`/api/computer/*`): `status`, `POST /tasks` (503 enquanto OFF),
+  `GET /tasks/{id}`, `POST /tasks/{id}/cancel`, `POST /tasks/{id}/run` (SSE com
+  o mesmo `sse_event` do chat), `GET /tasks`. Tool `computer_use` (nível 2, risco
+  médio) registrada no Tool Registry.
+- **Execução confidencial**: `secret` executa via `AtomicDirectory.execute` com
+  arquivos temporários limpos; meta sanitizada (nunca screenshots/binários/
+  segredos). `observe`/`none` também avançam o passo (sem travar o plano).
+- **Identidade (VEGA)**: `app/identity/` com `assistant_name/tone/verbosity/
+  proactivity/humor/formality` → bloco `identity` em `/api/ops/overview` + bloco
+  no prompt sistêmico (`identity_system_block`) + card no frontend. Nome técnico
+  do projeto/repositório permanece JARVIS.
+- **OFF por padrão** (`COMPUTER_AGENT_ENABLED=false`): o agente nunca atua
+  silenciosamente em instalações existentes.
+- **Config** (`.env.example`): `COMPUTER_AGENT_ENABLED`, `COMPUTER_AGENT_AUTONOMY`,
+  `COMPUTER_AGENT_MAX_STEPS`, `COMPUTER_AGENT_MAX_ACTIONS`, `COMPUTER_AGENT_MAX_RETRIES`,
+  `COMPUTER_AGENT_TIMEOUT_SECONDS`, `COMPUTER_AGENT_REQUIRE_CONFIRMATION_L2`,
+  `COMPUTER_AGENT_MAX_PLAN_RETRIES` + bloco `ASSISTANT_*`.
+- **Testes** (`tests/test_computer_agent_fase19.py`, 42 herméticos, sem hardware
+  real — `FakeProvider`/planner fake): planner (contrato/erro/rotas/injeção),
+  verificação (aprova/reprova/estrutura/invariantes/erro), recovery (retry/
+  skip/replan/limites), execução do loop (0–3 passos, confirmação L2, C4/
+  approval, denied pula para o próximo passo, condemnação no fim do plano),
+  observação (success/none/injection/screenshot ausente/fracasso), security
+  (prompt-injection, autonomy_blocked, secret, plan retries), cancelamento,
+  eventos, API e identidade + retomada por approval.
+
 ## Roadmap (resumo)
 
 0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·
@@ -878,7 +934,19 @@ Windows (ctypes/user32) + Unavailable (nunca finge sucesso); eventos sanitizados
 `computer.action.*` + bloco `computer_actions` na Central de Operações + card no
 frontend; auditoria sanitizada (nunca payloads/combinações); tudo OFF por padrão
 (`COMPUTER_ACTIONS_ENABLED=false`) e 61 testes herméticos novos — 677 testes verdes) ·
-19. Computer Use Agent (próxima: loops Percepção→Ação→Observação e planner sobre
-esta fundação) · 20. V1.
+19. Computer Use Agent & Identity ✔ (Fase 19 COMPLETA: agente de Computer Use
+sobre Perception+Action com pipeline Percebe→Planeja→Verifica→Executa→Observa→
+Recupera→Conclui, reuso de `run_perception`, `ActionExecutor`, Tool Registry,
+Permission Engine, Auditoria, Approvals (retomada C4 via `/respond`) e `sse_event`;
+autonomia C0–C4 com LLM nunca alterando o próprio nível, C2+ confirmação e C4 com
+`explicit_authorization`; verificador estrutural/invariantes + recuperação
+retry/skip/replan com limites rígidos (max_steps/actions/retries/timeout + anti-loop);
+observação com detecção de prompt-injection e execução `secret` por `AtomicDirectory`
+sem artefatos; eventos sanitizados `computer.*` + blocos `computer_agent` na Central
+de Operações; tool `computer_use` (L2); API `/api/computer/*` (status/tasks/cancel/run SSE)
+e 42 testes herméticos novos — 719 testes verdes) + fundação de **identidade**
+(display name VEGA com nome técnico JARVIS preservado; bloco `identity` no
+`/api/ops/overview` + prompt sistêmico + card no frontend) ·
+20. V1.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

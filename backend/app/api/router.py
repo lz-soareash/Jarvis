@@ -4,6 +4,7 @@ from .approvals import router as approvals_router
 from .atlas import router as atlas_router
 from .audit import router as audit_router
 from .chat import router as chat_router
+from .computer import router as computer_router
 from .device import router as device_router
 from .health import router as health_router
 from .memory import router as memory_router
@@ -32,3 +33,4 @@ api_router.include_router(proactive_router)
 api_router.include_router(remote_router)
 api_router.include_router(workspace_router)
 api_router.include_router(research_router)
+api_router.include_router(computer_router)

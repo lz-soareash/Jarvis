@@ -74,6 +74,7 @@ def build_default_registry() -> ToolRegistry:
     from .wol import WakeOnLan
     from app.perception.tool import ObserveComputer
     from app.action.tool import ComputerActionTool
+    from app.computer_agent.tool import ComputerUseTool
 
     registry = ToolRegistry()
     # Builtin tools
@@ -124,6 +125,8 @@ def build_default_registry() -> ToolRegistry:
     registry.register(ObserveComputer())
     # Computer Action Layer (Fase 18) — LEVEL_1, ações controladas e auditadas
     registry.register(ComputerActionTool())
+    # Computer Agent (Fase 19) — LEVEL_2, delega objetivos de Computer Use
+    registry.register(ComputerUseTool())
     # Web Research (Fase 14)
     registry.register(WebSearch())  # LEVEL_0 — busca
     registry.register(WebFetch())  # LEVEL_1 — fetch (confirmação)

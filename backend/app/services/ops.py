@@ -343,6 +343,8 @@ def build_overview(db: OrmSession) -> OpsOverview:
         local_first=bool(settings.local_first),
         proactive=_proactive_stats(db),
         computer_actions=_computer_action_stats(db),
+        computer_agent=_computer_agent_stats(db),
+        identity=_identity_stats(),
     )
 
 
@@ -365,6 +367,67 @@ def _computer_action_stats(db: OrmSession) -> dict:
     from app.action.observer import action_stats
 
     return action_stats(db)
+
+
+def _computer_agent_stats(db: OrmSession) -> dict:
+    """Fase 19 — agrega estado do Computer Agent (sem duplicar Fase 18)."""
+    from app.computer_agent import store, models
+
+    tasks = store.get_store().list(100)
+    by_status: dict[str, int] = {}
+    actions_total = 0
+    recoveries = 0
+    loops_prevented = 0
+    confirmations_required = 0
+    avg_actions = 0.0
+    avg_steps = 0.0
+    completed = failed = cancelled = 0
+    if tasks:
+        for t in tasks:
+            by_status[t.status.value] = by_status.get(t.status.value, 0) + 1
+            actions_total += t.actions_total
+            recoveries += t.recoveries
+            loops_prevented += t.loops_prevented
+            confirmations_required += t.confirmations_required
+        finished = [t for t in tasks if t.status in
+                    (models.ComputerStatus.COMPLETED, models.ComputerStatus.FAILED,
+                     models.ComputerStatus.CANCELLED)]
+        completed = sum(1 for t in finished if t.status == models.ComputerStatus.COMPLETED)
+        failed = sum(1 for t in finished if t.status == models.ComputerStatus.FAILED)
+        cancelled = sum(1 for t in finished if t.status == models.ComputerStatus.CANCELLED)
+        if finished:
+            avg_actions = round(sum(t.actions_total for t in finished) / len(finished), 2)
+            avg_steps = round(sum(t.steps_total for t in finished) / len(finished), 2)
+    return {
+        "enabled": bool(settings.computer_agent_enabled),
+        "autonomy_default": settings.computer_agent_autonomy,
+        "limits": {
+            "max_steps": settings.computer_agent_max_steps,
+            "max_actions": settings.computer_agent_max_actions,
+            "max_retries": settings.computer_agent_max_retries,
+            "timeout_seconds": settings.computer_agent_timeout_seconds,
+        },
+        "active_tasks": by_status.get("planning", 0) + by_status.get("perceiving", 0)
+                        + by_status.get("executing", 0) + by_status.get("observing", 0)
+                        + by_status.get("verifying", 0) + by_status.get("recovering", 0)
+                        + by_status.get("waiting_confirmation", 0),
+        "completed_tasks": completed,
+        "failed_tasks": failed,
+        "cancelled_tasks": cancelled,
+        "actions_total": actions_total,
+        "recoveries": recoveries,
+        "loops_prevented": loops_prevented,
+        "confirmations_required": confirmations_required,
+        "average_actions": avg_actions,
+        "average_steps": avg_steps,
+        "by_status": by_status,
+    }
+
+
+def _identity_stats() -> dict:
+    from app.identity import to_dict as identity_to_dict
+
+    return identity_to_dict()
 
 
 def json_safe_meta(**kwargs: Any) -> dict:

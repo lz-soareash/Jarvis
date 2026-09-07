@@ -211,6 +211,14 @@ def _reset_action_layer():
     reset_executor()
 
 
+@pytest.fixture(autouse=True)
+def _reset_computer_agent():
+    """Hermeticidade do Computer Agent (Fase 19) entre testes."""
+    from app.computer_agent import store as computer_agent_store
+
+    computer_agent_store.reset_store()
+
+
 @pytest.fixture
 def fake_ai():
     """Override da dependency get_ai_provider com um FakeProvider."""

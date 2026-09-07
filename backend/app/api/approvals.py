@@ -106,6 +106,23 @@ async def respond(
         generator = agent_core_service.resume_agent_task(db, task, provider, approval)
         return StreamingResponse(generator, media_type="text/event-stream", headers=SSE_HEADERS)
 
+    # Fase 19 — Computer Agent pausado por aprovação: a decisão do usuário
+    # retoma a TAREFA de Computer Use exatamente no passo pendente
+    # (approved → executa, denied → pula) através do mesmo loop de observação.
+    from app.computer_agent import service as computer_service
+    from app.computer_agent.agent import ComputerAgent
+    from app.computer_agent.store import get_store as computer_store
+
+    computer_task = computer_store().get_by_approval(approval.id)
+    if computer_task is not None:
+        if not decided:
+            raise HTTPException(status_code=409, detail="Pedido de aprovação já decidido")
+        agent_ca = ComputerAgent()
+        generator = computer_service.run_task_stream(
+            db, provider, computer_task, agent=agent_ca
+        )
+        return StreamingResponse(generator, media_type="text/event-stream", headers=SSE_HEADERS)
+
     if not decided:
         raise HTTPException(status_code=409, detail="Pedido de aprovação já decidido")
 

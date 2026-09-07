@@ -31,6 +31,8 @@ const OpsView = (() => {
     atlasBody: document.getElementById("ops-atlas-body"),
     proactiveBody: document.getElementById("ops-proactive-body"),
     computerBody: document.getElementById("ops-computer-body"),
+    computerAgentBody: document.getElementById("ops-computer-agent-body"),
+    identityBody: document.getElementById("ops-identity-body"),
     eventsBody: document.getElementById("ops-events-body"),
   };
 
@@ -253,6 +255,39 @@ const OpsView = (() => {
     `;
   }
 
+  function renderComputerAgent(c) {
+    if (!els.computerAgentBody) return;
+    if (!c) return;
+    const lim = c.limits || {};
+    const by = c.by_status || {};
+    const chips = Object.entries(by).map(([k, v]) => `${k}:${v}`).join(" · ");
+    els.computerAgentBody.innerHTML = `
+      <div class="ops-row"><span>Agente</span><b>${c.enabled ? "habilitado" : `<span class="ops-muted">desabilitado</span>`}</b></div>
+      <div class="ops-row"><span>Autonomia</span><b>${esc(c.autonomy_default || "C1")}</b></div>
+      <div class="ops-row"><span>Tarefas ativas</span><b>${c.active_tasks ?? 0}</b></div>
+      <div class="ops-row"><span>Concluídas / Falhas / Canceladas</span><b>${c.completed_tasks ?? 0} / ${c.failed_tasks ?? 0} / ${c.cancelled_tasks ?? 0}</b></div>
+      <div class="ops-row"><span>Ações · Recuperações</span><b>${c.actions_total ?? 0} · ${c.recoveries ?? 0}</b></div>
+      <div class="ops-row"><span>Loops impedidos</span><b>${c.loops_prevented ?? 0}</b></div>
+      <div class="ops-row"><span>Confirmações</span><b>${c.confirmations_required ?? 0}</b></div>
+      <div class="ops-row"><span>Média ações / passos</span><b>${c.average_actions ?? 0} / ${c.average_steps ?? 0}</b></div>
+      <div class="ops-muted ops-note">tetos: ${lim.max_steps || "—"} passos · ${lim.max_actions || "—"} ações · ${lim.max_retries || "—"} retries · ${lim.timeout_seconds || "—"}s</div>
+      <div class="ops-muted ops-note">estado: ${esc(chips || "—")}</div>
+    `;
+  }
+
+  function renderIdentity(id) {
+    if (!els.identityBody) return;
+    if (!id) return;
+    els.identityBody.innerHTML = `
+      <div class="ops-row"><span>Nome de exibição</span><b>${esc(id.name || "VEGA")}</b></div>
+      <div class="ops-row"><span>Tom</span><b>${esc(id.tone || "—")}</b></div>
+      <div class="ops-row"><span>Verborragia</span><b>${esc(id.verbosity || "—")}</b></div>
+      <div class="ops-row"><span>Proatividade</span><b>${esc(id.proactivity || "—")}</b></div>
+      <div class="ops-row"><span>Humor / Formalidade</span><b>${esc(id.humor || "—")} / ${esc(id.formality || "—")}</b></div>
+      <div class="ops-muted ops-note">código/repositório permanecem JARVIS</div>
+    `;
+  }
+
   function renderEvents(events) {
     if (!els.eventsBody) return;
     if (!events || !events.length) {
@@ -360,6 +395,8 @@ const OpsView = (() => {
       renderAtlas(data.atlas);
       renderProactive(data.proactive);
       renderComputerActions(data.computer_actions);
+      renderComputerAgent(data.computer_agent);
+      renderIdentity(data.identity);
       renderEvents(data.recent_events);
     } catch (err) {
       const bodies = Object.values(els).filter((b) => b && b.classList?.contains("ops-body"));

@@ -207,6 +207,11 @@ async def build_system_prompt(
     session = db.get(Session, session_id)
     parts = [BASE_SYSTEM_PROMPT]
 
+    # Fase 19 — identidade/persona do assistente (camada própria, VEGA display).
+    from app.identity import identity_system_block
+
+    parts.append(identity_system_block())
+
     if session is not None and session.summary:
         parts.append(f"[Resumo da conversa até agora]\n{session.summary}")
 
