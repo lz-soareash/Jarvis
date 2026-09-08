@@ -116,8 +116,9 @@ Nunca executa chamadas inventadas — só as registradas. Habilite o loop no cha
 (Fase 15; nível 0; percepção estruturada do computador via Perception Layer) e
 `computer_action` (Fase 18; nível 1; ações controladas de mouse/teclado/janela via
 Computer Action Layer — validada, autorizada e auditada; desabilitada por padrão) e
-`computer_use` (Fase 19; nível 2; cria uma tarefa de Computer Use Agent com goal —
-planeja, verifica, executa e observa; desabilitada por padrão).
+`computer_use` (Fases 19/20; nível 2; executa o loop do Computer Use Agent com goal:
+planeja, verifica, executa e observa **dentro do turno de chat**, transmitindo os
+eventos reais via `agent_event` no SSE; desabilitada por padrão).
 
 ## Computer (Fase 5)
 
@@ -478,7 +479,8 @@ e 28 testes de contracts/provider/store/tool/agentic/segurança), a **Fase 16** 
 Layer & Agent Access, 18 testes herméticos) e a **Fase 17** (Proactive Agent: 39 testes herméticos
 de events/policy/scheduler/delivery/segurança/API/SSE), a **Fase 18** (Computer Action
 Layer), a **Fase 19** (Computer Use Agent & Identity) e a **Fase 19.5** (VEGA Identity,
-Memory & Experience) — **744 no total**. Os testes frontend da **Fase 19.6** (mapa de
+Memory & Experience) — **744 no total**. A **Fase 20 (V1)** adiciona 19 testes de
+integração e estabilização → **763 no total**. Os testes frontend da **Fase 19.6** (mapa de
 estados VEGA, `frontend/tests/vega-state.test.mjs`) somam **7 certificados**. Os
 `dev_*` usam `asyncio.run` (compatíveis com o
 Python 3.14, sem depender de event loop pré-existente). Os testes são herméticos: forçam
@@ -950,6 +952,61 @@ funcionalidades e todos os IDs existentes.
   estados (cobertura total de estados, aliases, `resolvePresence`,
   `resolveComputerEvent`, `resolveComputerTask`, `stateMeta`).
 
+## V1 — Integração & Estabilização (Fase 20)
+
+**Fase de integração e estabilização** — o conjunto completo (chat + agente + Computer
+Agent + memória + tools + remote + proativo) funciona como um **único sistema coerente**
+sem reimplementar módulos funcionais.
+
+- **Presença fine-grained real**: a camada de presença agora **expõe o estado real do
+  Computer Agent** em vez de colapsar tudo em `working` — os estados
+  `perceiving/planning/executing/observing/verifying/recovering` aparecem ao vivo no
+  chip de presença (`/api/vega/state` e labels), sincronizados com o vocabulário único
+  de 16 estados do frontend (`frontend/js/vega-state.js`).
+- **`computer_use` retorna ao chat (in-turn)**: a tool `computer_use` **executa o loop
+  do Computer Agent dentro do turno de chat** (single agent) em vez de criar uma tarefa
+  assíncrona — e transmite os **eventos reais** (`computer.task.*`, observações, ações,
+  verificação) de volta ao chat via **`agent_event` no SSE**, alimentando um **card de
+  tarefa ao vivo** no frontend (streaming de estado). Retomada por `task_id` após
+  `waiting_confirmation`, com teto em-turno (`_MAX_IN_TURN_ADVANCES`) para nunca
+  monopolizar o turno.
+- **Sem escalada de privilégio**: autonomia/permissão do Computer Agent nunca vêm dos
+  argumentos da tool (a tool só aceita `goal`/`task_id`) — continuam fixos em
+  `computer_agent_autonomy` da config. Segurança/anti-loop/limites intactos.
+- **Frontend**: card de tarefa no chat (início/atividade/confirmação/conclusão/falha)
+  com estado terminal em português + orb acompanhando os estados reais do agente.
+- **Testes**: 19 testes novos herméticos de integração (`test_fase20_integration.py`),
+  incluindo retomada por `task_id`, falhas limpas sem contexto, e SSE `agent_event`
+  via `client.stream`. Backend: **763 testes** verdes. Validação end-to-end real e
+  segura (instância isolada, C0 observe-only) confirmou o fluxo SSE completo.
+
+### Arquitetura V1 — fluxo de mensagens
+
+```
+Usuário → POST /api/sessions/{id}/messages (stream:true)
+  → AI Core (provider agnóstico)
+    → Tool Registry → Permission Engine (computer_use é L2; aprovação quando exigida)
+      → computer_use (tool) → loop do Computer Agent IN-TURN (advance, até _MAX_IN_TURN_ADVANCES)
+        → sink de eventos reais (computer.task.*, observation, action, verification)
+  → run_agent drena eventos → SSE `{"type":"agent_event","payload":{...}}`
+Frontend: handleSSELine → handleAgentEvent → card de tarefa ao vivo + orb (estados reais)
+Central de Operações: timeline alimentada pelos eventos `computer.*` persistidos via `ev.emit`.
+```
+
+### API V1 (delta sobre as fases anteriores)
+
+- `tool computer_use` **in-turn**: `goal` + `session_id` + `task_id` (retomada).
+  Devolve JSON string (`ok`, `status`, `task_id`, `actions_total`, `confirmations_required`,
+  `approvals`, `summary`, `error`). Autonomia nunca vem dos argumentos.
+- SSE do chat agora carrega `agent_event` com o **evento real** do agente
+  (`payload.type` = `computer.task.started|completed|failed|cancelled`,
+  `computer.observation.received`, `computer.task.planned`, `computer.action.requested|
+  executed|failed`, `computer.verification.success|failed`, `computer.recovery.started`,
+  `computer.loop.prevented`, `computer.security.*`).
+- Presença: `/api/vega/state` e `/api/vega/state/labels` passam a expor os estados
+  fine-grained reais (`perceiving/planning/executing/observing/verifying/recovering`)
+  alinhados ao vocabulário único de 16 estados do frontend.
+
 ## Roadmap (resumo)
 
 0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·
@@ -1061,6 +1118,31 @@ eventos reais** (`recent_events` `computer.*`, sem chain-of-thought) + atividade
 real refletida no orb (`window.VegaUI`); identidade externa VEGA (manifest, favicon
 diamante, textos claros no Remote, versões de assets sincronizadas em
 `sw.js`/CACHE `vega-v22`); **7 testes Node** do mapa de estados) ·
-20. V1.
+20. V1 ✔ (Fase 20 COMPLETA: integração e estabilização de ponta a ponta — presença
+com estados fine-grained REAIS do Computer Agent `perceiving/planning/executing/
+observing/verifying/recovering` (vocabulário único de 16 estados + labels); `computer_use`
+roda o loop do agente **dentro do turno de chat** transmitindo os eventos reais via
+`agent_event` no SSE (card de tarefa ao vivo: started/observation/planned/action/
+verification/completed/failed/cancelled, estados terminais em português, orb
+sincronizado); retomada por `task_id` pós-`waiting_confirmation`; teto in-turn; modelo
+nunca elevando autonomia (tool só aceita `goal`/`task_id`); timeline da Central alimentada
+pelos eventos `computer.*` reais persistidos; 19 testes herméticos novos —
+763 testes verdes) ·
+21. V2 — Multi-turn Agentic Context (planejado): memória do turno (agenda de passos e
+justificativas) + contexto inter-turno persistente para tarefas longas ·
+22. V3 — Computer Use mais profundo (planejado): gestão de janelas, drag/scroll contínuo,
+uso de atalhos seguros e tolerância a layout (por via segura e confirmada) ·
+23. V4 — Planejamento hierárquico (planejado): tasks decomponíveis com dependências,
+paralelismo controlado e view de progresso na Central de Operações ·
+24. V5 — Proativo contextual (planejado): silêncio ativo, monitoramento de estados
+(janela/carga/agenda) e sugestões com confirmação explícita ·
+25. V6 — Pesquisa agêntica (planejado): research multi-iteração com síntese em
+conhecimento persistente e fontes citáveis ·
+26. V7 — Voz agêntica (planejado): TTS proativo de estados/resultados e comando
+hands-free com confirmação auditiva ·
+27. V8 — Perfil do usuário (planejado): memória de preferências com consentimento,
+estilos de interação e affordances por dispositivo ·
+28. V9 — Autonomia governada (planejado): políticas por tarefa/domínio, revisão de
+decisões passadas e auditoria de confiança, sempre com supervisão humana.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

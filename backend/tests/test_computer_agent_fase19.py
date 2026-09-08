@@ -529,14 +529,16 @@ class TestTool:
         assert not result.ok
         assert "desabilitado" in result.output
 
-    def test_computer_use_creates_task(self, enable_agent):
+    def test_computer_use_requires_agent_context(self, enable_agent):
+        # Fase 20: `computer_use` agora executa o loop IN-TURN e precisa de um
+        # contexto de agente (db/provider). Sem contexto, falha de forma limpa
+        # (nunca cria tarefa "fantasma" que o turno não executaria).
         from app.tools.base import ToolContext
         result = run_async(ComputerUseTool().run(ToolContext(), goal="abrir bloco de notas",
                                                  session_id="s1"))
-        assert result.ok
-        data = result.output
-        assert data["status"] == "planning"
-        assert ca_store.get_store().get(data["task_id"]) is not None
+        assert not result.ok
+        assert "db/provider" in result.output
+        assert ca_store.get_store().list() == []
 
 
 # ---------------------------------------------------------------------------

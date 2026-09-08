@@ -16,7 +16,7 @@ detecção de intenção verifica e executa a ferramenta apropriada.
 
 import json
 import logging
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable
 
 from sqlalchemy.orm import Session as OrmSession
 
@@ -55,26 +55,44 @@ async def _run_tool(
     session_id: str,
     provider: AIProvider,
     call: ToolCall,
+    *,
+    emit: Callable[[dict], None] | None = None,
 ) -> ToolResult:
-    """Executa uma chamada já autorizada e registra na auditoria."""
+    """Executa uma chamada já autorizada e registra na auditoria.
+
+    `emit` (Fase 20): quando fornecido, é um callable `emit(payload: dict)` usado
+    para encaminhar eventos de progresso de ferramentas de longa duração (ex.:
+    Computer Agent via `computer_use`) para o SSE do turno — eventos REAIS, nunca
+    fabricados. O hook é injetado via `ToolContext.extras["emit"]`.
+    """
     tool = tool_registry.get_tool_registry().get(call.name)
     if tool is None:
         return ToolResult.failure(
             f"A ferramenta '{call.name}' não está registrada no Core."
         )
-    context = ToolContext(db=db, provider=provider, session_id=session_id)
+    context = ToolContext(
+        db=db,
+        provider=provider,
+        session_id=session_id,
+        extras={"emit": emit} if emit else {},
+    )
     try:
         result = await tool.run(context, **call.arguments)
     except Exception as exc:  # noqa: BLE001 — falha vira resultado p/ o modelo
         logger.exception("Falha ao executar a ferramenta %s", call.name)
         result = ToolResult.failure(f"{type(exc).__name__}: {exc}")
+    audit_detail = (
+        result.output
+        if isinstance(result.output, str)
+        else json.dumps(result.output, ensure_ascii=False, default=str)[:1800]
+    )
     audit_service.log_action(
         db,
         action="tool.execute",
         session_id=session_id,
         tool=call.name,
         allowed=result.ok,
-        detail=result.output,
+        detail=audit_detail,
     )
     return result
 
@@ -87,6 +105,7 @@ async def _execute_tool_calls(
     *,
     executed_this_turn: dict[str, str] | None = None,
     executions: list[dict] | None = None,
+    emit: Callable[[dict], None] | None = None,
 ) -> tuple[list[ToolResult], list[object]]:
     """Aplica a política: executa autorizadas; cria aprovações para as sensíveis.
 
@@ -152,7 +171,7 @@ async def _execute_tool_calls(
             pending.append(approval)
             continue
 
-        result = await _run_tool(db, session_id, provider, call)
+        result = await _run_tool(db, session_id, provider, call, emit=emit)
 
         # Registra execution_id único + trilha p/ persistência.
         if executed_this_turn is not None and level <= PermissionLevel.LEVEL_1:
@@ -208,7 +227,9 @@ async def _collect_decisions(
         )
         calls.append(call)
         if decision.status == ApprovalStatus.APPROVED.value:
-            result = await _run_tool(db, session_id, provider, call)
+            result = await _run_tool(
+                db, session_id, provider, call, emit=None
+            )
             audit_service.log_action(
                 db,
                 action="tool.approved",
@@ -310,6 +331,24 @@ async def run_agent(
     _executed_this_turn: dict[str, str] = {}  # content_key -> execution_id
     _tool_executions: list[dict] = []  # persistidos no metadata da resposta
 
+    # Fase 20 — progresso emitido por ferramentas de longa duração (Computer
+    # Agent via `computer_use`). O hook é injetado em cada execução de tool via
+    # `ToolContext.extras["emit"]`; os payloads são eventos REAIS do agente
+    # (ex.: computer.task.*) e são encaminhados para o SSE do turno, com prefixo
+    # `agent_event` para o frontend renderizar o andamento na própria mensagem.
+    _emitted: list[dict] = []
+
+    def _emit_into_turn(payload: dict) -> None:
+        _emitted.append(payload)
+
+    def _drain_emitted() -> list[dict]:
+        """Consome os payloads emitidos e devolve para streaming SSE."""
+        if not _emitted:
+            return []
+        drained = list(_emitted)
+        _emitted.clear()
+        return drained
+
     # Fase 11.3 (#4) — Intent Detection como camada determinística PRIMÁRIA.
     # Para operações de computador claramente reconhecidas, executa direto via
     # Tool Registry -> Permission Engine -> execução (SEM bypass de Registry/
@@ -348,7 +387,10 @@ async def run_agent(
                 db, session_id, provider, [_primary_intent.tool_call],
                 executed_this_turn=_executed_this_turn,
                 executions=_tool_executions,
+                emit=_emit_into_turn,
             )
+            for payload in _drain_emitted():
+                yield sse_event({"type": "agent_event", "payload": payload})
             if pending:
                 for approval in pending:
                     yield sse_event(
@@ -414,7 +456,11 @@ async def run_agent(
                 db, session_id, provider, response.tool_calls,
                 executed_this_turn=_executed_this_turn,
                 executions=_tool_executions,
+                emit=_emit_into_turn,
             )
+
+            for payload in _drain_emitted():
+                yield sse_event({"type": "agent_event", "payload": payload})
 
             if pending:
                 for approval in pending:

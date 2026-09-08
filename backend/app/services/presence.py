@@ -34,6 +34,12 @@ valid_states = (
     "offline",
     "error",
     "waiting_confirmation",
+    "perceiving",
+    "planning",
+    "executing",
+    "observing",
+    "verifying",
+    "recovering",
     "working",
     "thinking",
     "idle",
@@ -43,6 +49,12 @@ _LABELS = {
     "offline": "off-line",
     "error": "falha recente",
     "waiting_confirmation": "aguardando confirmação",
+    "perceiving": "percebendo o ambiente",
+    "planning": "planejando passos",
+    "executing": "executando ação",
+    "observing": "observando o resultado",
+    "verifying": "verificando",
+    "recovering": "recuperando o plano",
     "working": "trabalhando",
     "thinking": "processando",
     "idle": "ociosa",
@@ -105,11 +117,25 @@ def _derive(db: OrmSession, now: datetime) -> tuple[str, str, str | None]:
     if _has_active_agent_task(db):
         return "working", "tarefa em execução", None
 
-    # 4) Computer Agent com tarefa ativa (estado real da fase 19).
+    # 4) Computer Agent com tarefa ativa (estado real, FASE 19/20).
+    #    Expõe o estado GIÚDIO do Computer Agent (perceiving/planning/executing/
+    #    observing/verifying/recovering) em vez de colapsar tudo em "working" —
+    #    sempre derivado de um sinal real (store do agente), nunca inventado.
     active = _computer_agent_active_state()
     if active is not None:
-        label = "computador em observação" if active == "observing" else "agindo no computador"
-        return "working", label, None
+        if active == "waiting_confirmation":
+            pass  # cai na regra de aprovação pendente (passo 2) se houver; senão segue
+        labels = {
+            "perceiving": "percebendo o ambiente",
+            "planning": "planejando passos",
+            "executing": "executando ação",
+            "observing": "observando o resultado",
+            "verifying": "verificando",
+            "recovering": "recuperando o plano",
+        }
+        if active in labels:
+            return active, labels[active], None
+        return "working", "agindo no computador", None
 
     # 5) Turno de chat em processamento (started recente sem completion).
     if _has_open_chat_turn(db, now_utc):

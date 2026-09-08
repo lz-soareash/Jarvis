@@ -1024,7 +1024,128 @@ function handleSSELine(line, bubbleEl) {
   } else if (event.type === "tool_done") {
     pushVegaState("thinking");
     markToolDone(bubbleEl, event.name, event);
+  } else if (event.type === "agent_event") {
+    // Fase 20 — Computer Agent dentro do turno: eventos REAIS do agente
+    // (`computer.task.*`, `computer.action.*`, approval requests) são
+    // encaminhados ao chat e renderizados como um card ao vivo.
+    handleAgentEvent(event.payload, bubbleEl);
   }
+}
+
+/* ---------------- Computer Agent Task Card (Fase 20) ---------------- */
+
+const _TASK_CARD_DESC = {
+  "computer.task.created": "tarefa criada",
+  "computer.task.started": "tarefa iniciada",
+  "computer.observation.received": "observação recebida",
+  "computer.task.planned": "plano pronto",
+  "computer.action.requested": "ação solicitada",
+  "computer.action.executed": "ação executada",
+  "computer.action.failed": "ação falhou",
+  "computer.verification.started": "verificando",
+  "computer.verification.success": "verificação ok",
+  "computer.verification.failed": "verificação falhou",
+  "computer.recovery.started": "recuperando",
+  "computer.recovery.completed": "plano ajustado",
+  "computer.task.completed": "tarefa concluída",
+  "computer.task.failed": "tarefa falhou",
+  "computer.task.cancelled": "tarefa cancelada",
+  "computer.task.waiting_confirmation": "aguardando confirmação",
+  "computer.loop.prevented": "limite de loop",
+  "computer.security.prompt_injection": "bloqueada (segurança)",
+  "computer.security.autonomy_blocked": "autonomia insuficiente",
+};
+
+function taskCardFor(bubble, taskId) {
+  const key = (taskId || "task").replace(/[^a-z0-9]+/gi, "_");
+  const hasEscape = !!(window.CSS && window.CSS.escape);
+  const sel = taskId
+    ? `[data-task-card="${taskId}"]`
+    : ".task-card";
+  let card = bubble.querySelector(sel);
+  if (!card) {
+    card = document.createElement("div");
+    card.className = "task-card";
+    if (taskId) card.dataset.taskCard = taskId;
+    const status = document.createElement("span");
+    status.className = "task-status";
+    status.textContent = "executando…";
+    const label = document.createElement("span");
+    label.className = "task-label";
+    label.textContent = "";
+    const feed = document.createElement("div");
+    feed.className = "task-feed";
+    card.append(status, label, feed);
+    const body = bubble.querySelector(".msg-body");
+    if (body) body.after(card);
+    else bubble.appendChild(card);
+  }
+  return card;
+}
+
+function pushTaskLine(card, text, cls = "") {
+  const feed = card.querySelector(".task-feed");
+  if (!feed) return;
+  const line = document.createElement("div");
+  line.className = "task-line" + (cls ? ` ${cls}` : "");
+  line.textContent = text;
+  feed.appendChild(line);
+  while (feed.children.length > 12) feed.firstChild.remove();
+  scrollChatToBottom();
+}
+
+function handleAgentEvent(payload, bubble) {
+  if (!payload || typeof payload !== "object" || !payload.type) return;
+
+  // Computer Agent pede confirmação → mesmo card de aprovação do turno.
+  if (payload.type === "approval_request") {
+    if (payload.approval) {
+      renderApprovalCard(payload.approval, bubble);
+      pushVegaState("waiting_confirmation");
+      scrollChatToBottom();
+    }
+    return;
+  }
+
+  const type = payload.type;
+  if (!type.startsWith("computer.")) return;
+
+  const taskId = payload.task_id;
+  const card = taskCardFor(bubble, taskId);
+  const statusEl = card.querySelector(".task-status");
+  const labelEl = card.querySelector(".task-label");
+  const desc = _TASK_CARD_DESC[type] || type.replace(/^computer\./, "").replace(/_/g, " ");
+
+  // Estado do orb acompanha o estado REAL do Computer Agent.
+  if (type === "computer.task.started") pushVegaState("perceiving");
+  else if (type === "computer.observation.received") pushVegaState("observing");
+  else if (type === "computer.task.planned") pushVegaState("planning");
+  else if (type === "computer.action.requested") pushVegaState("executing");
+  else if (type === "computer.action.executed" || type.startsWith("computer.verification.")) pushVegaState("verifying");
+  else if (type === "computer.action.failed") pushVegaState("recovering");
+  else if (type === "computer.recovery.started") pushVegaState("recovering");
+  else if (type === "computer.task.completed") {
+    pushVegaState("success");
+    statusEl.textContent = "concluída";
+    statusEl.classList.add("task-status-ok");
+  } else if (type === "computer.task.failed" || type === "computer.task.cancelled") {
+    pushVegaState(payload.status === "cancelled" ? "warning" : "error");
+    statusEl.textContent = type === "computer.task.cancelled" ? "cancelada" : "falhou";
+    statusEl.classList.add("task-status-err");
+  } else if (type.startsWith("computer.security.") || type === "computer.loop.prevented") {
+    pushVegaState("warning");
+    statusEl.textContent = "bloqueada";
+    statusEl.classList.add("task-status-err");
+  }
+
+  // Status curto durante o voo (nunca sobrescreve o estado terminal em PT).
+  const terminal = ["completed", "failed", "cancelled"];
+  if (payload.status && !terminal.includes(payload.status)) statusEl.textContent = payload.status;
+  else if (payload.ok !== undefined && payload.ok === false) statusEl.textContent = "revisão";
+
+  if (labelEl) labelEl.textContent = desc;
+  pushTaskLine(card, desc, type.endsWith("ed") || type.endsWith("success") ? "task-line-ok" : "");
+  scrollChatToBottom();
 }
 
 /* ---------------- Tool Execution Feedback (Fase 7) ---------------- */

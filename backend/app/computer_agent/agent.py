@@ -287,7 +287,7 @@ class ComputerAgent:
                 meta={"task_id": task.task_id, "action": intended.action,
                       "duration_ms": result.duration_ms})
         if sink:
-            sink({"type": "computer.action.done", "task_id": task.task_id,
+            sink({"type": "computer.action.executed", "task_id": task.task_id,
                   "action": intended.action, "ok": ok,
                   "duration_ms": result.duration_ms})
 
@@ -314,8 +314,10 @@ class ComputerAgent:
                 meta={"task_id": task.task_id, "reason": verdict.reason,
                       "structural": verdict.structural})
         if sink:
-            sink({"type": "computer.verification", "task_id": task.task_id,
-                  "ok": verdict.ok, "reason": verdict.reason})
+            sink({"type": "computer.verification.success" if verdict.ok
+                  else "computer.verification.failed",
+                  "task_id": task.task_id, "ok": verdict.ok,
+                  "reason": verdict.reason})
 
         if verdict.ok:
             return task.with_(status=ComputerStatus.EXECUTING,
@@ -397,7 +399,7 @@ class ComputerAgent:
                  detail=error)
         self.store.save(task)
         if sink:
-            sink({"type": "computer.task.done", "task_id": task.task_id,
+            sink({"type": f"computer.task.{status.value}", "task_id": task.task_id,
                   "status": status.value, "error": error})
         return task
 
