@@ -240,6 +240,7 @@ def _atlas_stats() -> dict:
     return {
         "enabled": enabled,
         "configured": configured,
+        "optional": True,  # Fase 19.5 — Atlas NÃO é dependência da VEGA
         "base_url": settings.atlas_base_url if enabled else None,
         "detail": (
             "pronto para roteamento"

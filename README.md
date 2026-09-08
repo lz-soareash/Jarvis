@@ -5,7 +5,9 @@ para múltiplos dispositivos e um futuro modo remoto.
 
 > **JARVIS = "O que posso fazer?"** (agente/execução)
 >
-> **ATLAS = "O que eu sei?"** (conhecimento — integração futura, opcional)
+> **VEGA = quem ele é** (nome de exibição da identidade — técnico: JARVIS)
+>
+> **ATLAS = "O que eu sei?"** (conhecimento — integração futura, **opcional**, não é dependência da VEGA)
 
 ## Regras fundamentais
 
@@ -463,7 +465,7 @@ Suíte de testes (do diretório `backend/`):
 ..\.venv\Scripts\python -m pytest -q
 ```
 
-**559+57 testes verdes**, cobrindo as Fases 12.1..12.8 (transporte, identidade/emparelhamento,
+**744 testes verdes hoje**, cobrindo as Fases 12.1..12.8 (transporte, identidade/emparelhamento,
 agente/comandos, retomada pós-aprovação, hardening, WoL, outbox de re-entrega, SSE de eventos
 e a finalização/endurecimento da 12.8), a **Fase 13** (pipeline agêntico TASK→PLAN→EXECUTE→
 OBSERVE→VERIFY→RECOVER→COMPLETION, recuperação com retry/skip, pausa e retomada por aprovação
@@ -474,9 +476,11 @@ só metadata, tool `observe_computer` LEVEL_0 no Registry, passo `kind="observe"
 Agentic Core, eventos `computer.observation.*` sanitizados, capability discovery reflexiva
 e 28 testes de contracts/provider/store/tool/agentic/segurança), a **Fase 16** (Remote Access
 Layer & Agent Access, 18 testes herméticos) e a **Fase 17** (Proactive Agent: 39 testes herméticos
-de events/policy/scheduler/delivery/segurança/API/SSE) — **616 no total**.
-(`asyncio.get_event_loop()` no Python 3.13) foram corrigidas. Os testes são
-herméticos: forçam `ENV=test`, `GEMINI_API_KEY=""`, `DATABASE_URL=sqlite:///:memory:`,
+de events/policy/scheduler/delivery/segurança/API/SSE), a **Fase 18** (Computer Action
+Layer), a **Fase 19** (Computer Use Agent & Identity) e a **Fase 19.5** (VEGA Identity,
+Memory & Experience) — **744 no total**. Os `dev_*` usam `asyncio.run` (compatíveis com o
+Python 3.14, sem depender de event loop pré-existente). Os testes são herméticos: forçam
+`ENV=test`, `GEMINI_API_KEY=""`, `DATABASE_URL=sqlite:///:memory:`,
 `ATLAS_ENABLED=false`, `AI_LOCAL_LLM_ENABLED=false` e `REMOTE_ENABLED=false` **antes** de
 importar o app — nunca tocam serviços reais nem o `.env` da máquina.
 
@@ -860,6 +864,49 @@ das Fases 15/18 + Agentic Core da Fase 13, além da fundação de **identidade**
   (prompt-injection, autonomy_blocked, secret, plan retries), cancelamento,
   eventos, API e identidade + retomada por approval.
 
+## VEGA Identity, Memory & Experience (Fase 19.5)
+
+Identidade **VEGA** consolidada como camada própria, **Memory Core** local-first
+independente de IA/ATLAS, conhecimento validado no contexto do chat e presença
+**sempre derivada de sinais reais**. O Atlas vira formalmente **OPCIONAL**.
+
+- **Memory write policy** (`app/services/memory.py` + colunas aditivas em
+  `Memory`): `content` é **sanitizado antes de persistir** (reuso `sanitize_text`
+  — nunca secrets no storage/contexto; cobertura também em pt-BR,
+  `senha/segredo/chave`); `kind` é **classificado deterministicamente** quando
+  omitido (`preference`/`decision`/`project`/`fact`); metadata `project`/
+  `confidence`/`source`/`expires_at` (**TTL**). Expiradas nunca entram na
+  listagem, na busca ou no contexto. Migração idempotente em `_ensure_memories_schema`.
+- **Conhecimento validado no prompt**: `build_system_prompt` injeta
+  `[Memórias relevantes]` (semântico quando há embedding; lexical no fallback) e
+  `[Conhecimento validado]` (ledger local `KnowledgeStore.search` — só status
+  confiável `validated/confirmed/user_confirmed/persisted`, dedup por
+  `content_hash`, filtro por projeto). Sugeridos/rejeitados **nunca** entram no
+  contexto (nada de inferência não verificada no prompt).
+- **Atlas OPCIONAL (formalizado)**: import lazy em `ai/core.py` — desligamento
+  ou indisponibilidade do Atlas **nunca atinge o chat da VEGA** (fallback local
+  garantido, `ATLAS_ENABLED=false` é o padrão); `GET /api/ops/overview` expõe
+  `atlas.optional=true`.
+- **Presença real** (`app/services/presence.py`): estado **derivado de sinais
+  reais**, nunca fingido — prioridade `offline > error > waiting_confirmation >
+  working > thinking > idle` (erro recente 90s, aprovação pendente, `AgentTask`
+  ativa, loop do Computer Agent, turno de chat aberto). Transição registra
+  `vega.state.changed` (rate-limited por processo; só com
+  `VEGA_PRESENCE_ENABLED`). Endpoints `GET /api/vega/identity`,
+  `GET /api/vega/state`, `GET /api/vega/state/labels`.
+- **Personalidade ≠ segurança**: mudar `ASSISTANT_*` **nunca** altera
+  `ToolPolicy`/`effective_level` (identidade é camada própria do prompt, isolada
+  do Permission Engine).
+- **Frontend**: branding VEGA (title/meta/brand/empty-state/placeholder),
+  indicador de presença no rodapé (polling 5s), nota "Atlas é opcional — não é
+  dependência da VEGA." na Central de Operações.
+- **Testes** (`tests/test_fase195.py`, 25 herméticos): write policy/classificação/
+  metadata/TTL/filtro de projeto, conhecimento no prompt (inclui "sugerido nunca
+  entra"), Atlas desabilitado/indisponível/fallback local, identidade separada de
+  permissões, presença (derivação/transições/endpoints) e privacidade (secrets
+  fora do storage e do contexto). **744 testes verdes no total**.
+- **Config** (`.env.example`): `VEGA_PRESENCE_ENABLED=true` (+ bloco `ASSISTANT_*`).
+
 ## Roadmap (resumo)
 
 0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·
@@ -947,6 +994,17 @@ de Operações; tool `computer_use` (L2); API `/api/computer/*` (status/tasks/ca
 e 42 testes herméticos novos — 719 testes verdes) + fundação de **identidade**
 (display name VEGA com nome técnico JARVIS preservado; bloco `identity` no
 `/api/ops/overview` + prompt sistêmico + card no frontend) ·
+19.5. VEGA Identity, Memory & Experience ✔ (Fase 19.5 COMPLETA: Memory Core
+local-first com write policy — sanitização antissecrets (inclui pt-BR),
+classificação determinística de `kind`, metadata `project`/`confidence`/`source`/
+`expires_at` (TTL) e migração idempotente; `[Conhecimento validado]` do ledger no
+prompt (só status confiável, dedup, filtro por projeto; sugerido nunca entra);
+Atlas formalmente OPCIONAL (import lazy, `atlas.optional`, fallback local — VEGA
+100% independente); presença derivada de sinais reais (`offline/error/
+waiting_confirmation/working/thinking/idle`) com transições `vega.state.changed`
+e endpoints `/api/vega/identity|state|state/labels`; personalidade (`ASSISTANT_*`)
+nunca altera permissões; branding VEGA no frontend + indicador de presença;
+25 testes herméticos novos — 744 testes verdes) ·
 20. V1.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

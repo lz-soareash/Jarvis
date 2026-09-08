@@ -62,12 +62,15 @@ class GetSystemInfo(Tool):
 
 
 class StoreMemory(Tool):
-    """Grava uma memória de longo prazo (fato ou preferência)."""
+    """Grava uma memória de longo prazo (fato, preferência, decisão, etc.)."""
 
     name = "store_memory"
     description = (
-        "Grava um fato ou preferência do usuário na memória de longo prazo "
-        "para uso futuro (kind: fact | preference | note)."
+        "Grava um fato, preferência, decisão ou contexto de projeto do usuário "
+        "na memória de longo prazo para uso futuro. Categorias: fact | preference "
+        "| decision | project | knowledge | task | note | ephemeral | summary. "
+        "Se `kind` for omitido, a categoria é inferida do conteúdo. Nunca grave "
+        "senhas/tokens/chaves contidos em `content` — o sistema os mascara."
     )
     parameters = {
         "type": "object",
@@ -75,8 +78,22 @@ class StoreMemory(Tool):
             "content": {"type": "string", "description": "O conteúdo da memória a gravar."},
             "kind": {
                 "type": "string",
-                "enum": ["fact", "preference", "note"],
-                "description": "Tipo da memória (padrão: fact).",
+                "enum": [
+                    "ephemeral",
+                    "preference",
+                    "fact",
+                    "project",
+                    "task",
+                    "knowledge",
+                    "decision",
+                    "note",
+                    "summary",
+                ],
+                "description": "Categoria da memória (padrão: inferida do conteúdo).",
+            },
+            "project": {
+                "type": "string",
+                "description": "Projeto associado (opcional).",
             },
         },
         "required": ["content"],
@@ -87,8 +104,9 @@ class StoreMemory(Tool):
         content = (arguments.get("content") or "").strip()
         if not content:
             return ToolResult.failure("content é obrigatório")
-        kind = arguments.get("kind") or "fact"
-        if kind not in ("fact", "preference", "note"):
+        kind = arguments.get("kind") or None
+        valid = {k.value for k in memory_service.MemoryKind}
+        if kind is not None and kind not in valid:
             return ToolResult.failure(f"kind inválido: {kind}")
 
         memory = await memory_service.create_memory(
@@ -97,6 +115,7 @@ class StoreMemory(Tool):
             kind=kind,
             session_id=context.session_id,
             provider=context.provider,
+            project=arguments.get("project"),
         )
         logger.info("Memória gravada pela ferramenta %s (%s)", memory.id, memory.kind)
         return ToolResult.success(f"Memória gravada (id={memory.id}, kind={memory.kind}).")

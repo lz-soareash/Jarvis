@@ -6,8 +6,12 @@ from app.schemas.base import APIModel
 
 class MemoryCreate(APIModel):
     content: str
-    kind: MemoryKind = MemoryKind.FACT
+    kind: MemoryKind | None = None
     session_id: str | None = None
+    project: str | None = None
+    confidence: str | None = None
+    source: str | None = None
+    expires_at: datetime | None = None
 
 
 class MemoryOut(APIModel):
@@ -15,6 +19,10 @@ class MemoryOut(APIModel):
     session_id: str | None = None
     kind: str
     content: str
+    project: str | None = None
+    confidence: str | None = None
+    source: str | None = None
+    expires_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     score: float | None = None

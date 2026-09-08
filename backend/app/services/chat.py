@@ -200,6 +200,12 @@ async def build_system_prompt(
 ) -> str:
     """Contexto SISTÊMICO injetado na IA: resumo rolante + memórias relevantes.
 
+    Fase 19.5 — VEGA Memory Core (composição, sem duplicação):
+    - `[Memórias relevantes]` busca memórias da sessão/global + de projeto;
+    - `[Conhecimento validado]` injeta o ledger local (KnowledgeStore.search),
+      restrito a registros com status confiável e sempre SANITIZADO;
+    - o limite total é controlado por `memory_context_limit` (defaults seguros).
+
     Memórias relevantes são buscadas pelo texto da última pergunta (semântico
     quando há embedding; lexical no fallback). Sem chave, apenas o resumo e o
     prompt base chegam ao modelo.
@@ -210,11 +216,12 @@ async def build_system_prompt(
     # Fase 19 — identidade/persona do assistente (camada própria, VEGA display).
     from app.identity import identity_system_block
 
-    parts.append(identity_system_block())
+    parts.append(f"[Identidade]\n{identity_system_block()}")
 
     if session is not None and session.summary:
         parts.append(f"[Resumo da conversa até agora]\n{session.summary}")
 
+    knowledge: list = []
     try:
         if query:
             results = await memory_service.search_memories(
@@ -225,17 +232,33 @@ async def build_system_prompt(
                 limit=settings.memory_context_limit,
                 provider=provider,
             )
+            knowledge = memory_service.search_knowledge(
+                db, query=query, session_id=session_id, limit=3
+            )
         else:
             results = [
-                (m, 0.0) for m in memory_service.list_memories(db)[: settings.memory_context_limit]
+                (m, 0.0)
+                for m in memory_service.list_memories(db)[
+                    : settings.memory_context_limit
+                ]
             ]
+            knowledge = memory_service.search_knowledge(
+                db, query="", session_id=session_id, limit=3
+            )
     except Exception:  # noqa: BLE001 — memória nunca quebra o chat
         logger.exception("Falha ao montar contexto de memórias")
         results = []
+        knowledge = []
 
     if results:
         lines = "\n".join(f"- ({m.kind}) {m.content}" for m, _ in results)
         parts.append(f"[Memórias relevantes]\n{lines}")
+
+    if knowledge:
+        klines = "\n".join(
+            f"- (projeto: {r.project or 'geral'}) {r.claim}" for r in knowledge
+        )
+        parts.append(f"[Conhecimento validado]\n{klines}")
 
     return "\n\n".join(parts)
 

@@ -15,6 +15,7 @@ from .remote import router as remote_router
 from .research import router as research_router
 from .system import router as system_router
 from .tts import router as tts_router
+from .vega import router as vega_router
 from .workspace import router as workspace_router
 
 api_router = APIRouter()
@@ -34,3 +35,4 @@ api_router.include_router(remote_router)
 api_router.include_router(workspace_router)
 api_router.include_router(research_router)
 api_router.include_router(computer_router)
+api_router.include_router(vega_router)

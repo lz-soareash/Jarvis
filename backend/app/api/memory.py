@@ -27,6 +27,10 @@ async def create_memory(
         kind=payload.kind,
         session_id=payload.session_id,
         provider=provider,
+        project=payload.project,
+        confidence=payload.confidence,
+        source=payload.source,
+        expires_at=payload.expires_at,
     )
     return MemoryOut.model_validate(memory)
 
@@ -35,6 +39,7 @@ async def create_memory(
 async def list_memories(
     session_id: str | None = None,
     kind: MemoryKind | None = None,
+    project: str | None = None,
     query: str | None = None,
     limit: int = 20,
     db: OrmSession = Depends(get_db),
@@ -49,12 +54,15 @@ async def list_memories(
             include_global=session_id is None,
             limit=min(limit, 50),
             provider=provider,
+            project=project,
         )
         return [
             MemoryOut.model_validate(m).model_copy(update={"score": round(score, 4)})
             for m, score in results
         ]
-    memories = memory_service.list_memories(db, session_id=session_id, kind=kind)
+    memories = memory_service.list_memories(
+        db, session_id=session_id, kind=kind, project=project
+    )
     return [MemoryOut.model_validate(m) for m in memories[: min(limit, 50)]]
 
 

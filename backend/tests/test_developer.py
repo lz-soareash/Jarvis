@@ -22,7 +22,7 @@ from app.tools.developer import (
 
 def _run(inst, db=None, **args):
     ctx = ToolContext(db=db, provider=None, session_id=None)
-    return asyncio.get_event_loop().run_until_complete(inst.run(ctx, **args))
+    return asyncio.run(inst.run(ctx, **args))
 
 
 def _db():

@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session as OrmSession
 
 from app.core.enums import AtlasWriteMode, KnowledgeConfidence
@@ -25,7 +25,8 @@ from .evidence import Evidence, sha256_hex
 logger = logging.getLogger("jarvis.research.knowledge")
 
 # Senhas/tokens/segredos mascarados ANTES de ir para o banco/Atlas.
-_SECRET_KEY_VALUE = re.compile(r"(?i)(\b(?:api[_-]?key|access[_-]?token|secret|password|passwd|token|authorization|bearer)\b\s*[:=]\s*(?:bearer\s+)?)\S+")
+# Fase 19.5 — cobertura também em pt-BR (senha/segredo/chave), forma `chave=valor`.
+_SECRET_KEY_VALUE = re.compile(r"(?i)(\b(?:api[_-]?key|access[_-]?token|secret|password|passwd|token|authorization|bearer|senha|segredo|chave)\b\s*[:=]\s*(?:bearer\s+)?)\S+")
 _SECRET_PLAIN = re.compile(r"(?i)\b(aws_access_key_id|aws_secret_access_key)\b\s*[:=]\s*\S+")
 _BEARER = re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._\-]{8,}")
 _TOKEN_STYLE = re.compile(r"(?i)\b(sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{16,}|xox[baprs]-[A-Za-z0-9]{10,})")
@@ -200,6 +201,61 @@ class KnowledgeStore:
     def list_records(self, *, limit: int = 50) -> list[KnowledgeRecord]:
         stmt = select(KnowledgeRecord).order_by(KnowledgeRecord.created_at.desc()).limit(min(limit, 200))
         return list(self.db.scalars(stmt))
+
+    # -- recuperação seletiva (Fase 19.5 — conhecimento no prompt da VEGA) ---
+    def search(
+        self,
+        *,
+        query: str,
+        session_id: str | None = None,
+        project: str | None = None,
+        limit: int = 3,
+    ) -> list[KnowledgeRecord]:
+        """Conhecimento VALIDADO relevante à consulta (lexical, determinístico).
+
+        Somente registros com status confiável entram no contexto (sugeridos e
+        rejeitados ficam de fora — nada de inferência não verificada no prompt).
+        Dedup por `content_hash` mantém uma versão por item; `project` filtra a
+        associação de projeto e `session_id` o compartilhamento de sessão.
+        """
+        from app.services.memory import _tokens  # reuso do tokenizador único
+
+        valid_statuses = ("validated", "confirmed", "user_confirmed", "persisted")
+        stmt = select(KnowledgeRecord).where(
+            KnowledgeRecord.status.in_(valid_statuses)
+        )
+        if project:
+            stmt = stmt.where(KnowledgeRecord.project == project)
+        if session_id is not None:
+            stmt = stmt.where(
+                or_(
+                    KnowledgeRecord.session_id == session_id,
+                    KnowledgeRecord.session_id.is_(None),
+                )
+            )
+        stmt = stmt.order_by(KnowledgeRecord.created_at.desc()).limit(200)
+        rows = list(self.db.scalars(stmt).all())
+
+        seen: set[str] = set()
+        deduped: list[KnowledgeRecord] = []
+        for record in rows:
+            if record.content_hash in seen:
+                continue
+            seen.add(record.content_hash)
+            deduped.append(record)
+
+        tokens = _tokens(query)
+        if not tokens:
+            return deduped[:limit]
+
+        scored = []
+        for record in deduped:
+            haystack = " ".join([record.claim, *(record.facts or [])])
+            count = sum(1 for tok in tokens if tok in _tokens(haystack))
+            if count:
+                scored.append((record, float(count)))
+        scored.sort(key=lambda item: item[1], reverse=True)
+        return [record for record, _ in scored[:limit]]
 
 
 def _write_to_atlas(atlas: AtlasClient, record: KnowledgeRecord) -> dict:

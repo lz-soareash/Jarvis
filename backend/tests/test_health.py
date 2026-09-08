@@ -2,7 +2,7 @@ def test_root_serves_frontend_index(client):
     response = client.get("/")
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
-    assert "JARVIS" in response.text
+    assert "VEGA" in response.text
 
 
 def test_serves_frontend_static_assets(client):

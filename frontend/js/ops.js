@@ -211,11 +211,15 @@ const OpsView = (() => {
   function renderAtlas(atlas) {
     if (!els.atlasBody) return;
     if (!atlas) return;
+    const optionalNote = atlas.optional
+      ? '<div class="ops-muted ops-note">Atlas é opcional — não é dependência da VEGA.</div>'
+      : "";
     els.atlasBody.innerHTML = `
       <div class="ops-row"><span>Estado</span><b>${atlas.enabled ? "habilitado" : "desabilitado"}</b></div>
       <div class="ops-row"><span>Configurado</span><b>${atlas.configured ? "sim" : "não"}</b></div>
       <div class="ops-row"><span>Base URL</span><b>${esc(atlas.base_url || "—")}</b></div>
       <div class="ops-muted ops-note">${esc(atlas.detail || "")}</div>
+      ${optionalNote}
     `;
   }
 

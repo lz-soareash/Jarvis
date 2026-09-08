@@ -4,13 +4,13 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#05080f" />
-  <meta name="description" content="JARVIS — Personal AI Agent" />
+  <meta name="description" content="VEGA — Personal AI Agent" />
   <meta name="color-scheme" content="dark" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="JARVIS" />
-  <title>JARVIS</title>
+  <meta name="apple-mobile-web-app-title" content="VEGA" />
+  <title>VEGA</title>
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="./icons/favicon.svg" />
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
@@ -39,13 +39,13 @@
             </svg>
           </span>
           <span class="brand-text">
-            <span class="brand-name">JARVIS</span>
+            <span class="brand-name">VEGA</span>
             <span class="brand-sub">Personal AI Agent</span>
           </span>
         </div>
       </div>
 
-      <button class="btn-install" id="install-btn" type="button" hidden aria-label="Instalar o JARVIS">
+      <button class="btn-install" id="install-btn" type="button" hidden aria-label="Instalar a VEGA">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M12 3v12m0 0 4-4m-4 4-4-4"/>
@@ -54,7 +54,7 @@
         Instalar
       </button>
 
-      <nav class="hud-tabs" aria-label="Seções do JARVIS">
+      <nav class="hud-tabs" aria-label="Seções da VEGA">
         <button class="hud-tab is-active" id="tab-chat" type="button">Chat</button>
         <button class="hud-tab" id="tab-ops" type="button">Central</button>
         <button class="hud-tab" id="tab-remote" type="button">Remote</button>
@@ -97,10 +97,10 @@
               <span class="orb-ring orb-ring--outer"></span>
               <span class="orb-ring orb-ring--pulse"></span>
             </div>
-            <span class="empty-brand">JARVIS</span>
+            <span class="empty-brand">VEGA</span>
             <h1 class="empty-title">Como posso ajudar?</h1>
             <p class="empty-hint">
-              Pergunte, peça algo ou fale sobre seus projetos. O JARVIS também usa ferramentas
+              Pergunte, peça algo ou fale sobre seus projetos. A VEGA também usa ferramentas
               e pede sua aprovação antes de ações sensíveis.
             </p>
             <div class="suggestions" aria-label="Sugestões">
@@ -116,11 +116,11 @@
         <form class="composer" id="input-form">
           <div class="composer-field">
             <textarea id="input" rows="1"
-                placeholder="Digite ou fale com o JARVIS..."
-                aria-label="Mensagem para o JARVIS"
+                placeholder="Digite ou fale com a VEGA..."
+                aria-label="Mensagem para a VEGA"
                 autocomplete="off" spellcheck="false"></textarea>
             <button class="btn-voice" id="voice-btn" type="button"
-                aria-label="Falar com o Jarvis" aria-pressed="false" title="Falar" hidden>
+                aria-label="Falar com a VEGA" aria-pressed="false" title="Falar" hidden>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <rect x="9" y="2" width="6" height="12" rx="3"/>
@@ -138,7 +138,7 @@
               </svg>
             </button>
             <button class="wake-toggle" id="wake-btn" type="button"
-                aria-label="Modo mãos-livres (diga olá Jarvis)" aria-pressed="false" title="Mãos-livres" hidden>
+                aria-label="Modo mãos-livres (diga olá VEGA)" aria-pressed="false" title="Mãos-livres" hidden>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M4 12h2v2H4z"/>
@@ -157,7 +157,7 @@
             </button>
           </div>
           <p class="composer-hint" id="composer-hint">
-            O JARVIS pode consultar o sistema e executar ações reais com sua aprovação.
+            A VEGA pode consultar o sistema e executar ações reais com sua aprovação.
           </p>
         </form>
       </main>
@@ -170,9 +170,9 @@
           <button class="btn" id="ops-refresh" type="button">Atualizar</button>
         </div>
 
-        <section class="ops-overview" aria-label="Estado geral do JARVIS">
+        <section class="ops-overview" aria-label="Estado geral da VEGA">
           <div class="ops-ov-main">
-            <span class="ops-ov-name">JARVIS</span>
+            <span class="ops-ov-name">VEGA</span>
             <span class="ops-ov-mode" id="ops-ov-mode">—</span>
             <span class="ops-ov-badge" id="ops-ov-badge">—</span>
           </div>

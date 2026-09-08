@@ -260,6 +260,9 @@ class Settings(BaseSettings):
     assistant_proactivity: str = "controlled"
     assistant_humor: str = "subtle"
     assistant_formality: str = "adaptive"
+    # Fase 19.5 — presença da VEGA (estados reais derivados; badge/frontend).
+    # Observabilidade de UI => ligada por padrão; NUNCA afeta permissões/segurança.
+    vega_presence_enabled: bool = True
 
     # Voz & Fala (Fase 6b) — configuração centralizada do TTS
     # Provedor ativo (edge por padrão; outros via tts_providers).

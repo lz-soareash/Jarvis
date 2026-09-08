@@ -14,6 +14,11 @@ class Memory(Base):
 
     `session_id` nulo = memória global/pessoal; preenchido = memória da sessão.
     `embedding` guarda o vetor semântico (JSON) para busca por similaridade.
+
+    Fase 19.5 — metadata da política de escrita: `project` (associação a um
+    projeto), `confidence` (proveniência), `source` (origem, ex.: `chat`,
+    `tool`, `api`) e `expires_at` (TTL — memórias efêmeras são honoradas na
+    busca; `None` = sem expiração). `content` é sanitizado ANTES da persistência.
     """
 
     __tablename__ = "memories"
@@ -24,6 +29,10 @@ class Memory(Base):
     )
     kind: Mapped[str] = mapped_column(String(20), default=MemoryKind.FACT.value, index=True)
     content: Mapped[str] = mapped_column(Text)
+    project: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    confidence: Mapped[str] = mapped_column(String(40), default="unverified")
+    source: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     embedding: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(

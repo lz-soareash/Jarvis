@@ -49,12 +49,22 @@ class ApprovalStatus(str, Enum):
 
 
 class MemoryKind(str, Enum):
-    """Tipos de memória de longo prazo estruturada."""
+    """Tipos de memória de longo prazo estruturada (Fase 19.5).
 
-    FACT = "fact"
-    PREFERENCE = "preference"
-    NOTE = "note"
-    SUMMARY = "summary"
+    Categorias da política de escrita da VEGA: efêmero, preferência, fato,
+    projeto, tarefa, conhecimento e decisão. Valores são aditivos — bancos
+    existentes com `fact/preference/note/summary` continuam válidos.
+    """
+
+    EPHEMERAL = "ephemeral"  # transitório/piloto — expira (TTL deliberado)
+    PREFERENCE = "preference"  # preferência do usuário (longo prazo)
+    FACT = "fact"  # fato/observação (padrão, compatível com fases anteriores)
+    PROJECT = "project"  # contexto de um projeto do usuário
+    TASK = "task"  # estado/contexto de uma tarefa em andamento
+    KNOWLEDGE = "knowledge"  # conhecimento validado (espelho do ledger local)
+    DECISION = "decision"  # decisão tomada (ferramenta/stack/política)
+    NOTE = "note"  # nota livre do usuário
+    SUMMARY = "summary"  # resumo rolante de uma sessão
 
 
 class TaskStatus(str, Enum):

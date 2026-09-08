@@ -567,7 +567,7 @@ function bindSpeakingState() {
     if (els.composerHint) {
       els.composerHint.classList.toggle("is-speaking-v", state === "speaking");
       if (state === "speaking" && !manualDictation && !handsFree) {
-        els.composerHint.textContent = "JARVIS falando...";
+        els.composerHint.textContent = "VEGA falando...";
       } else if (state === "idle") {
         els.composerHint.classList.remove("is-speaking-v");
         els.composerHint.textContent = hintDefault;
@@ -601,6 +601,28 @@ async function loadStatus() {
     els.dbState.textContent = "—";
     els.aiState.textContent = "—";
   }
+}
+
+/* ---------- presença (Fase 19.5) — estados REAIS da VEGA ----------
+   Consome /api/vega/state (derivado de sinais reais no backend). Sem redes,
+   sem states fabricados: falha/ausência => mantém "offline" sem enganar. */
+async function loadPresence() {
+  try {
+    const res = await fetch("/api/vega/state");
+    if (!res.ok) {
+      els.agentState.textContent = "off-line";
+      return;
+    }
+    const p = await res.json();
+    els.agentState.textContent = p && (p.label || p.state) ? p.label : "off-line";
+  } catch (_) {
+    els.agentState.textContent = "off-line";
+  }
+}
+
+function startPresencePolling(intervalMs = 5000) {
+  loadPresence();
+  setInterval(loadPresence, intervalMs);
 }
 
 /* ---------- sessões ---------- */
@@ -1094,6 +1116,7 @@ function init() {
   els.input.focus();
 
   loadStatus();
+  startPresencePolling();
   loadSessions().then(() => {
     if (currentSessionId) openSessionView(currentSessionId);
   });

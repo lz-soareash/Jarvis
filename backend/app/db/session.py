@@ -72,7 +72,35 @@ def _ensure_schema() -> None:
     except Exception:  # pragma: no cover — plataformas/estados sem suporte não bloqueiam
         pass
 
+    _ensure_memories_schema()
     _ensure_remote_commands_schema()
+
+
+def _ensure_memories_schema() -> None:
+    """Fase 19.5 — colunas aditivas de `memories` para bancos já existentes.
+
+    `project`/`confidence`/`source`/`expires_at` nascem junto com o modelo nas
+    bases novas; nas bases legadas entram via ALTER idempotente (PRAGMA). Nada
+    é destrutivo; falhas não bloqueiam o boot (best-effort).
+    """
+    additions = {
+        "project": "VARCHAR(200)",
+        "confidence": "VARCHAR(40) DEFAULT 'unverified'",
+        "source": "VARCHAR(60)",
+        "expires_at": "DATETIME",
+    }
+    try:
+        with engine.connect() as conn:
+            cols = {
+                row[1]
+                for row in conn.execute(text("PRAGMA table_info(memories)")).fetchall()
+            }
+            for name, ddl in additions.items():
+                if name not in cols:
+                    conn.execute(text(f"ALTER TABLE memories ADD COLUMN {name} {ddl}"))
+            conn.commit()
+    except Exception:  # pragma: no cover — estados sem suporte não bloqueiam
+        pass
 
 
 def _ensure_remote_commands_schema() -> None:

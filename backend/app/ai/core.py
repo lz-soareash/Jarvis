@@ -27,7 +27,6 @@ from app.ai.providers.base import AIProvider, AIProviderError
 from app.ai.registry import get_ai_router
 from app.schemas.chat import MessageOut
 from app.services import agent, chat as chat_service, ops, summarizer
-from app.services.atlas_router import route as atlas_route
 from app.services.chat import build_context, sse_event
 
 logger = logging.getLogger("jarvis.ai.core")
@@ -142,9 +141,12 @@ async def handle_message(
 
     # Fase 11.2 — Atlas condicional: só consulta Atlas para consultas de
     # conhecimento/contexto. Para solicitações operacionais (computer control),
-    # pula Atlas para reduzir latência.
+    # pula Atlas para reduzir latência. Fase 19.5 — Atlas é OPCIONAL: o import
+    # é lazy (o desligamento/indisponibilidade nunca atinge o fluxo da VEGA).
     atlas_response = None
     if not _is_operational_request(content):
+        from app.services.atlas_router import route as atlas_route
+
         atlas_response = atlas_route(db, session_id, content)
     if atlas_response is not None:
         ops.record_event(
