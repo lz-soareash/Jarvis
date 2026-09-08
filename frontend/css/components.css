@@ -666,6 +666,92 @@
   opacity: 0.85;
 }
 
+/* ---------------- Estados do Orb — VEGA (Fase 19.6) ----------------
+   Núcleo único, anel fino e brilho apenas como linguagem de estado.
+   Todos os estados têm rótulo de texto (chip/empty) além da cor. */
+.orb[data-state="offline"] {
+  --orb-accent: var(--vega-off);
+  --orb-accent-soft: rgba(85, 99, 122, 0.5);
+  --orb-glow: 0 0 0 1px rgba(85, 99, 122, 0.4), 0 0 14px rgba(85, 99, 122, 0.14);
+  --orb-spin: 40s;
+  --orb-ping: 0s;
+}
+.orb[data-state="offline"] .orb-ring--inner,
+.orb[data-state="offline"] .orb-ring--outer {
+  animation: none;
+  opacity: 0.4;
+}
+.orb[data-state="offline"] .orb-core {
+  filter: saturate(0.6);
+}
+
+/* conjunto de "trabalho ativo" — derivações calmas do azul de trabalho */
+.orb[data-state="working"],
+.orb[data-state="executing"],
+.orb[data-state="planning"],
+.orb[data-state="perceiving"],
+.orb[data-state="observing"],
+.orb[data-state="verifying"],
+.orb[data-state="recovering"] {
+  --orb-accent: var(--color-primary);
+  --orb-accent-soft: rgba(47, 208, 255, 0.55);
+  --orb-glow: var(--vega-glow-work);
+  --orb-spin: 7s;
+  --orb-ping: 1.2s;
+}
+.orb[data-state="working"] .orb-core,
+.orb[data-state="executing"] .orb-core,
+.orb[data-state="planning"] .orb-core,
+.orb[data-state="perceiving"] .orb-core,
+.orb[data-state="observing"] .orb-core,
+.orb[data-state="verifying"] .orb-core,
+.orb[data-state="recovering"] .orb-core {
+  scale: 1.03;
+}
+.orb[data-state="working"] .orb-ring--pulse,
+.orb[data-state="planning"] .orb-ring--pulse,
+.orb[data-state="perceiving"] .orb-ring--pulse,
+.orb[data-state="observing"] .orb-ring--pulse,
+.orb[data-state="verifying"] .orb-ring--pulse,
+.orb[data-state="recovering"] .orb-ring--pulse {
+  opacity: 0.5;
+  border-color: var(--orb-accent-soft);
+}
+.orb[data-state="planning"] { --orb-spin: 12s; --orb-ping: 1.6s; --orb-glow: var(--vega-glow-idle); }
+.orb[data-state="observing"] { --orb-spin: 10s; --orb-ping: 1.5s; }
+.orb[data-state="verifying"] { --orb-glow: var(--vega-glow-ok); }
+
+.orb[data-state="waiting_confirmation"] {
+  --orb-accent: var(--color-warning);
+  --orb-accent-soft: rgba(255, 194, 94, 0.55);
+  --orb-glow: var(--vega-glow-wait);
+  --orb-spin: 20s;
+  --orb-ping: 2s;
+}
+.orb[data-state="waiting_confirmation"] .orb-ring--pulse {
+  opacity: 0.6;
+  border-color: var(--orb-accent-soft);
+}
+
+.orb[data-state="success"] {
+  --orb-accent: var(--color-success);
+  --orb-accent-soft: rgba(47, 230, 165, 0.5);
+  --orb-glow: var(--vega-glow-ok);
+  --orb-spin: 24s;
+  --orb-ping: 1.8s;
+}
+.orb[data-state="success"] .orb-core {
+  scale: 1.03;
+}
+
+.orb[data-state="warning"] {
+  --orb-accent: var(--color-warning);
+  --orb-accent-soft: rgba(255, 180, 84, 0.55);
+  --orb-glow: var(--vega-glow-wait);
+  --orb-spin: 22s;
+  --orb-ping: 1.6s;
+}
+
 /* respiração do núcleo */
 @keyframes orb-breathe {
   0%,
@@ -759,6 +845,39 @@
   color: var(--color-text-secondary);
   max-width: 480px;
 }
+
+/* Presença no empty state (Fase 19.6) — frase legível, cor de acento. */
+.empty-presence {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+.empty-presence::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--vega-off);
+  box-shadow: 0 0 8px var(--vega-off);
+}
+.empty-presence[data-state="idle"]::before { background: var(--vega-idle); box-shadow: 0 0 10px var(--vega-idle); }
+.empty-presence[data-state="thinking"]::before,
+.empty-presence[data-state="working"]::before,
+.empty-presence[data-state="executing"]::before,
+.empty-presence[data-state="planning"]::before,
+.empty-presence[data-state="perceiving"]::before,
+.empty-presence[data-state="observing"]::before,
+.empty-presence[data-state="verifying"]::before,
+.empty-presence[data-state="recovering"]::before { background: var(--vega-work); box-shadow: 0 0 10px var(--vega-work); }
+.empty-presence[data-state="listening"]::before,
+.empty-presence[data-state="speaking"]::before { background: var(--vega-voice); box-shadow: 0 0 10px var(--vega-voice); }
+.empty-presence[data-state="success"]::before { background: var(--vega-ok); box-shadow: 0 0 12px var(--vega-ok); }
+.empty-presence[data-state="waiting_confirmation"]::before,
+.empty-presence[data-state="warning"]::before { background: var(--vega-wait); box-shadow: 0 0 10px var(--vega-wait); }
+.empty-presence[data-state="error"]::before { background: var(--vega-err); box-shadow: 0 0 10px var(--vega-err); }
 
 .suggestions {
   display: flex;

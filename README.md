@@ -478,7 +478,9 @@ e 28 testes de contracts/provider/store/tool/agentic/segurança), a **Fase 16** 
 Layer & Agent Access, 18 testes herméticos) e a **Fase 17** (Proactive Agent: 39 testes herméticos
 de events/policy/scheduler/delivery/segurança/API/SSE), a **Fase 18** (Computer Action
 Layer), a **Fase 19** (Computer Use Agent & Identity) e a **Fase 19.5** (VEGA Identity,
-Memory & Experience) — **744 no total**. Os `dev_*` usam `asyncio.run` (compatíveis com o
+Memory & Experience) — **744 no total**. Os testes frontend da **Fase 19.6** (mapa de
+estados VEGA, `frontend/tests/vega-state.test.mjs`) somam **7 certificados**. Os
+`dev_*` usam `asyncio.run` (compatíveis com o
 Python 3.14, sem depender de event loop pré-existente). Os testes são herméticos: forçam
 `ENV=test`, `GEMINI_API_KEY=""`, `DATABASE_URL=sqlite:///:memory:`,
 `ATLAS_ENABLED=false`, `AI_LOCAL_LLM_ENABLED=false` e `REMOTE_ENABLED=false` **antes** de
@@ -907,6 +909,47 @@ independente de IA/ATLAS, conhecimento validado no contexto do chat e presença
   fora do storage e do contexto). **744 testes verdes no total**.
 - **Config** (`.env.example`): `VEGA_PRESENCE_ENABLED=true` (+ bloco `ASSISTANT_*`).
 
+## VEGA Visual Identity & UX (Fase 19.6)
+
+**Fase puramente VISUAL/UX** — nenhum backend reimplementado. Transforma o
+frontend em uma experiência visual coerente com a identidade **VEGA** (futurista,
+elegante e tecnológica, **sem cyberpunk/neon exagerado**), preservando arquitetura,
+funcionalidades e todos os IDs existentes.
+
+- **Núcleo diamante (Diamond Core)**: o núcleo do orb e a marca trocam o "arc
+  reactor" por um **diamante/VEGA-kite** (`brand-mark` e `orb-core` SVGs)
+  desenhado com ângulos calmos e um **anel único** fino — reduzindo a associação
+  com o arc-reactor. Paleta dark cyan/azul preservada (sem troca completa).
+- **Estado como linguagem, com texto + cor**: **16 estados** centralizados em
+  `frontend/js/vega-state.js` (módulo puro, browser+Node, fonte única — nada de
+  strings espalhadas): `offline, error, idle, listening, thinking, working,
+  perceiving, planning, observing, executing, verifying, recovering,
+  waiting_confirmation, speaking, success, warning`. Cada estado tem `orb` +
+  `label` em pt. **Chip de presença** (`#presence-chip`) e frase no empty state
+  (`#empty-presence`) sempre mostram **rótulo legível + cor** (nunca só cor), com
+  `role="status"`/`aria-live` para leitores de tela.
+- **Brilho controlado como estado**: glows suaves (nunca neon em repouso) por
+  estado; o orb expõe `data-state` para o CSS e `body[data-vega]`.
+- **Estados reais alimentam a UI**: `app.js` roteia voz (`listening/speaking`) e
+  chat SSE (`thinking`/`executing`/`success`/`error`/`waiting_confirmation`) por
+  `VegaState`; transientes têm precedência temporal (TTL) sobre o polling de
+  presença — sem travar a UI; flash de sucesso após resposta completa.
+- **Central de Operações reorganizada por hierarquia**: hero + grupos
+  **Operação / Contexto / Integrações** com `#ops-computer-agent` em destaque
+  (`--span2`) — **todos os IDs de card preservados**.
+- **Timeline do Computer Agent** (`#ops-computer-timeline`) construída **só com
+  eventos reais** de `recent_events` (prefixo `computer.*`) — **nenhum
+  chain-of-thought fabricado**; atividade real (`computer_agent.by_status`) reflete
+  no orb quando a Central está aberta (`window.VegaUI`).
+- **Identidade externa**: `manifest.webmanifest` (name/short_name/description →
+  VEGA), `favicon.svg` (glyph diamante + ponto de presença), textos claros de
+  conectividade no painel Remote ("VEGA conectada remotamente" / "VEGA somente
+  local"), versões de assets sincronizadas entre `index.html` e `sw.js`
+  (CACHE `vega-v22`).
+- **Testes**: `frontend/tests/vega-state.test.mjs` — **7 testes Node** do mapa de
+  estados (cobertura total de estados, aliases, `resolvePresence`,
+  `resolveComputerEvent`, `resolveComputerTask`, `stateMeta`).
+
 ## Roadmap (resumo)
 
 0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·
@@ -1005,6 +1048,19 @@ waiting_confirmation/working/thinking/idle`) com transições `vega.state.change
 e endpoints `/api/vega/identity|state|state/labels`; personalidade (`ASSISTANT_*`)
 nunca altera permissões; branding VEGA no frontend + indicador de presença;
 25 testes herméticos novos — 744 testes verdes) ·
+19.6. VEGA Visual Identity & UX ✔ (Fase 19.6 COMPLETA: **fase puramente visual/UX**,
+sem reimplementar backend; núcleo **diamante (Diamond Core)** no orb e na marca,
+anel único fino e brilho controlado como linguagem de estado — sem cyberpunk/neon
+exagerado; **16 estados** centralizados em `frontend/js/vega-state.js` (módulo puro
+browser+Node, fonte única) com **rótulo legível + cor** no chip de presença e no
+empty state (`role=status`/`aria-live`); voz/chat SSE mapeados por `VegaState` com
+precedência temporal de transientes sobre o polling de presença + flash de sucesso;
+Central de Operações reorganizada por hierarquia (hero + Operação/Contexto/
+Integrações) **preservando todos os IDs**; timeline do Computer Agent **só com
+eventos reais** (`recent_events` `computer.*`, sem chain-of-thought) + atividade
+real refletida no orb (`window.VegaUI`); identidade externa VEGA (manifest, favicon
+diamante, textos claros no Remote, versões de assets sincronizadas em
+`sw.js`/CACHE `vega-v22`); **7 testes Node** do mapa de estados) ·
 20. V1.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

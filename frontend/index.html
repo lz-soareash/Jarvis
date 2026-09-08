@@ -17,8 +17,8 @@
   <link rel="stylesheet" href="./css/tokens.css" />
   <link rel="stylesheet" href="./css/base.css" />
   <link rel="stylesheet" href="./css/layout.css" />
-  <link rel="stylesheet" href="./css/components.css?v=19" />
-  <link rel="stylesheet" href="./css/ops.css?v=19" />
+  <link rel="stylesheet" href="./css/components.css?v=20" />
+  <link rel="stylesheet" href="./css/ops.css?v=20" />
 </head>
 <body>
   <div class="app">
@@ -34,8 +34,9 @@
 
         <div class="brand" title="Personal AI Agent">
           <span class="brand-mark" aria-hidden="true">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 2.5 20 8v8l-8 5.5L4 16V8l8-5.5Zm0 3.2L6.5 9.3v5.4L12 18.3l5.5-3.6V9.3L12 5.7Z"/>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+              <path d="M12 2.4 21.6 12 12 21.6 2.4 12 12 2.4Zm0 4.4L6.8 12l5.2 5.2L17.2 12 12 6.8Z" fill="currentColor"/>
+              <circle cx="12" cy="12" r="1.6" fill="var(--color-bg)"/>
             </svg>
           </span>
           <span class="brand-text">
@@ -62,6 +63,7 @@
 
       <div class="hud-status" role="status">
         <span class="dot" id="status-dot" data-state="connecting"></span>
+        <span class="presence-chip" id="presence-chip" data-state="connecting" role="status" aria-live="polite">conectando</span>
         <span id="status-text">Conectando</span>
         <span class="voice-badge" id="voice-status" role="status" aria-live="polite" hidden></span>
       </div>
@@ -89,8 +91,9 @@
           <div class="empty" id="empty-state">
             <div class="orb" id="orb" data-state="idle" aria-hidden="true">
               <span class="orb-core orb-core-fill">
-                <svg width="34" height="34" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 2.5 20 8v8l-8 5.5L4 16V8l8-5.5Zm0 3.2L6.5 9.3v5.4L12 18.3l5.5-3.6V9.3L12 5.7Z"/>
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 2.4 21.6 12 12 21.6 2.4 12 12 2.4Zm0 4.4L6.8 12l5.2 5.2L17.2 12 12 6.8Z" fill="currentColor"/>
+                  <circle cx="12" cy="12" r="1.7" fill="var(--color-bg)"/>
                 </svg>
               </span>
               <span class="orb-ring orb-ring--inner"></span>
@@ -99,6 +102,7 @@
             </div>
             <span class="empty-brand">VEGA</span>
             <h1 class="empty-title">Como posso ajudar?</h1>
+            <p class="empty-presence" id="empty-presence" data-state="idle" role="status" aria-live="polite"></p>
             <p class="empty-hint">
               Pergunte, peça algo ou fale sobre seus projetos. A VEGA também usa ferramentas
               e pede sua aprovação antes de ações sensíveis.
@@ -157,7 +161,8 @@
             </button>
           </div>
           <p class="composer-hint" id="composer-hint">
-            A VEGA pode consultar o sistema e executar ações reais com sua aprovação.
+            A VEGA está presente e acompanha o que está acontecendo — consulte o sistema,
+            execute ações reais com aprovação ou apenas converse.
           </p>
         </form>
       </main>
@@ -193,70 +198,88 @@
         </section>
 
         <div class="ops-grid">
-          <div class="ops-card" id="ops-ai">
-            <h3 class="ops-card-title">AI Core</h3>
-            <div class="ops-body" id="ops-ai-body">…</div>
-          </div>
+          <section class="ops-group" aria-label="Operação">
+            <h3 class="ops-group-title">Operação</h3>
+            <div class="ops-group-cards">
+              <div class="ops-card" id="ops-ai">
+                <h3 class="ops-card-title">AI Core</h3>
+                <div class="ops-body" id="ops-ai-body">…</div>
+              </div>
 
-          <div class="ops-card" id="ops-providers">
-            <h3 class="ops-card-title">Provedores de IA</h3>
-            <div class="ops-body" id="ops-providers-body">…</div>
-          </div>
+              <div class="ops-card" id="ops-system">
+                <h3 class="ops-card-title">Sistema</h3>
+                <div class="ops-body" id="ops-system-body">…</div>
+              </div>
 
-          <div class="ops-card" id="ops-system">
-            <h3 class="ops-card-title">Sistema</h3>
-            <div class="ops-body" id="ops-system-body">…</div>
-          </div>
+              <div class="ops-card" id="ops-tasks">
+                <h3 class="ops-card-title">Tarefas &amp; Auditoria</h3>
+                <div class="ops-body" id="ops-tasks-body">…</div>
+              </div>
 
-          <div class="ops-card" id="ops-context">
-            <h3 class="ops-card-title">Contexto & Política</h3>
-            <div class="ops-body" id="ops-context-body">…</div>
-          </div>
+              <div class="ops-card ops-card--span2" id="ops-computer-agent">
+                <h3 class="ops-card-title">Computer Agent</h3>
+                <div class="ops-body">
+                  <div id="ops-computer-agent-body">…</div>
+                </div>
+                <ol class="cal" id="ops-computer-timeline" aria-label="Atividade operacional do Computer Agent"></ol>
+              </div>
+            </div>
+          </section>
 
-          <div class="ops-card" id="ops-memory">
-            <h3 class="ops-card-title">Memória</h3>
-            <div class="ops-body" id="ops-memory-body">…</div>
-          </div>
+          <section class="ops-group" aria-label="Contexto">
+            <h3 class="ops-group-title">Contexto</h3>
+            <div class="ops-group-cards">
+              <div class="ops-card" id="ops-context">
+                <h3 class="ops-card-title">Contexto &amp; Política</h3>
+                <div class="ops-body" id="ops-context-body">…</div>
+              </div>
 
-          <div class="ops-card" id="ops-tools">
-            <h3 class="ops-card-title">Tools</h3>
-            <div class="ops-body" id="ops-tools-body">…</div>
-          </div>
+              <div class="ops-card" id="ops-memory">
+                <h3 class="ops-card-title">Memória</h3>
+                <div class="ops-body" id="ops-memory-body">…</div>
+              </div>
 
-          <div class="ops-card" id="ops-tasks">
-            <h3 class="ops-card-title">Tarefas &amp; Auditoria</h3>
-            <div class="ops-body" id="ops-tasks-body">…</div>
-          </div>
+              <div class="ops-card" id="ops-tools">
+                <h3 class="ops-card-title">Tools</h3>
+                <div class="ops-body" id="ops-tools-body">…</div>
+              </div>
 
-          <div class="ops-card" id="ops-atlas">
-            <h3 class="ops-card-title">Atlas</h3>
-            <div class="ops-body" id="ops-atlas-body">…</div>
-          </div>
+              <div class="ops-card" id="ops-proactive">
+                <h3 class="ops-card-title">Proactive</h3>
+                <div class="ops-body" id="ops-proactive-body">…</div>
+              </div>
 
-          <div class="ops-card" id="ops-proactive">
-            <h3 class="ops-card-title">Proactive</h3>
-            <div class="ops-body" id="ops-proactive-body">…</div>
-          </div>
+              <div class="ops-card" id="ops-computer">
+                <h3 class="ops-card-title">Computer Actions</h3>
+                <div class="ops-body" id="ops-computer-body">…</div>
+              </div>
+            </div>
+          </section>
 
-          <div class="ops-card" id="ops-computer">
-            <h3 class="ops-card-title">Computer Actions</h3>
-            <div class="ops-body" id="ops-computer-body">…</div>
-          </div>
+          <section class="ops-group" aria-label="Integrações">
+            <h3 class="ops-group-title">Integrações</h3>
+            <div class="ops-group-cards">
+              <div class="ops-card" id="ops-providers">
+                <h3 class="ops-card-title">Provedores de IA</h3>
+                <div class="ops-body" id="ops-providers-body">…</div>
+              </div>
 
-          <div class="ops-card" id="ops-computer-agent">
-            <h3 class="ops-card-title">Computer Agent</h3>
-            <div class="ops-body" id="ops-computer-agent-body">…</div>
-          </div>
+              <div class="ops-card" id="ops-atlas">
+                <h3 class="ops-card-title">Atlas</h3>
+                <div class="ops-body" id="ops-atlas-body">…</div>
+              </div>
 
-          <div class="ops-card" id="ops-identity">
-            <h3 class="ops-card-title">Identidade</h3>
-            <div class="ops-body" id="ops-identity-body">…</div>
-          </div>
-        </div>
+              <div class="ops-card" id="ops-identity">
+                <h3 class="ops-card-title">Identidade</h3>
+                <div class="ops-body" id="ops-identity-body">…</div>
+              </div>
+            </div>
+          </section>
 
-        <div class="ops-card ops-card--wide" id="ops-events">
-          <h3 class="ops-card-title">Eventos recentes</h3>
-          <div class="ops-body" id="ops-events-body">…</div>
+          <div class="ops-card ops-card--wide" id="ops-events">
+            <h3 class="ops-card-title">Eventos recentes</h3>
+            <div class="ops-body" id="ops-events-body">…</div>
+          </div>
         </div>
       </div>
     </section>
@@ -297,7 +320,7 @@
     </section>
 
     <footer class="status-foot">
-      <span class="status-item">Estado <b id="agent-state">idle</b></span>
+      <span class="status-item">Estado <b id="agent-state" role="status" aria-live="polite">ociosa</b></span>
       <span class="status-item">DB <b id="db-state">—</b></span>
       <span class="status-item">IA <b id="ai-state">—</b></span>
       <span class="status-item status-ports">API <b>8100</b> · WS <b>8101</b></span>
@@ -305,9 +328,10 @@
   </div>
 
   <script src="./js/speech.js?v=13"></script>
-  <script src="./js/ops.js?v=18"></script>
-  <script src="./js/remote.js?v=1"></script>
+  <script src="./js/ops.js?v=19"></script>
+  <script src="./js/remote.js?v=2"></script>
   <script src="./js/markdown.js?v=15"></script>
-  <script src="./js/app.js?v=18"></script>
+  <script src="./js/vega-state.js?v=1"></script>
+  <script src="./js/app.js?v=19"></script>
 </body>
 </html>

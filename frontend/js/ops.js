@@ -43,19 +43,35 @@ const OpsView = (() => {
   let orbState = "idle";
 
   /* Sincroniza com o Orb (app.js) — integração visual com ferramenta em execução §13.
-     Não altera contrato/backend; apenas observa o estado decorativo. */
+     Não altera contrato/backend; apenas observa o estado decorativo. Fase 19.6:
+     rótulos conduzidos pelo mapa de estados /js/vega-state.js (um rótulo, uma fonte). */
+  function activityLabel(state) {
+    const st = state || "idle";
+    if (window.VegaState) return window.VegaState.stateMeta(st).label;
+    const fb = {
+      executing: "executando",
+      thinking: "pensando",
+      speaking: "falando",
+      listening: "ouvindo",
+      working: "operando",
+      planning: "planejando",
+      perceiving: "percebendo",
+      observing: "observando",
+      verifying: "verificando",
+      recovering: "recuperando",
+      waiting_confirmation: "aguardando aprovação",
+      success: "concluído",
+      warning: "atenção",
+      error: "erro",
+      idle: "ociosa",
+      offline: "off-line",
+    };
+    return fb[st] || "ociosa";
+  }
+
   function notifyOrb(state) {
     orbState = state || "idle";
-    if (open && els.ovActivity) {
-      els.ovActivity.textContent =
-        state === "executing"
-          ? "executando ferramenta"
-          : state === "thinking"
-            ? "processando"
-            : state === "speaking"
-              ? "respondendo"
-              : "ociosa";
-    }
+    if (open && els.ovActivity) els.ovActivity.textContent = activityLabel(orbState);
   }
 
   /* ---------- navegação ---------- */
@@ -279,6 +295,81 @@ const OpsView = (() => {
     `;
   }
 
+  /* Fase 19.6 — timeline operacional do Computer Agent. Só eventos REAIS
+     (recent_events prefixados "computer."); nenhum chain-of-thought fabricado. */
+  const CAL_STEP = {
+    "computer.task.created": { label: "tarefa criada", tone: "info" },
+    "computer.task.started": { label: "tarefa iniciada", tone: "info" },
+    "computer.task.planned": { label: "plano traçado", tone: "info" },
+    "computer.task.completed": { label: "tarefa concluída", tone: "ok" },
+    "computer.task.failed": { label: "tarefa falhou", tone: "fail" },
+    "computer.task.cancelled": { label: "tarefa cancelada", tone: "warn" },
+    "computer.task.waiting_confirmation": { label: "aguardando aprovação", tone: "wait" },
+    "computer.action.requested": { label: "ação solicitada", tone: "info" },
+    "computer.action.executed": { label: "ação executada", tone: "ok" },
+    "computer.action.failed": { label: "ação falhou", tone: "fail" },
+    "computer.observation.received": { label: "ambiente lido", tone: "ok" },
+    "computer.verification.started": { label: "verificando resultado", tone: "info" },
+    "computer.verification.success": { label: "verificação ok", tone: "ok" },
+    "computer.verification.failed": { label: "verificação falhou", tone: "fail" },
+    "computer.recovery.started": { label: "recuperando", tone: "info" },
+    "computer.recovery.completed": { label: "recuperação ok", tone: "ok" },
+    "computer.loop.prevented": { label: "loop impedido", tone: "warn" },
+    "computer.security.prompt_injection": { label: "prompt injection", tone: "warn" },
+    "computer.security.autonomy_blocked": { label: "autonomia bloqueada", tone: "warn" },
+  };
+
+  function calStepOf(eventType) {
+    const known = CAL_STEP[eventType];
+    if (known) return known;
+    let tone = "info";
+    if (/(failed|cancelled|blocked|prevented|injection)$/.test(eventType)) tone = "warn";
+    else if (/waiting_confirmation/.test(eventType)) tone = "wait";
+    else if (/(completed|success|executed|received)/.test(eventType)) tone = "ok";
+    return { label: eventType.replace(/^computer\./, "").replace(/_/g, " "), tone };
+  }
+
+  function renderComputerTimeline(c, events) {
+    const tl = document.getElementById("ops-computer-timeline");
+    if (!tl) return;
+    tl.innerHTML = "";
+    const pool = (events || []).filter((e) => (e.event_type || "").startsWith("computer."));
+    const ativo = !!c && c.enabled && (c.active_tasks ?? 0) > 0;
+    if (!pool.length) {
+      const li = document.createElement("li");
+      li.className = "cal-item cal-item--empty";
+      li.textContent = ativo ? "Computer Agent em atividade..." : "Sem atividade operacional registrada.";
+      tl.appendChild(li);
+      return;
+    }
+    const items = pool.slice(-7);
+    items.forEach((e) => {
+      const step = calStepOf(e.event_type);
+      const li = document.createElement("li");
+      li.className = `cal-item cal-item--${step.tone}`;
+      const dot = document.createElement("span");
+      dot.className = "cal-dot";
+      dot.setAttribute("aria-hidden", "true");
+      const txt = document.createElement("span");
+      txt.className = "cal-text";
+      txt.textContent = step.label;
+      const ts = document.createElement("time");
+      ts.className = "cal-time";
+      ts.dateTime = e.created_at || "";
+      ts.textContent = time(e.created_at);
+      li.append(dot, txt, ts);
+      tl.appendChild(li);
+    });
+  }
+
+  /* Estado "ao vivo" a partir de tarefas reais do Computer Agent (by_status). */
+  function computerActiveState(c) {
+    if (!c || !c.enabled || !(c.active_tasks > 0) || !c.by_status) return null;
+    const order = ["planning", "perceiving", "executing", "observing", "verifying", "recovering", "waiting_confirmation"];
+    for (const k of order) if (c.by_status[k] > 0) return k;
+    return null;
+  }
+
   function renderIdentity(id) {
     if (!els.identityBody) return;
     if (!id) return;
@@ -370,12 +461,11 @@ const OpsView = (() => {
     setCardState(els.tasksCard, hasPending ? "warn" : null);
 
     if (els.ovActivity) {
-      const ex = data.tasks?.recent_executions || [];
-      const pending = ex.some((a) => a.action === "tool.execute" && a.allowed === null);
-      if (orbState === "executing") els.ovActivity.textContent = "executando ferramenta";
-      else if (orbState === "thinking") els.ovActivity.textContent = "processando";
-      else if (orbState === "speaking") els.ovActivity.textContent = "respondendo";
-      else els.ovActivity.textContent = pending ? "aprovação pendente" : "ociosa";
+      const ax = data.tasks?.recent_executions || [];
+      const pending = ax.some((a) => a.action === "tool.execute" && a.allowed === null);
+      const label = activityLabel(orbState);
+      els.ovActivity.textContent =
+        label === "ociosa" ? (pending ? "aprovação pendente" : "ociosa") : label;
     }
   }
 
@@ -400,8 +490,20 @@ const OpsView = (() => {
       renderProactive(data.proactive);
       renderComputerActions(data.computer_actions);
       renderComputerAgent(data.computer_agent);
+      renderComputerTimeline(data.computer_agent, data.recent_events);
       renderIdentity(data.identity);
       renderEvents(data.recent_events);
+      // Fase 19.6 — atividade real do Computer Agent reflete no orb quando a Central
+      // está aberta (via VegaUI; nunca inventa estado).
+      if (window.VegaUI) {
+        const active = computerActiveState(data.computer_agent);
+        if (active) {
+          const st = window.VegaState
+            ? window.VegaState.resolveComputerTask(active)
+            : "working";
+          window.VegaUI.push(st);
+        }
+      }
     } catch (err) {
       const bodies = Object.values(els).filter((b) => b && b.classList?.contains("ops-body"));
       bodies.forEach((b) => (b.innerHTML = '<span class="ops-muted ops-error">erro ao carregar Central de Operações</span>'));

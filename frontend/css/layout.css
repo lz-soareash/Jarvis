@@ -65,6 +65,61 @@
   white-space: nowrap;
 }
 
+/* Chip de presença (Fase 19.6) — rótulo legível + cor do estado. */
+.presence-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  padding: 0 10px;
+  border: 1px solid rgba(77, 141, 255, 0.35);
+  border-radius: var(--radius-full);
+  background: rgba(13, 30, 55, 0.55);
+  color: var(--color-text);
+  font-size: var(--text-caption);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+
+.presence-chip::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--vega-off);
+  box-shadow: 0 0 6px var(--vega-off);
+}
+
+.presence-chip[data-state="idle"] { border-color: rgba(77, 141, 255, 0.45); color: #bfd7ff; }
+.presence-chip[data-state="idle"]::before { background: var(--vega-idle); box-shadow: 0 0 8px var(--vega-idle); }
+.presence-chip[data-state="thinking"]::before,
+.presence-chip[data-state="working"]::before,
+.presence-chip[data-state="executing"]::before,
+.presence-chip[data-state="planning"]::before,
+.presence-chip[data-state="perceiving"]::before,
+.presence-chip[data-state="observing"]::before,
+.presence-chip[data-state="verifying"]::before,
+.presence-chip[data-state="recovering"]::before {
+  background: var(--vega-work);
+  box-shadow: 0 0 9px var(--vega-work);
+}
+.presence-chip[data-state="listening"]::before,
+.presence-chip[data-state="speaking"]::before {
+  background: var(--vega-voice);
+  box-shadow: 0 0 9px var(--vega-voice);
+}
+.presence-chip[data-state="success"] { border-color: rgba(47, 230, 165, 0.5); color: #bdf6e0; }
+.presence-chip[data-state="success"]::before { background: var(--vega-ok); box-shadow: 0 0 9px var(--vega-ok); }
+.presence-chip[data-state="warning"],
+.presence-chip[data-state="waiting_confirmation"] { border-color: rgba(255, 194, 94, 0.5); color: #ffe2b3; }
+.presence-chip[data-state="warning"]::before,
+.presence-chip[data-state="waiting_confirmation"]::before { background: var(--vega-wait); box-shadow: 0 0 9px var(--vega-wait); }
+.presence-chip[data-state="error"] { border-color: rgba(255, 122, 143, 0.5); color: #ffc2cc; }
+.presence-chip[data-state="error"]::before { background: var(--vega-err); box-shadow: 0 0 9px var(--vega-err); }
+.presence-chip[data-state="offline"]::before { background: var(--vega-off); box-shadow: none; }
+
 .btn-install {
   display: inline-flex;
   align-items: center;

@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "JARVIS",
-  "short_name": "JARVIS",
-  "description": "JARVIS — Personal AI Agent",
+  "name": "VEGA — Personal AI Agent",
+  "short_name": "VEGA",
+  "description": "VEGA — Personal AI Agent (projeto técnico: JARVIS)",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

@@ -14,7 +14,9 @@ const els = {
   newSession: document.getElementById("new-session"),
   chatWindow: document.getElementById("chat-window"),
   emptyState: document.getElementById("empty-state"),
+  emptyPresence: document.getElementById("empty-presence"),
   orb: document.getElementById("orb"),
+  presenceChip: document.getElementById("presence-chip"),
   messages: document.getElementById("messages"),
   inputForm: document.getElementById("input-form"),
   input: document.getElementById("input"),
@@ -127,9 +129,10 @@ function formatTime(iso) {
   return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
 
-/* ---------- Orb central (Fase 4) — estados visuais ----------
-   Estados: idle · listening · thinking · executing · speaking · error.
-   Comunica o estado atual do JARVIS visualmente (aria-hidden, decorativo). */
+/* ---------- Orb central (Fase 4/19.6) — estados visuais ----------
+   Estados conduzidos por /js/vega-state.js (mapa único, browser+Node).
+   O orb expõe data-state para o CSS; chip de presença e empty-presence
+   declarados como role=status/aria-live para leitores de tela. */
 let orbErrorTimer = null;
 
 /* Erro pontual de envio — borda danger temporária no composer-field (§13) */
@@ -146,18 +149,121 @@ function flashComposerError() {
   }, 2600);
 }
 
+const VEGA_LABEL_FALLBACK = {
+  idle: "ociosa",
+  listening: "ouvindo",
+  speaking: "falando",
+  thinking: "pensando",
+  executing: "executando",
+  error: "erro",
+  offline: "off-line",
+};
+
+const VEGA_PRESENCE_SENTENCE = {
+  idle: "Presente e pronta para ajudar.",
+  offline: "Fora de linha.",
+  connecting: "Conectando...",
+  thinking: "Processando.",
+  working: "Operando no seu pedido.",
+  executing: "Executando uma ação.",
+  listening: "Ouvindo você.",
+  speaking: "Falando com você.",
+  perceiving: "Lendo o ambiente.",
+  planning: "Planejando os passos.",
+  observing: "Observando o resultado.",
+  verifying: "Verificando com segurança.",
+  recovering: "Ajustando o plano.",
+  waiting_confirmation: "Aguardando sua confirmação.",
+  success: "Concluído com sucesso.",
+  warning: "Atenção.",
+  error: "Algo deu errado.",
+};
+
+/* Transientes têm precedência sobre o polling de presença por um TTL;
+   depois disso o estado real do backend volta a valer (sem travar a UI). */
+const VEGA_TRANSIENT_TTL = Object.freeze({
+  listening: 2000,
+  speaking: 2500,
+  thinking: 8000,
+  executing: 12000,
+  working: 12000,
+  perceiving: 12000,
+  planning: 12000,
+  observing: 12000,
+  verifying: 12000,
+  recovering: 12000,
+  waiting_confirmation: 45000,
+  success: 1500,
+  warning: 6000,
+  error: 2600,
+});
+
+let vegaLockUntil = 0;
+
+function vegaCanonical(state) {
+  if (window.VegaState) return window.VegaState.canonicalState(state);
+  return String(state || "idle");
+}
+
+function vegaLabel(state) {
+  const canonical = vegaCanonical(state);
+  if (window.VegaState) return window.VegaState.stateMeta(canonical).label;
+  return VEGA_LABEL_FALLBACK[canonical] || "ociosa";
+}
+
+function vegaPresenceSentence(state) {
+  const canonical = vegaCanonical(state);
+  if (window.VegaState) {
+    const meta = window.VegaState.stateMeta(canonical);
+    if (meta && meta.presence) return meta.presence;
+  }
+  return VEGA_PRESENCE_SENTENCE[canonical] || "Presente.";
+}
+
 function setOrbState(state) {
   const el = els.orb;
-  if (!el || el.dataset.state === state) return;
-    el.dataset.state = state;
-    if (window.OpsView && window.OpsView.notifyOrb) window.OpsView.notifyOrb(state);
-    if (state === "error") {
+  const canonical = vegaCanonical(state);
+  if (el) el.dataset.state = canonical;
+  if (document.body) document.body.dataset.vega = canonical;
+  const label = vegaLabel(canonical);
+  if (els.presenceChip) {
+    els.presenceChip.dataset.state = canonical;
+    els.presenceChip.textContent = label;
+  }
+  const sentence = vegaPresenceSentence(canonical);
+  if (els.emptyPresence) {
+    els.emptyPresence.dataset.state = canonical;
+    els.emptyPresence.textContent = sentence;
+  }
+  if (canonical === "idle" || canonical === "offline") vegaLockUntil = 0;
+  if (window.OpsView && window.OpsView.notifyOrb) window.OpsView.notifyOrb(canonical);
+  if (canonical === "error") {
     clearTimer(orbErrorTimer);
     orbErrorTimer = setTimeout(() => {
       orbErrorTimer = null;
-      if (el.dataset.state === "error") setOrbState("idle");
+      if (els.orb && els.orb.dataset.state === "error") setOrbState("idle");
     }, 2600);
   }
+  return canonical;
+}
+
+/* Empurra um estado com precedência de transiente por um TTL. */
+function pushVegaState(state) {
+  const canonical = vegaCanonical(state);
+  const ttl = VEGA_TRANSIENT_TTL[canonical] || 0;
+  if (ttl > 0) vegaLockUntil = Math.max(vegaLockUntil, Date.now() + ttl);
+  return setOrbState(canonical);
+}
+
+/* Flash de sucesso após resposta completa (volta a idle se nada sobrepor). */
+let vegaSuccessTimer = null;
+function flashVegaSuccess() {
+  pushVegaState("success");
+  clearTimer(vegaSuccessTimer);
+  vegaSuccessTimer = setTimeout(() => {
+    vegaSuccessTimer = null;
+    if (els.orb && els.orb.dataset.state === "success") setOrbState("idle");
+  }, 900);
 }
 
 /* ---------- voz (Fase 6/6b) — Web Speech API, 100% no navegador ----------
@@ -262,7 +368,7 @@ function setListeningVisual(on) {
   els.voiceBtn.setAttribute("aria-label", on ? "Parar de falar" : "Falar com o Jarvis");
   els.voiceBtn.title = on ? "Parar" : "Falar";
   els.inputForm.classList.toggle("is-listening", on);
-  setOrbState(on ? "listening" : "idle");
+  pushVegaState(on ? "listening" : "idle");
 }
 
 function setWakeVisual(mode) {
@@ -563,7 +669,7 @@ function bindSpeakingState() {
   if (!speech) return;
   speech.onStateChange = (state) => {
     els.statusDot.classList.toggle("is-speaking", state === "speaking");
-    setOrbState(state === "speaking" ? "speaking" : listening ? "listening" : "idle");
+    pushVegaState(state === "speaking" ? "speaking" : listening ? "listening" : "idle");
     if (els.composerHint) {
       els.composerHint.classList.toggle("is-speaking-v", state === "speaking");
       if (state === "speaking" && !manualDictation && !handsFree) {
@@ -603,20 +709,31 @@ async function loadStatus() {
   }
 }
 
-/* ---------- presença (Fase 19.5) — estados REAIS da VEGA ----------
+/* ---------- presença (Fase 19.5/19.6) — estados REAIS da VEGA ----------
    Consome /api/vega/state (derivado de sinais reais no backend). Sem redes,
-   sem states fabricados: falha/ausência => mantém "offline" sem enganar. */
+   sem states fabricados: falha/ausência => mantém "offline" sem enganar.
+   O polling nunca atropela transientes locais (voz/chat/tools) — eles têm
+   precedência via vegaLockUntil; o estado real volta a valer após o TTL. */
 async function loadPresence() {
   try {
     const res = await fetch("/api/vega/state");
     if (!res.ok) {
-      els.agentState.textContent = "off-line";
+      pushVegaState("offline");
+      if (els.agentState) els.agentState.textContent = "off-line";
       return;
     }
     const p = await res.json();
-    els.agentState.textContent = p && (p.label || p.state) ? p.label : "off-line";
+    const canonical = window.VegaState ? window.VegaState.resolvePresence(p) : "idle";
+    const transientesAtivos = streaming || listening || (speech && speech.state === "speaking");
+    if (transientesAtivos || Date.now() < vegaLockUntil) {
+      if (els.agentState) els.agentState.textContent = vegaLabel(canonical);
+      return;
+    }
+    pushVegaState(canonical);
+    if (els.agentState) els.agentState.textContent = vegaLabel(canonical);
   } catch (_) {
-    els.agentState.textContent = "off-line";
+    pushVegaState("offline");
+    if (els.agentState) els.agentState.textContent = "off-line";
   }
 }
 
@@ -892,19 +1009,20 @@ function handleSSELine(line, bubbleEl) {
     bubbleEl.appendChild(span);
     completeToolFeed(bubbleEl);
     if (event.message?.content) speak(event.message.content);
-    setOrbState("idle");
+    flashVegaSuccess();
   } else if (event.type === "error") {
     content.textContent = event.detail || "Erro ao gerar resposta.";
     bubbleEl.classList.add("msg-error");
-    setOrbState("error");
+    pushVegaState("error");
   } else if (event.type === "approval_request") {
     renderApprovalCard(event.approval, bubbleEl);
+    pushVegaState("waiting_confirmation");
     scrollChatToBottom();
   } else if (event.type === "tool_start") {
-    setOrbState("executing");
+    pushVegaState("executing");
     showToolRunning(bubbleEl, event.names || []);
   } else if (event.type === "tool_done") {
-    setOrbState("thinking");
+    pushVegaState("thinking");
     markToolDone(bubbleEl, event.name, event);
   }
 }
@@ -1003,7 +1121,7 @@ async function sendMessage() {
   appendMessageDOM("user", content, formatTime(new Date().toISOString()));
   const assistant = appendMessageDOM("assistant", "");
   setTyping(true);
-  setOrbState("thinking");
+  pushVegaState("thinking");
 
   try {
     const res = await fetch(`/api/sessions/${currentSessionId}/messages`, {
@@ -1047,7 +1165,8 @@ async function sendMessage() {
     const field = els.inputForm.querySelector(".composer-field");
     if (field) field.classList.remove("is-sending");
     setTyping(false);
-    setOrbState("idle");
+    const falando = speech && speech.state === "speaking";
+    if (!listening && !falando) pushVegaState("idle");
     loadSessions();
     if (handsFree) scheduleWakeRearm();
   }
@@ -1097,6 +1216,8 @@ function init() {
   if (localStorage.getItem("jarvis.handsfree") === "1") toggleHandsFree();
   if ("speechSynthesis" in window) window.speechSynthesis.getVoices(); // pré-carrega vozes (Chrome)
   bindSpeakingState();
+  /* Bridge mínima p/ módulos externos (ops.js/remote.js) refletirem estado. */
+  window.VegaUI = { push: pushVegaState, setOrb: setOrbState, loadPresence };
   updateVoiceIndicators();
   if (speech) {
     speech.probeNeural().then(updateVoiceIndicators);

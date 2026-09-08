@@ -1,7 +1,7 @@
 /* =============================================================
-   JARVIS — Design Tokens (Identidade: "Arc · JARVIS")
-   Dark-first, circuito de safira e ciano. Bomba arc-reactor,
-   brilho azul, sem caos holográfico.
+   JARVIS — Design Tokens (Identidade: "VEGA · Diamond Core")
+   Dark-first, safira e ciano. Núcleo-diamante calmo: ângulos limpos,
+   anel único, brilho controlado apenas como linguagem de estado.
    ============================================================= */
 :root {
   /* ================================================================
@@ -162,6 +162,47 @@
   --bp-desktop: 901px;
   --bp-tablet: 900px;
   --bp-mobile: 640px;
+
+  /* ================================================================
+     VEGA DESIGN SYSTEM (Fase 19.6) — ADDITIVO, não remove os originais.
+     ================================================================ */
+
+  /* Tipografia de marca + escala de apoio */
+  --font-display: "Segoe UI", system-ui, -apple-system, "Inter", Roboto, Arial, sans-serif;
+  --text-micro: 0.625rem;
+  --text-caption: 0.6875rem;
+
+  /* Elevação (profundidade controlada, sem sombras pesadas) */
+  --elevation-1: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 2px 10px rgba(0, 0, 0, 0.35);
+  --elevation-2: 0 0 0 1px rgba(255, 255, 255, 0.03), 0 10px 34px rgba(0, 0, 0, 0.5);
+
+  /* Acentos de estado — linguagem de cor coerente com a paleta */
+  --vega-idle: #4d8dff;
+  --vega-think: #38b6ff;
+  --vega-work: #2fd0ff;
+  --vega-voice: #3aa8ff;
+  --vega-ok: #2fe6a5;
+  --vega-wait: #ffc25e;
+  --vega-warn: #ffb454;
+  --vega-err: #ff7a8f;
+  --vega-off: #55637a;
+
+  /* Brilhos suaves por estado (nunca neon em repouso) */
+  --vega-glow-idle: 0 0 0 1px rgba(77, 141, 255, 0.35), 0 0 22px rgba(77, 141, 255, 0.18);
+  --vega-glow-think: 0 0 0 1px rgba(56, 182, 255, 0.4), 0 0 26px rgba(56, 182, 255, 0.28);
+  --vega-glow-work: 0 0 0 1px rgba(47, 208, 255, 0.45), 0 0 30px rgba(47, 208, 255, 0.32);
+  --vega-glow-voice: 0 0 0 1px rgba(58, 168, 255, 0.45), 0 0 30px rgba(58, 168, 255, 0.3);
+  --vega-glow-ok: 0 0 0 1px rgba(47, 230, 165, 0.45), 0 0 28px rgba(47, 230, 165, 0.26);
+  --vega-glow-wait: 0 0 0 1px rgba(255, 194, 94, 0.5), 0 0 28px rgba(255, 194, 94, 0.26);
+  --vega-glow-err: 0 0 0 1px rgba(255, 122, 143, 0.5), 0 0 30px rgba(255, 122, 143, 0.3);
+
+  /* Superfície de destaque (hero da Central) */
+  --vega-hero: radial-gradient(130% 140% at 20% 0%, rgba(47, 208, 255, 0.1), transparent 42%),
+    radial-gradient(120% 130% at 85% 110%, rgba(77, 141, 255, 0.12), transparent 40%),
+    linear-gradient(180deg, #081120, #05080f);
+
+  /* Micro-interações */
+  --dur-micro: 90ms;
 }
 
 /* ================================================================

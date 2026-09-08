@@ -1,9 +1,9 @@
 /* =============================================================
    JARVIS — Service Worker (PWA local-first)
    Navegação sempre na rede (HTML sempre atual); estáticos cache-first;
-   API sempre na rede.
+   API sempre na rede. Identidade apresentada: VEGA.
    ============================================================= */
-const CACHE = "jarvis-v20";
+const CACHE = "vega-v22";
 const STATIC_ASSETS = [
   "./",
   "./index.html",
@@ -16,13 +16,14 @@ const STATIC_ASSETS = [
   "./css/tokens.css",
   "./css/base.css",
   "./css/layout.css",
-  "./css/components.css?v=19",
-  "./css/ops.css?v=19",
+  "./css/components.css?v=20",
+  "./css/ops.css?v=20",
   "./js/speech.js?v=13",
-  "./js/ops.js?v=18",
+  "./js/ops.js?v=19",
   "./js/markdown.js?v=15",
-  "./js/remote.js?v=18",
-  "./js/app.js?v=18",
+  "./js/remote.js?v=2",
+  "./js/vega-state.js?v=1",
+  "./js/app.js?v=19",
 ];
 
 self.addEventListener("install", (event) => {

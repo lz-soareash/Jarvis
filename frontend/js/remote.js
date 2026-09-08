@@ -169,13 +169,24 @@ const RemoteView = (() => {
       const res = await fetch("/api/remote/status");
       if (!res.ok) {
         setBadge("err", "offline");
-        if (els.empty) (els.empty.textContent = "Remote desabilitado (REMOTE_ENABLED=false) — configure o device para ver eventos.");
+        if (els.empty)
+          els.empty.textContent =
+            "Remote desabilitado — a VEGA está somente local. Configure um device para habilitar o acesso remoto.";
         return;
       }
       const st = await res.json();
       els.device.textContent = st.device_id ? esc(st.device_id.slice(0, 8)) : "—";
-      els.conn.textContent = st.connection_state || "—";
-      els.mode.textContent = st.enabled ? "HABILITADO" : "DESABILITADO";
+      const connLabel = {
+        connected: "conectado",
+        connecting: "conectando",
+        disconnected: "desconectado",
+      }[st.connection_state] || st.connection_state || "—";
+      els.conn.textContent = connLabel;
+      els.mode.textContent = st.enabled
+        ? st.connection_state === "connected"
+          ? "VEGA REMOTA"
+          : "VEGA REMOTA (conectando)"
+        : "VEGA SOMENTE LOCAL";
     } catch (_) {
       setBadge("err", "erro");
     }
