@@ -74,6 +74,7 @@ def _ensure_schema() -> None:
 
     _ensure_memories_schema()
     _ensure_remote_commands_schema()
+    _ensure_device_bridge_schema()
 
 
 def _ensure_memories_schema() -> None:
@@ -121,6 +122,34 @@ def _ensure_remote_commands_schema() -> None:
                     "ON remote_commands(approval_id)"
                 )
             )
+            conn.commit()
+    except Exception:  # pragma: no cover — estados sem suporte não bloqueiam
+        pass
+
+
+def _ensure_device_bridge_schema() -> None:
+    """Fase 21 — colunas aditivas do Device Bridge em `remote_devices`.
+
+    `platform`/`client_version`/`capabilities_json` nascem junto com o modelo
+    nas bases novas; nas bases legadas entram via ALTER idempotente (PRAGMA +
+    ADD COLUMN). Nada é destrutivo; falhas não bloqueiam o boot (best-effort).
+    """
+    additions = {
+        "platform": "VARCHAR(20) DEFAULT 'web'",
+        "client_version": "VARCHAR(40)",
+        "capabilities_json": "TEXT",
+    }
+    try:
+        with engine.connect() as conn:
+            cols = {
+                row[1]
+                for row in conn.execute(text("PRAGMA table_info(remote_devices)")).fetchall()
+            }
+            for name, ddl in additions.items():
+                if name not in cols:
+                    conn.execute(
+                        text(f"ALTER TABLE remote_devices ADD COLUMN {name} {ddl}")
+                    )
             conn.commit()
     except Exception:  # pragma: no cover — estados sem suporte não bloqueiam
         pass

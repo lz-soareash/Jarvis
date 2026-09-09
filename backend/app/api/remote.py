@@ -19,11 +19,19 @@ from app.db.session import get_db
 from app.remote.auth import RemoteAuthError, authenticate_bearer
 from app.remote.credentials import CredentialLimitError, list_credentials, revoke_credential
 from app.remote.devices import (
+    DeviceInvalid,
+    DeviceLimitExceeded,
+    heartbeat,
     list_devices,
     load_meta,
+    register_device,
+    register_device_bridge_events,
+    rename_device,
     revoke_device,
+    update_capabilities,
 )
 from app.remote.errors import RemoteError, RemoteErrorCode
+from app.remote.jarvis_session import get_or_create_jarvis_session
 from app.remote.limits import check_auth_rate
 from app.remote.pairing import (
     PairingError,
@@ -39,8 +47,15 @@ from app.schemas.remote import (
     AuthIn,
     AuthOut,
     CredentialOut,
+    DeviceCapabilitiesIn,
+    DeviceInfoOut,
     DeviceOut,
+    DeviceRegisterIn,
+    DeviceRegisterOut,
+    DeviceRenameIn,
     Empty,
+    HeartbeatIn,
+    HeartbeatOut,
     PairingCreateOut,
     PairingOut,
     PairingSubmitIn,
@@ -57,6 +72,13 @@ router = APIRouter(prefix="/api", tags=["remote"])
 def _require_remote() -> None:
     if not settings.remote_enabled:
         raise HTTPException(status_code=503, detail="Remote desabilitado (REMOTE_ENABLED=false)")
+
+
+def _require_devices() -> None:
+    """Fase 21 — Device Bridge: exige transporte remoto (mestre) + device_enabled."""
+    _require_remote()
+    if not settings.device_enabled:
+        raise HTTPException(status_code=503, detail="Device Bridge desabilitado (DEVICE_ENABLED=false)")
 
 
 def _pairing_error_to_status(exc: PairingError) -> HTTPException:
@@ -141,6 +163,10 @@ def remote_submit_pairing(
             device_type=body.device_type,
             pairing_id=body.pairing_id,
             metadata=body.metadata,
+            pending_device_id=body.pending_device_id,
+            platform=body.platform,
+            client_version=body.client_version,
+            capabilities=body.capabilities,
         )
     except PairingError as exc:
         raise _pairing_error_to_status(exc) from exc
@@ -163,6 +189,170 @@ def remote_revoke_device(device_id: str, db: OrmSession = Depends(get_db)) -> De
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return DeviceOut(**device_out(device))
+
+
+# ---------------------------------------------------------------------------
+# Fase 21 — Device Bridge (identidade/estado de clientes finos). Nenhuma rota
+# duplica `/api/mobile/*` ou `/api/desktop/*`: tudo vive em `/api/remote/*`.
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/remote/devices/register",
+    response_model=DeviceRegisterOut,
+    status_code=201,
+)
+def remote_register_device(
+    body: DeviceRegisterIn, db: OrmSession = Depends(get_db)
+) -> DeviceRegisterOut:
+    """Fase 21 — REGISTER DEVICE: cria device PENDING (sem segredo, id do servidor).
+
+    O device fica VISÍVEL na lista e aguarda o pareamento por código (PAIRING).
+    Um device PENDING nunca autentica; é promovido a confiável apenas quando o
+    código certo for submetido com `pending_device_id`.
+    """
+    _require_devices()
+    try:
+        device = register_device(
+            db,
+            name=body.name,
+            device_type=body.device_type,
+            platform=body.platform,
+            client_version=body.client_version,
+            capabilities=body.capabilities,
+            metadata=body.metadata,
+        )
+    except (DeviceInvalid, DeviceLimitExceeded) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    register_device_bridge_events(device)
+    return DeviceRegisterOut(device=DeviceOut(**device_out(device)))
+
+
+@router.post("/remote/devices/{device_id}/rename", response_model=DeviceOut)
+def remote_rename_device(
+    device_id: str, body: DeviceRenameIn, db: OrmSession = Depends(get_db)
+) -> DeviceOut:
+    _require_devices()
+    try:
+        device = rename_device(db, device_id, body.name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DeviceInvalid as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return DeviceOut(**device_out(device))
+
+
+@router.post("/remote/devices/{device_id}/capabilities", response_model=DeviceOut)
+def remote_update_capabilities(
+    device_id: str, body: DeviceCapabilitiesIn, db: OrmSession = Depends(get_db)
+) -> DeviceOut:
+    """Fase 21 — cliente reporta plataforma/versão/capacidades (sanitizado).
+
+    NUNCA altera permissões, autonomia nem o estado de confiança do device.
+    """
+    _require_devices()
+    try:
+        device = update_capabilities(
+            db,
+            device_id,
+            platform=body.platform,
+            client_version=body.client_version,
+            capabilities=body.capabilities,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return DeviceOut(**device_out(device))
+
+
+@router.get("/remote/devices/{device_id}/info", response_model=DeviceInfoOut)
+def remote_device_info(
+    device_id: str, db: OrmSession = Depends(get_db)
+) -> DeviceInfoOut:
+    """Fase 21 — status completo de um device (device + sessão + conexão)."""
+    _require_devices()
+    from app.models.remote import Device
+    from app.remote.sessions import list_sessions
+
+    device = db.get(Device, device_id)
+    if device is None:
+        raise HTTPException(status_code=404, detail=f"device não encontrado: {device_id}")
+    open_sessions = list_sessions(db, device_id=device_id, active_only=True)
+    first = open_sessions[0] if open_sessions else None
+    return DeviceInfoOut(
+        device=DeviceOut(**device_out(device)),
+        session=(
+            {
+                "session_id": first.id,
+                "status": first.status,
+                "created_at": first.created_at,
+                "last_seen_at": first.last_seen_at,
+            }
+            if first
+            else None
+        ),
+        connected=bool(open_sessions),
+    )
+
+
+@router.post("/remote/heartbeat", response_model=HeartbeatOut)
+def remote_heartbeat(
+    body: HeartbeatIn,
+    request: Request,
+    db: OrmSession = Depends(get_db),
+) -> HeartbeatOut:
+    """Fase 21 — CONNECTION LAYER: batida de vida do cliente cio.
+
+    Autentica o device (mesmo contrato Bearer), valida a sessão remota, atualiza
+    identidade reportada (se houver) e propaga `device.connected/reconnected/
+    disconnected` conforme `body.event`. Devolve a âncora de conversa para o
+    cliente fino. Nunca expõe secrets.
+    """
+    _require_devices()
+    origin = request.client.host if request.client else None
+    check_auth_rate(origin)
+    try:
+        authed = authenticate_bearer(
+            db,
+            body.token,
+            transport_meta=body.transport_meta or {"http": True},
+            claimed_device_id=body.claimed_device_id,
+        )
+    except (RemoteAuthError, CredentialLimitError) as exc:
+        raise RemoteError(
+            RemoteErrorCode.UNAUTHORIZED, "autenticação necessária", detail="auth failed"
+        ) from exc
+
+    if body.platform or body.client_version or body.capabilities is not None:
+        update_capabilities(
+            db,
+            authed.device.id,
+            platform=body.platform,
+            client_version=body.client_version,
+            capabilities=body.capabilities,
+        )
+
+    from app.remote.sessions import ensure_session_valid
+
+    ensure_session_valid(db, authed.session)
+
+    event = (body.event or "heartbeat").strip().lower() or "heartbeat"
+    allowed_events = {"connect", "reconnect", "heartbeat", "disconnect"}
+    if event not in allowed_events:
+        event = "heartbeat"
+    heartbeat(
+        db,
+        device=authed.device,
+        event=event,
+        transport_meta=body.transport_meta,
+    )
+    conversation_id = get_or_create_jarvis_session(db, authed.device)
+    return HeartbeatOut(
+        device_id=authed.device.id,
+        status=authed.device.status,
+        connected=event != "disconnect",
+        conversation_id=conversation_id,
+        heartbeat_seconds=settings.device_heartbeat_seconds,
+        reconnect_enabled=bool(settings.device_reconnect_enabled),
+    )
 
 
 @router.get("/remote/credentials", response_model=list[CredentialOut])
@@ -286,6 +476,7 @@ def remote_authenticate(
         device=DeviceOut(**device_out(authed.device)),
         session_id=authed.session_id,
         credential_id=authed.credential.id,
+        conversation_id=get_or_create_jarvis_session(db, authed.device),
     )
 
 
@@ -349,6 +540,7 @@ async def remote_message(
             tools=body.tools,
             ctx=ctx,
             requested=provider,
+            session_id=body.session_id,
         )
     except RemoteMessageError as exc:
         raise RemoteError(
@@ -373,6 +565,11 @@ def device_out(device) -> dict:
         "last_seen_at": device.last_seen_at,
         "revoked_at": device.revoked_at,
         "metadata": load_meta(device.metadata_json),
+        # Fase 21 — identity do Device Bridge (sanitizada; nunca ID/serial de HW).
+        "platform": getattr(device, "platform", "web"),
+        "client_version": getattr(device, "client_version", None),
+        "capabilities": device.capabilities if hasattr(device, "capabilities") else [],
+        "conversation_id": getattr(device, "jarvis_session_id", None),
     }
 
 

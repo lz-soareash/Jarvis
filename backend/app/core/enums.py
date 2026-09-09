@@ -101,11 +101,20 @@ class DeviceType(str, Enum):
 
 
 class DeviceStatus(str, Enum):
-    """Fase 12.2 — ciclo de vida de um device remoto (identidade)."""
+    """Fase 12.2 + 21 — ciclo de vida de um device remoto (identidade).
 
-    PENDING = "pending"  # criado mas ainda não liberado para conexões
-    ACTIVE = "active"  # pode autenticar (pairing bem-sucedido / bootstrap)
+    Estados de confiança (Device Trust): `PENDING` (registrado, aguardando
+    pareamento) → `PAIRED` (credencial emitida) → `ACTIVE` (em uso); revogações
+    vão para `REVOKED`; `EXPIRED` cobre sessões/credenciais vencidas. `PAIRED` e
+    `ACTIVE` são confiáveis para autenticar (`trusted_statuses`); incrementos
+    são aditivos — bases antigas com apenas `PENDING/ACTIVE/REVOKED` seguem válidas.
+    """
+
+    PENDING = "pending"  # registrado mas ainda não pareado (aguarda código)
+    PAIRED = "paired"  # pareado (credencial emitida) — confiável
+    ACTIVE = "active"  # em uso ativo — confiável (pairing bem-sucedido / bootstrap)
     REVOKED = "revoked"  # revogado — credenciais e sessões são invalidadas
+    EXPIRED = "expired"  # credencial/sessão expirou (dispositivo desatualizado)
 
 
 class PairingStatus(str, Enum):

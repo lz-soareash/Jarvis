@@ -20,6 +20,11 @@ class DeviceOut(APIModel):
     last_seen_at: datetime | None = None
     revoked_at: datetime | None = None
     metadata: dict[str, Any] | None = None
+    # Fase 21 — homólogos do Device Bridge (sanitizados; nunca identidade de HW).
+    platform: str = "web"
+    client_version: str | None = None
+    capabilities: list[str] = []
+    conversation_id: str | None = None  # jarvis_session_id (alvo de continuidade)
 
 
 class CredentialOut(APIModel):
@@ -58,6 +63,80 @@ class PairingSubmitIn(APIModel):
     device_type: str = "desktop"
     pairing_id: str | None = None
     metadata: dict[str, Any] | None = None
+    # Fase 21 — identidade de cliente fino declarada no pareamento (sanitizada,
+    # jamais usada p/ elevar permissões). `pending_device_id` ancora o registro
+    # PENDING criado antes (id emitido pelo servidor) em vez de criar outro.
+    pending_device_id: str | None = None
+    platform: str = "web"
+    client_version: str | None = None
+    capabilities: list[str] = []
+
+
+class DeviceRegisterIn(APIModel):
+    """Fase 21 — registro visível de um dispositivo (status PENDING, sem segredo)."""
+
+    name: str
+    device_type: str = "desktop"
+    platform: str = "web"
+    client_version: str | None = None
+    capabilities: list[str] = []
+    metadata: dict[str, Any] | None = None
+
+
+class DeviceRegisterOut(APIModel):
+    """Resposta do registro: devolve o device PENDING (id emitido pelo servidor)."""
+
+    device: DeviceOut
+    status: str = "pending"  # liberado p/ autenticar SOMENTE após o pareamento
+    pairing_hint: str = "pareie pelo código exibido no Core (POST /api/remote/pairings)"
+
+
+class DeviceRenameIn(APIModel):
+    name: str
+
+
+class DeviceCapabilitiesIn(APIModel):
+    """Atualização de identidade do cliente (Fase 21) — sanitizada pelo serviço."""
+
+    platform: str | None = None
+    client_version: str | None = None
+    capabilities: list[str] | None = None
+
+
+class DeviceInfoOut(APIModel):
+    """Status completo de um device + sessão/conversa ancorada (Fase 21)."""
+
+    device: DeviceOut
+    session: dict[str, Any] | None = None  # RemoteSession sanitizada (sem secrets)
+    connected: bool = False
+
+
+class HeartbeatIn(APIModel):
+    """Fase 21 — batida de vida do cliente (token no body, como o /auth)."""
+
+    token: str
+    event: str = "heartbeat"  # connect | reconnect | heartbeat | disconnect
+    claimed_device_id: str | None = None
+    transport_meta: dict[str, Any] | None = None
+    platform: str | None = None
+    client_version: str | None = None
+    capabilities: list[str] | None = None
+
+
+class HeartbeatOut(APIModel):
+    """Resposta da batida: estado derivado + âncora de conversa para offline.
+
+    `conversation_id` permite ao cliente fino reentrar na conversa do device
+    (session sharing) após reconnect. Nunca expõe secrets.
+    """
+
+    ok: bool = True
+    device_id: str
+    status: str
+    connected: bool
+    conversation_id: str | None = None
+    heartbeat_seconds: int = 30
+    reconnect_enabled: bool = True
 
 
 class PairingSubmitOut(APIModel):
@@ -79,6 +158,8 @@ class AuthOut(APIModel):
     device: DeviceOut
     session_id: str
     credential_id: str
+    # Fase 21 — âncora da conversa do device (session sharing/continuação).
+    conversation_id: str | None = None
 
 
 class RemoteMessageIn(APIModel):
@@ -87,6 +168,11 @@ class RemoteMessageIn(APIModel):
     Usa o MESMO modelo de autenticação do `/remote/auth` (token no corpo,
     transport-meta opcional) para não duplicar contratos. O `request_id` vai no
     header `X-Request-ID` — nunca no corpo — e é ecoado na resposta.
+
+    `session_id` (Fase 21): alvo de session sharing — quando informado, cai na
+    conversa JARVIS de um device confiável (continuação entre dispositivos);
+    sem ele, usa a sessão estável do próprio device. O contexto é sempre o do
+    Core; o cliente fino nunca recebe memória/cópia.
     """
 
     token: str
@@ -95,6 +181,7 @@ class RemoteMessageIn(APIModel):
     tools: bool = True  # tools autorizadas respeitam o Permission Engine existente
     claimed_device_id: str | None = None
     transport_meta: dict[str, Any] | None = None
+    session_id: str | None = None
 
 
 class RemoteStatusOut(APIModel):

@@ -56,7 +56,9 @@ Implementações: `GeminiProvider`, `LocalLLMProvider` (local, via llama.cpp) e
 | Persistência | SQLAlchemy 2.x + SQLite (migrável para PostgreSQL trocando a URL) |
 | IA | google-genai (Gemini) |
 | Frontend | HTML + CSS + JS Vanilla (PWA: manifest + service worker) + Web Speech API (voz local) |
-| Testes | pytest (+ pytest-asyncio, TestClient) |
+| Desktop (Fase 21) | Electron 31 (Node 24) — cliente fino `VEGA.exe` |
+| Mobile (Fase 21) | Kotlin 1.9 + Jetpack Compose + AGP 8.4 — cliente fino `app-debug.apk` |
+| Testes | pytest (+ pytest-asyncio, TestClient), node:test (bridge desktop) |
 
 Sem Docker/Redis/Celery nesta fase (não há necessidade real ainda).
 
@@ -66,6 +68,8 @@ Sem Docker/Redis/Celery nesta fase (não há necessidade real ainda).
 frontend/                  # interface concha: HTML + CSS + JS Vanilla + PWA
 └── (index.html, sw.js, manifest.webmanifest, css/, js/, icons/)
     # js/ops.js + css/ops.css: Central de Operações (aba do SPA) — Fase 11
+desktop/                   # VEGA Desktop — cliente fino Electron (bridge.js testável) → VEGA.exe
+android/                   # VEGA Mobile — cliente fino Kotlin + Jetpack Compose (VegaBridge.kt) → APK
 backend/
 ├── app/
 │   ├── ai/
@@ -436,6 +440,14 @@ Core como nova capacidade `kind="research"` e exposta por tools `web_search`/`we
 | `GET /api/research/{run_id}/sources` | fontes reais usadas na síntese |
 | `POST /api/research/{run_id}/knowledge/promote` | promove candidatos ao conhecimento (política `ATLAS_WRITE_MODE`)
 | `GET /api/remote/events` | SSE de eventos remotos ao vivo + replay recente (identidade, conexão, comandos) — Fase 12.5 |
+| `GET /api/remote/devices` | lista devices do Device Bridge (identidade/estado; exige `REMOTE_ENABLED=true`) — Fase 21 |
+| `POST /api/remote/devices/register` | registra um device **PENDING** (id emitido pelo Core) para clientes finos — Fase 21 |
+| `GET /api/remote/devices/{id}/info` | info sanitizada de um device — Fase 21 |
+| `POST /api/remote/devices/{id}/rename` | renomeia um device (auditado) — Fase 21 |
+| `POST /api/remote/devices/{id}/capabilities` | capabilities ativas de um device — Fase 21 |
+| `POST /api/remote/devices/{id}/revoke` | revoga um device (estado + credenciais + sessões) — Fase 21 |
+| `POST /api/remote/pairings/validate` | ancora um device PENDING com o código de emparelhamento (cria credencial + sessão) — Fase 21 |
+| `POST /api/remote/heartbeat` | heartbeat dos clientes finos (`token` no corpo) — connect/reconnect/heartbeat/disconnect — Fase 21 |
 | `GET /api/proactive/status` | estado sanitizado da camada proativa (flags + contagens) — Fase 17 |
 | `GET /api/proactive/schedules` | lista os schedules proativos persistentes — Fase 17 |
 | `POST /api/proactive/schedules` | cria um schedule (one-shot/interval/cron), auditado — Fase 17 |
@@ -481,7 +493,11 @@ de events/policy/scheduler/delivery/segurança/API/SSE), a **Fase 18** (Computer
 Layer), a **Fase 19** (Computer Use Agent & Identity) e a **Fase 19.5** (VEGA Identity,
 Memory & Experience) — **744 no total**. A **Fase 20 (V1)** adiciona 19 testes de
 integração e estabilização → **763 no total**. Os testes frontend da **Fase 19.6** (mapa de
-estados VEGA, `frontend/tests/vega-state.test.mjs`) somam **7 certificados**. Os
+estados VEGA, `frontend/tests/vega-state.test.mjs`) somam **7 certificados**. A **Fase 21
+(VEGA Multiplatform — Device Bridge)** adiciona **53 testes herméticos**
+(`tests/test_fase21_devices.py`) + E2E isolado com banco real em arquivo
+(register→pair→heartbeat→rename→info→list→claim→disconnect→**reboot**, `ALL_OK`) + **6 testes
+Node** do bridge desktop (`desktop/bridge.test.mjs`) → backend **816 passed, 1 skipped**. Os
 `dev_*` usam `asyncio.run` (compatíveis com o
 Python 3.14, sem depender de event loop pré-existente). Os testes são herméticos: forçam
 `ENV=test`, `GEMINI_API_KEY=""`, `DATABASE_URL=sqlite:///:memory:`,
@@ -1007,6 +1023,45 @@ Central de Operações: timeline alimentada pelos eventos `computer.*` persistid
   fine-grained reais (`perceiving/planning/executing/observing/verifying/recovering`)
   alinhados ao vocabulário único de 16 estados do frontend.
 
+## VEGA Desktop & Mobile — Device Bridge (Fase 21)
+
+**UMA IA, MÚLTIPLOS CLIENTES.** A VEGA Desktop (Electron) e a VEGA Mobile (Kotlin/Compose)
+são **clientes finos** do mesmo Core — sem segundo AI Core, Memória, Permissões ou Tools
+próprios. Elas apenas **REGISTER** (identidade `PENDING` com `id` emitido pelo servidor) →
+**PAIRING** (ancora o registro pendente via código de emparelhamento) → **HEARTBEAT** sobre
+`/api/remote/*`.
+
+- **Backend (Device Bridge)** (`app/remote/devices.py|pairing.py|message.py|auth.py|
+  sessions.py|events.py|identity_events.py` + schemas/modelos): `device_id` é sempre
+  **server-issued** (nunca escolhido pelo cliente); tokens/pair-codes guardados só como hash
+  `sha256:`; `PENDING`/`REVOKED` **nunca autenticam**; capabilities normalizadas com
+  allow-list (junk rejeitado); `claimed_device_id` é **validado** — claim de outro device →
+  401 (anti-phishing); auditoria/ops sanitizados.
+- **Gate mestre preservado**: `REMOTE_ENABLED=false` (padrão) → 503 em tudo; o Device Bridge é
+  uma subcamada de identidade/estado que **nunca executa tools**, não concede permissões e não
+  duplica o AI Core (mensagens continuam na `POST /api/remote/message` — Fase 16). Card
+  **DEVICES** na Central de Operações (`ops-devices`, Integrações).
+- **Desktop** (`desktop/`): Electron 31; `bridge.js` é módulo Node **puro e testável** (0
+  dependências de Electron) — `DeviceBridge` com boot/pair/heartbeat
+  (connect/reconnect/disconnect) + retry com backoff + store injetável; `main.js` abre a janela
+  para `CORE_URL` (padrão `http://127.0.0.1:8100`), tray com ícone PNG gerado em memória e
+  single-instance. Testes `desktop/bridge.test.mjs` (**6/6**) contra mock HTTP. Build Windows:
+  `npm run dist:win` → `desktop/dist/VEGA-win32-x64/VEGA.exe` (~172 MB).
+- **Mobile** (`android/`): Kotlin + Jetpack Compose (AGP 8.4.2, Kotlin 1.9, minSdk 26,
+  targetSdk 34); `VegaBridge.kt` **espelha** `bridge.js` (mesmo contrato de API via
+  `HttpURLConnection`, sem Gson/Retrofit); `MainActivity.kt` Compose com status/pareamento/
+  disconnect; `DEFAULT_CORE_URL` = `http://10.0.2.2:8100` (emulador → host). Build:
+  `gradle assembleDebug` → `android/app/build/outputs/apk/debug/app-debug.apk` (exige JDK 17 +
+  Android SDK `platforms;android-34`; veja `local.properties`).
+- **Config** (`.env.example`): `DEVICE_ENABLED=true`, `DEVICE_MAX_DEVICES=20`,
+  `DEVICE_HEARTBEAT_SECONDS=30`, `DEVICE_RECONNECT_ENABLED=true`, `DEVICE_MAX_PENDING=50`.
+- **Validação**: 53 testes herméticos novos + E2E isolado com banco sqlite real em arquivo e
+  **segundo boot** confirmando **migração idempotente** e persistência do pareamento — `ALL_OK`.
+- **Migração idempotente**: `_ensure_device_bridge_schema` re-aplica sem erro em bancos já
+  migrados (validado no E2E).
+- **Não versionados** (gerados localmente, fora do git): `desktop/dist/` (EXE),
+  `android/**/build/` (APK), `android/local.properties`, `.gradle/`.
+
 ## Roadmap (resumo)
 
 0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·
@@ -1128,21 +1183,32 @@ sincronizado); retomada por `task_id` pós-`waiting_confirmation`; teto in-turn;
 nunca elevando autonomia (tool só aceita `goal`/`task_id`); timeline da Central alimentada
 pelos eventos `computer.*` reais persistidos; 19 testes herméticos novos —
 763 testes verdes) ·
-21. V2 — Multi-turn Agentic Context (planejado): memória do turno (agenda de passos e
+21. VEGA Multiplatform — Device Bridge ✔ (Fase 21 COMPLETA: clientes finos Desktop — Electron →
+`VEGA.exe`, `bridge.js` Node puro testável 6/6 — e Mobile — Kotlin + Jetpack Compose →
+`app-debug.apk`, `VegaBridge.kt` espelhando o mesmo contrato — sobre o MESMO Core; **UMA IA,
+MÚLTIPLOS CLIENTES** sem segundo AI Core/Memória/Permissões/Tools; Device Bridge no backend:
+`device_id` SERVER-ISSUED, tokens/pair-codes só hash `sha256:`, PENDING/REVOKED nunca
+autenticam, capabilities normalizadas com allow-list, `claimed_device_id` validado
+(claim alheio → 401), gate mestre `REMOTE_ENABLED` preservado (503), endpoints
+`/api/remote/devices/register`, `/api/remote/pairings/validate`, `/api/remote/devices`
+(info/rename/capabilities/revoke), `/api/remote/heartbeat` (`token` no corpo); card DEVICES na
+Central de Operações; migração idempotente; 53 testes herméticos novos + E2E isolado ALL_OK com
+segundo boot — backend 816 passed, 1 skipped) ·
+22. V2 — Multi-turn Agentic Context (planejado): memória do turno (agenda de passos e
 justificativas) + contexto inter-turno persistente para tarefas longas ·
-22. V3 — Computer Use mais profundo (planejado): gestão de janelas, drag/scroll contínuo,
+23. V3 — Computer Use mais profundo (planejado): gestão de janelas, drag/scroll contínuo,
 uso de atalhos seguros e tolerância a layout (por via segura e confirmada) ·
-23. V4 — Planejamento hierárquico (planejado): tasks decomponíveis com dependências,
+24. V4 — Planejamento hierárquico (planejado): tasks decomponíveis com dependências,
 paralelismo controlado e view de progresso na Central de Operações ·
-24. V5 — Proativo contextual (planejado): silêncio ativo, monitoramento de estados
+25. V5 — Proativo contextual (planejado): silêncio ativo, monitoramento de estados
 (janela/carga/agenda) e sugestões com confirmação explícita ·
-25. V6 — Pesquisa agêntica (planejado): research multi-iteração com síntese em
+26. V6 — Pesquisa agêntica (planejado): research multi-iteração com síntese em
 conhecimento persistente e fontes citáveis ·
-26. V7 — Voz agêntica (planejado): TTS proativo de estados/resultados e comando
+27. V7 — Voz agêntica (planejado): TTS proativo de estados/resultados e comando
 hands-free com confirmação auditiva ·
-27. V8 — Perfil do usuário (planejado): memória de preferências com consentimento,
+28. V8 — Perfil do usuário (planejado): memória de preferências com consentimento,
 estilos de interação e affordances por dispositivo ·
-28. V9 — Autonomia governada (planejado): políticas por tarefa/domínio, revisão de
+29. V9 — Autonomia governada (planejado): políticas por tarefa/domínio, revisão de
 decisões passadas e auditoria de confiança, sempre com supervisão humana.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

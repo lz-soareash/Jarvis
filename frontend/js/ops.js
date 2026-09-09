@@ -33,6 +33,8 @@ const OpsView = (() => {
     computerBody: document.getElementById("ops-computer-body"),
     computerAgentBody: document.getElementById("ops-computer-agent-body"),
     identityBody: document.getElementById("ops-identity-body"),
+    devicesCard: document.getElementById("ops-devices"),
+    devicesBody: document.getElementById("ops-devices-body"),
     eventsBody: document.getElementById("ops-events-body"),
   };
 
@@ -383,6 +385,28 @@ const OpsView = (() => {
     `;
   }
 
+  function renderDevices(devices) {
+    if (!els.devicesBody) return;
+    if (!devices) return;
+    const byStatus = Object.entries(devices.by_status || {})
+      .map(([k, v]) => `<span class="ops-chip">${esc(k)}: <b>${v}</b></span>`)
+      .join("");
+    const byPlat = Object.entries(devices.by_platform || {})
+      .map(([k, v]) => `<span class="ops-chip">${esc(k)}: <b>${v}</b></span>`)
+      .join("");
+    const enabled = devices.enabled ? "habilitado" : "desabilitado";
+    els.devicesBody.innerHTML = `
+      <div class="ops-row"><span>Bridge</span><b>${enabled}</b></div>
+      <div class="ops-row"><span>Dispositivos (total / confiáveis)</span><b>${devices.total ?? 0} / ${devices.trusted ?? 0} (teto ${devices.max_devices ?? "—"})</b></div>
+      <div class="ops-row"><span>Heartbeat</span><b>${devices.heartbeat_seconds ?? "—"}s · reconexão ${devices.reconnect_enabled ? "ativa" : "off"}</b></div>
+      <div class="ops-row"><span>Por estado</span></div>
+      <div class="ops-chips">${byStatus || '<span class="ops-muted">—</span>'}</div>
+      <div class="ops-row"><span>Por plataforma</span></div>
+      <div class="ops-chips">${byPlat || '<span class="ops-muted">—</span>'}</div>
+      ${devices.detail ? `<div class="ops-muted ops-note">${esc(devices.detail)}</div>` : ""}
+    `;
+  }
+
   function renderEvents(events) {
     if (!els.eventsBody) return;
     if (!events || !events.length) {
@@ -492,6 +516,7 @@ const OpsView = (() => {
       renderComputerAgent(data.computer_agent);
       renderComputerTimeline(data.computer_agent, data.recent_events);
       renderIdentity(data.identity);
+      renderDevices(data.devices);
       renderEvents(data.recent_events);
       // Fase 19.6 — atividade real do Computer Agent reflete no orb quando a Central
       // está aberta (via VegaUI; nunca inventa estado).

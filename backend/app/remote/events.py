@@ -22,6 +22,7 @@ import asyncio
 import logging
 import queue as _queue
 import threading
+import uuid
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any
@@ -43,8 +44,14 @@ class RemoteEventBroker:
     # -- producers -----------------------------------------------------------
 
     def publish(self, event_type: str, data: dict[str, Any] | None = None) -> None:
-        """Publica um evento sanitizado a todos os assinantes (nunca lança)."""
+        """Publica um evento sanitizado a todos os assinantes (nunca lança).
+
+        Cada entrada carrega `event_id` (Fase 21): identificador estável que os
+        clientes usam para dedup em reconexões (mesmo evento pode chegar via
+        replay e via fila viva).
+        """
         entry = {
+            "event_id": str(uuid.uuid4()),
             "type": event_type,
             "at": datetime.now(timezone.utc).isoformat(),
             "data": _sanitize(data or {}),
@@ -111,6 +118,30 @@ def _sanitize(data: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def dedupe_events(
+    entries: list[dict[str, Any]], max_seen: int = 500
+) -> tuple[list[dict[str, Any]], set[str]]:
+    """Fase 21 — dedup por `event_id` (utilizado pelos clientes em reconexões).
+
+    Preserva a ordem de chegada e não considera `data` (pode divergir entre o
+    replay e a fila viva sem invalidar o identificador). Retorna (únicos,
+    event_ids vistos) para alimentar o estado incremental do cliente.
+    """
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for entry in entries:
+        event_id = (entry or {}).get("event_id")
+        if not event_id or not isinstance(event_id, str):
+            continue
+        if event_id in seen:
+            continue
+        if len(seen) >= max_seen:  # proteção: nunca crescer sem limite
+            break
+        seen.add(event_id)
+        unique.append(entry)
+    return unique, seen
+
+
 async def consume_broker(
     broker: RemoteEventBroker,
     *,
@@ -132,7 +163,12 @@ async def consume_broker(
             yield entry
             sent += 1
         if ready_event_type is not None:
-            ready = {"type": ready_event_type, "data": {"ready": True}}
+            ready = {
+                "event_id": str(uuid.uuid4()),
+                "type": ready_event_type,
+                "at": datetime.now(timezone.utc).isoformat(),
+                "data": {"ready": True},
+            }
             if limit is None or sent < limit:
                 yield ready
                 sent += 1

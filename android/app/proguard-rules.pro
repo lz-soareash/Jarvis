@@ -1,0 +1,1 @@
+# Sem regras especiais: minificação desligada no release de referência.

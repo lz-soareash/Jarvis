@@ -63,9 +63,21 @@ class Device(Base):
         DateTime(timezone=True), nullable=True
     )
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Fase 21 — Device Bridge (clientes finos multiplataforma).
+    # Identidade de hardware/software do cliente: `platform` (desktop/mobile/web…),
+    # `client_version` (versão do app cliente) e `capabilities_json` (lista
+    # sanitizada de capacidades declaradas: chat/control/notifications/tts…).
+    # São metadados fornecidos pelo cliente no registro/pareamento — nunca usados
+    # p/ elevar permissões nem para fingerprint (nunca MAC/serial/ID do hardware).
+    platform: Mapped[str] = mapped_column(String(20), default="web", index=True)
+    client_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    capabilities_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Sessão JARVIS (tabela `sessions`) dedicada a este device remoto (Fase 12.3).
     # Usada como alvo dos `ApprovalRequest` (FK obrigatória para `sessions.id`)
     # e p/ auditoria de comandos remotos. Estável por device, não por conexão.
+    # A partir da Fase 21, `jarvis_session_id` também é o alvo/âncora da
+    # "session sharing": mensagens com `session_id` explícito são roteadas para a
+    # sessão JARVIS de um device confiável (continuação entre dispositivos).
     jarvis_session_id: Mapped[str | None] = mapped_column(
         String(36), nullable=True, index=True
     )
@@ -84,6 +96,24 @@ class Device(Base):
     @property
     def is_active(self) -> bool:
         return self.status == DeviceStatus.ACTIVE.value
+
+    @property
+    def is_trusted(self) -> bool:
+        """Fase 21 — estados de confiança (Device Trust): PAIRED/ACTIVE.
+
+        `PAIRED` e `ACTIVE` podem autenticar; `PENDING/REVOKED/EXPIRED` não.
+        Mantém a semântica antiga (`ACTIVE` continua confiável, como sempre foi).
+        """
+        return self.status in (DeviceStatus.PAIRED.value, DeviceStatus.ACTIVE.value)
+
+    @property
+    def capabilities(self) -> list[str]:
+        from app.remote.devices import load_meta
+
+        meta = load_meta(self.capabilities_json)
+        if isinstance(meta, list):
+            return [str(c) for c in meta]
+        return []
 
 
 class Credential(Base):

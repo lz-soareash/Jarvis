@@ -16,7 +16,6 @@ from typing import Any
 
 from sqlalchemy.orm import Session as OrmSession
 
-from app.core.enums import DeviceStatus
 from app.models.remote import Credential, Device, RemoteSession
 from app.models.session import ensure_utc, utcnow
 from app.remote.credentials import get_credential_by_token
@@ -104,8 +103,8 @@ def authenticate_bearer(
         failures.append("credential_revoked")
     if credential.expires_at is not None and ensure_utc(credential.expires_at) <= utcnow():
         failures.append("credential_expired")
-    if device.status != DeviceStatus.ACTIVE.value:
-        failures.append("device_not_active")
+    if not device.is_trusted:  # Fase 21 — Device Trust: PAIRED/ACTIVE autenticam
+        failures.append("device_not_trusted")
     if claimed_device_id and claimed_device_id != device.id:
         # Identidade NÃO muda: registra a tentativa de violação para auditoria.
         logger.warning(

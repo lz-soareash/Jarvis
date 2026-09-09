@@ -28,6 +28,7 @@ from app.remote.crypto import derive_secret, generate_pairing_code, verify_secre
 from app.remote.credentials import issue_credential
 from app.remote.devices import create_device, json_meta
 from app.remote.identity_events import (
+    AUDIT_DEVICE_TRUSTED,
     AUDIT_PAIRING_CREATED,
     AUDIT_PAIRING_FAILED,
     AUDIT_PAIRING_SUCCEEDED,
@@ -121,8 +122,17 @@ def submit_code(
     device_type: str = DeviceType.DESKTOP.value,
     pairing_id: str | None = None,
     metadata: dict[str, Any] | None = None,
+    pending_device_id: str | None = None,
+    platform: str | None = None,
+    client_version: str | None = None,
+    capabilities: list[str] | None = None,
 ) -> tuple[Device, str]:
-    """Valida o código e, em sucesso, cria o device + emite a credencial.
+    """Valida o código e, em sucesso, confia o device + emite a credencial.
+
+    Quando `pending_device_id` referencia um device PENDING (registrado antes
+    do pareamento), o registro é promovido a confiável em vez de criar outro;
+    o id continua SEMPRE emitido pelo servidor (anti-spoofing). Reverencia o
+    teto de devices confiáveis (`device_max_devices`).
 
     Retorna (device, token_bruto) — o token só é visto uma vez.
     """
@@ -186,13 +196,74 @@ def submit_code(
         _fail("already_consumed", {"pairing_id": request.id})
         raise PairingInvalid("pedido de pairing já utilizada")
 
-    device = create_device(
-        db,
-        name=device_name.strip()[:120],
-        device_type=device_type,
-        status=DeviceStatus.ACTIVE.value,
-        metadata=metadata,
+    # Teto de devices confiáveis (Fase 21): NOVO pareamento só se houver espaço.
+    from app.remote.devices import (
+        DeviceInvalid,
+        DeviceLimitExceeded,
+        ensure_device_capacity,
+        update_capabilities,
     )
+
+    try:
+        ensure_device_capacity(db)
+    except DeviceLimitExceeded as exc:
+        _fail("device_limit_exceeded", {"reason": str(exc)})
+        raise PairingError(str(exc)) from exc
+
+    capability_list = [c for c in (capabilities or []) if isinstance(c, str)]
+
+    device = None
+    if pending_device_id:
+        # Ancoragem: promove o registro PENDING criado antes (id do servidor).
+        pending = db.get(Device, pending_device_id)
+        if pending is not None and pending.status == DeviceStatus.PENDING.value:
+            pending.name = device_name.strip()[:120]
+            pending.device_type = device_type
+            pending.status = DeviceStatus.ACTIVE.value
+            if metadata is not None:
+                pending.metadata_json = json_meta(metadata)
+            try:
+                # Só sobrescreve campos explicitamente fornecidos no pareamento;
+                # a identidade declarada no REGISTRO (ex.: platform) é preservada.
+                update_capabilities(
+                    db,
+                    pending.id,
+                    platform=platform,
+                    client_version=client_version,
+                    capabilities=capability_list if capabilities is not None else None,
+                )
+            except DeviceInvalid:  # pragma: no cover — plataforma sempre normaliza
+                pass
+            device = pending
+        else:
+            # Do jeito que for, NUNCA confiamos um device que não seja PENDING:
+            # registros inexistentes/confiáveis dariam espaço a cadastros livres.
+            _fail("pending_device_attach_failed", {"pending_device_id": pending_device_id})
+            raise PairingInvalid("registro de device pendente inválido para pareamento")
+
+    if device is None:
+        device = create_device(
+            db,
+            name=device_name.strip()[:120],
+            device_type=device_type,
+            status=DeviceStatus.ACTIVE.value,
+            metadata=metadata,
+            platform=platform or "web",
+            client_version=client_version,
+            capabilities=capability_list if capabilities is not None else None,
+        )
+    else:
+        # create_device não roda aqui (já existia): audita a promoção PENDING→ACTIVE
+        # mantendo o vocabulário device.registered (Fase 21).
+        from app.remote.identity_events import OPS_DEVICE_REGISTERED
+
+        db.commit()
+        log_identity_event(
+            audit_action=AUDIT_DEVICE_TRUSTED,
+            ops_event=OPS_DEVICE_REGISTERED,
+            meta={"device_id": device.id, "status": device.status},
+        )
+
     credential, token = issue_credential(db, device)
 
     request.device_id = device.id

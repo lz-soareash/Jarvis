@@ -188,7 +188,8 @@ def ensure_session_valid(db: OrmSession, session: RemoteSession | None) -> Remot
     if session.status not in _ACTIVE:
         raise RemoteError(RemoteErrorCode.INVALID_SESSION, "sessão inválida")
     device = db.get(Device, session.device_id)
-    if device is None or device.status != "active":
+    # Fase 21 — Device Trust: PAIRED/ACTIVE autorizam a sessão; os demais não.
+    if device is None or not device.is_trusted:
         raise RemoteError(RemoteErrorCode.FORBIDDEN, "device não autorizado")
     touch_session(db, session)
     return session

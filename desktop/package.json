@@ -1,0 +1,18 @@
+{
+  "name": "vega-desktop",
+  "productName": "VEGA",
+  "version": "1.0.0",
+  "description": "VEGA Desktop — cliente fino do JARVIS Core (Device Bridge, Fase 21). Sem segundo AI Core: toda a inteligência vive no Core em http://127.0.0.1:8100.",
+  "main": "main.js",
+  "author": "JARVIS",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test --test-force-exit bridge.test.mjs",
+    "dist:win": "electron-packager . VEGA --platform=win32 --arch=x64 --overwrite --out=dist --app-version=1.0.0"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-packager": "^17.1.2"
+  }
+}

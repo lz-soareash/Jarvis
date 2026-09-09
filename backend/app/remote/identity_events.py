@@ -8,14 +8,18 @@ Regras de segurança reproduzidas aqui:
   `_telemetry_lock` (SQLite :memory: compartilhado dos testes = StaticPool único).
 
 Nomes de auditoria (AuditLog.action): device_created, device_authenticated,
-device_authentication_failed, device_revoked, credential_created,
+device_authentication_failed, device_revoked, device_renamed,
+device_capabilities_updated, credential_created,
 credential_revoked, pairing_created, pairing_failed, pairing_succeeded,
-session_authenticated, session_ended.
+session_authenticated, session_ended, session_shared.
 
-Eventos observáveis (ExecutionEvent.event_type), prefixo `remote.*`:
-remote.device.created, remote.device.revoked, remote.credential.created,
+Eventos observáveis (ExecutionEvent.event_type), prefixo `remote.*`/`device.*`:
+remote.device.created, remote.device.registered, remote.device.renamed,
+remote.device.revoked, remote.credential.created,
 remote.credential.revoked, remote.pairing.created, remote.pairing.succeeded,
-remote.pairing.failed, remote.auth.success, remote.auth.failed, remote.session.ended.
+remote.pairing.failed, remote.auth.success, remote.auth.failed,
+remote.session.ended, remote.session.shared,
+device.connected, device.disconnected, device.reconnected (Fase 21).
 """
 
 from __future__ import annotations
@@ -33,6 +37,9 @@ AUDIT_DEVICE_CREATED = "device_created"
 AUDIT_DEVICE_AUTHENTICATED = "device_authenticated"
 AUDIT_DEVICE_AUTH_FAILED = "device_authentication_failed"
 AUDIT_DEVICE_REVOKED = "device_revoked"
+AUDIT_DEVICE_RENAMED = "device_renamed"
+AUDIT_DEVICE_CAPABILITIES = "device_capabilities_updated"
+AUDIT_DEVICE_TRUSTED = "device_trusted"
 AUDIT_CREDENTIAL_CREATED = "credential_created"
 AUDIT_CREDENTIAL_REVOKED = "credential_revoked"
 AUDIT_PAIRING_CREATED = "pairing_created"
@@ -40,9 +47,12 @@ AUDIT_PAIRING_FAILED = "pairing_failed"
 AUDIT_PAIRING_SUCCEEDED = "pairing_succeeded"
 AUDIT_SESSION_AUTHENTICATED = "session_authenticated"
 AUDIT_SESSION_ENDED = "session_ended"
+AUDIT_SESSION_SHARED = "session_shared"
 
 # Observabilidade
 OPS_DEVICE_CREATED = "remote.device.created"
+OPS_DEVICE_REGISTERED = "remote.device.registered"
+OPS_DEVICE_RENAMED = "remote.device.renamed"
 OPS_DEVICE_REVOKED = "remote.device.revoked"
 OPS_CREDENTIAL_CREATED = "remote.credential.created"
 OPS_CREDENTIAL_REVOKED = "remote.credential.revoked"
@@ -52,6 +62,10 @@ OPS_PAIRING_FAILED = "remote.pairing.failed"
 OPS_AUTH_SUCCESS = "remote.auth.success"
 OPS_AUTH_FAILED = "remote.auth.failed"
 OPS_SESSION_ENDED = "remote.session.ended"
+OPS_SESSION_SHARED = "remote.session.shared"
+OPS_DEVICE_CONNECTED = "device.connected"
+OPS_DEVICE_RECONNECTED = "device.reconnected"
+OPS_DEVICE_DISCONNECTED = "device.disconnected"
 
 TOOL = "remote.identity"
 

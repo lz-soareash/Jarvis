@@ -181,6 +181,25 @@ class Settings(BaseSettings):
     # Nunca use "*". Ex.: "https://app.meudominio.com,http://127.0.0.1:4200"
     remote_cors_origins: str = ""
 
+    # Device Bridge (Fase 21) — camada de identidade de clientes finos (Desktop/
+    # Mobile) sobre o Remote Gateway. `device_enabled` liga/desliga os endpoints
+    # de identidade/estado (registro, capabilities, heartbeat, rename, info);
+    # a SEGURANÇA e o transporte das mensagens continuam governados por
+    # `remote_enabled` (gate mestre: REMOTE_ENABLED=false por padrão). Não afeta
+    # permissões (o cliente nunca escolhe nível/autonomia/tools).
+    device_enabled: bool = True
+    # Teto de devices confiáveis simultâneos (ACTIVE/PAIRED). Ao atingir, o
+    # pareamento de novos devices é recusado (impede acumulação desordenada).
+    device_max_devices: int = 20
+    # Intervalo de heartbeat sugerido aos clientes (s). Também usado como
+    # janela de "staleness" em telemetria (device sem batida nesse intervalo).
+    device_heartbeat_seconds: int = 30
+    # Habilita o fluxo de reconexão dos clientes (cabe ao cliente respeitar;
+    # aqui controla a telemetria/estado derivado e metadados de transport).
+    device_reconnect_enabled: bool = True
+    # Teto de devices PENDING não pareados (registros órfãos não se acumulam).
+    device_max_pending: int = 50
+
     # Proactive Agent (Fase 17) — infraestrutura de proatividade controlada.
     # Tudo começa DESLIGADO (conservador): ligue explicitamente via env/.env.
     # Capacidade geral: é o que permite ao JARVIS agir por iniciativa própria,

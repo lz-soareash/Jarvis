@@ -346,6 +346,7 @@ def build_overview(db: OrmSession) -> OpsOverview:
         computer_actions=_computer_action_stats(db),
         computer_agent=_computer_agent_stats(db),
         identity=_identity_stats(),
+        devices=_device_stats(db),
     )
 
 
@@ -429,6 +430,48 @@ def _identity_stats() -> dict:
     from app.identity import to_dict as identity_to_dict
 
     return identity_to_dict()
+
+
+def _device_stats(db: OrmSession) -> dict:
+    """Fase 21 — Device Bridge: dispositivos pareados/ativos/pendentes.
+
+    Sanitizado: só contagens e totais por plataforma; nunca IDs/metadados.
+    Best-effort: se a tabela ainda não existir (tests bootstrap), retorna vazio.
+    """
+    from app.core.enums import DeviceStatus
+    from app.models.remote import Device
+
+    try:
+        rows = list(db.scalars(select(Device)).all())
+    except Exception:  # noqa: BLE001 — tabela ausente não derruba a Central
+        return {
+            "enabled": bool(settings.device_enabled and settings.remote_enabled),
+            "total": 0,
+            "by_status": {},
+            "by_platform": {},
+            "max_devices": settings.device_max_devices,
+            "detail": "tabela indisponível",
+        }
+    by_status: dict[str, int] = {}
+    by_platform: dict[str, int] = {}
+    for device in rows:
+        by_status[device.status] = by_status.get(device.status, 0) + 1
+        platform = getattr(device, "platform", "web") or "web"
+        by_platform[platform] = by_platform.get(platform, 0) + 1
+    trusted = sum(
+        by_status.get(s, 0)
+        for s in (DeviceStatus.ACTIVE.value, DeviceStatus.PAIRED.value)
+    )
+    return {
+        "enabled": bool(settings.device_enabled and settings.remote_enabled),
+        "total": len(rows),
+        "trusted": trusted,
+        "by_status": by_status,
+        "by_platform": by_platform,
+        "max_devices": settings.device_max_devices,
+        "heartbeat_seconds": settings.device_heartbeat_seconds,
+        "reconnect_enabled": bool(settings.device_reconnect_enabled),
+    }
 
 
 def json_safe_meta(**kwargs: Any) -> dict:

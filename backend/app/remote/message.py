@@ -58,12 +58,18 @@ async def handle_remote_message(
     tools: bool,
     ctx: RemoteRequestContext,
     requested: AIProvider | None = None,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     """Orquestra uma mensagem remota até o AI Core.
 
     Retorna um dict que o endpoint converte em JSON (`{"kind":"reply",...}`) ou
     SSE (`{"kind":"stream","generator":...,"jarvis_session_id":...}`). Eleva
     `RemoteError` em falhas já sanitizadas; nunca expõe stack traces.
+
+    `session_id` (Fase 21) habilita a session sharing: quando informado, a
+    mensagem é roteada para a sessão JARVIS de um device CONFIÁVEL do mesmo Core
+    (continuação entre dispositivos). O contexto continua centralizado no Core;
+    o cliente finito nunca recebe cópia de memória.
     """
     content = _cap_content(content)
 
@@ -75,7 +81,7 @@ async def handle_remote_message(
     ctx.device_id = authed.device_id
     ctx.credential_id = authed.credential.id
 
-    jarvis_session_id = get_or_create_jarvis_session(db, authed.device)
+    jarvis_session_id = resolve_conversation(db, authed, session_id)
 
     # Concorrência: respeita o teto de mensagens simultâneas (Fase 16).
     if not acquire_slot():
@@ -212,3 +218,56 @@ def _cap_content(content: str) -> str:
     if len(content) > MAX_REMOTE_MESSAGE_LENGTH:
         raise RemoteMessageError("mensagem acima do limite de caracteres")
     return content.strip()
+
+
+def resolve_conversation(
+    db: OrmSession, authed: AuthenticatedDevice, session_id: str | None
+) -> str:
+    """Fase 21 — resolve a conversa-alvo de uma mensagem remota (session sharing).
+
+    Sem `session_id`: sessão JARVIS estável do próprio device (comportamento
+    histórico, Fase 12.3).
+
+    Com `session_id`: a conversa deve existir e pertencer a um device CONFIÁVEL
+    (PAIRED/ACTIVE) do MESMO Core — é assim que "continue no celular a conversa
+    do PC". Regras aplicadas:
+
+    - sessão inexistente ou de device não confiável → erro sanitizado (mesma
+      mensagem genérica; não revela o que existe ou a quem pertence);
+    - o próprio device continua confiável (já autenticou) — sem elevação;
+    - emite `remote.session.shared` (auditoria + SSE) para rastreabilidade.
+    """
+    if session_id is None:
+        return get_or_create_jarvis_session(db, authed.device)
+
+    from sqlalchemy import select
+
+    from app.models.remote import Device as RemoteDevice
+    from app.remote.identity_events import (
+        AUDIT_SESSION_SHARED,
+        OPS_SESSION_SHARED,
+        log_identity_event,
+    )
+
+    session = db.get(JarvisSession, session_id)
+    if session is None:
+        raise RemoteMessageError("sessão de conversa não disponível para continuação")
+
+    owner = db.scalar(
+        select(RemoteDevice).where(RemoteDevice.jarvis_session_id == session_id)
+    )
+    if owner is None or not owner.is_trusted:
+        raise RemoteMessageError("sessão de conversa não disponível para continuação")
+
+    own = session_id == get_or_create_jarvis_session(db, authed.device)
+    log_identity_event(
+        audit_action=AUDIT_SESSION_SHARED,
+        ops_event=OPS_SESSION_SHARED,
+        meta={
+            "session_id": session_id,
+            "source_device_id": authed.device_id,
+            "target_device_id": owner.id,
+            "same_device": own,
+        },
+    )
+    return session_id
