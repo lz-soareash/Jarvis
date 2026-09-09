@@ -6,6 +6,22 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
+def _default_version() -> str:
+    """Fase 22 — versão central: o arquivo `VERSION` na raiz é a ÚNICA fonte.
+
+    O backend não mantém versão própria: lê `VERSION` do repositório (fallback
+    conservador para instalações sem o arquivo). Assim backend, Desktop, Android
+    e Releases permanecem sincronizados (Fase 22, versionamento central).
+    """
+    try:
+        version = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
+        if version:
+            return version
+    except OSError:
+        pass
+    return "0.22.0"
+
+
 class Settings(BaseSettings):
     """Configuração central do JARVIS Core (lida de variáveis de ambiente / .env)."""
 
@@ -17,7 +33,7 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "JARVIS"
-    version: str = "0.1.0"
+    version: str = _default_version()
     env: str = "development"
 
     # Servidor

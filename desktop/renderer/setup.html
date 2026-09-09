@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;" />
+  <title>VEGA — Conexão</title>
+  <link rel="stylesheet" href="./setup.css" />
+</head>
+<body>
+  <main class="card">
+    <header class="brand">
+      <span class="mark"></span>
+      <div>
+        <h1>VEGA</h1>
+        <p class="sub">Conecte este dispositivo ao seu VEGA.</p>
+      </div>
+    </header>
+
+    <section class="status" role="status" aria-live="polite">
+      <span id="status-dot" class="dot"></span>
+      <div>
+        <b id="status-label">iniciando…</b>
+        <span id="status-detail" class="muted">verificando conexão com o Core</span>
+      </div>
+    </section>
+
+    <section class="field">
+      <label for="core-url">Servidor</label>
+      <input id="core-url" type="text" spellcheck="false" autocomplete="off"
+             placeholder="http://127.0.0.1:8100" />
+      <p class="hint">Endereço do Core (VEGA). Ex.: http://127.0.0.1:8100 (local) ou https://… (remoto).</p>
+    </section>
+
+    <section class="actions">
+      <button id="connect" class="primary">Conectar ao VEGA</button>
+      <button id="disconnect" class="ghost" disabled>Desconectar</button>
+    </section>
+
+    <section class="meta">
+      <span id="updates" class="muted">—</span>
+      <button id="check-update" class="link">Verificar atualizações</button>
+    </section>
+
+    <footer class="foot">
+      <span id="app-version" class="muted"></span>
+      <button id="open-core" class="link">Abrir Central no navegador</button>
+    </footer>
+  </main>
+  <script src="./setup.js"></script>
+</body>
+</html>

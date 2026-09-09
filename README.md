@@ -56,8 +56,8 @@ Implementações: `GeminiProvider`, `LocalLLMProvider` (local, via llama.cpp) e
 | Persistência | SQLAlchemy 2.x + SQLite (migrável para PostgreSQL trocando a URL) |
 | IA | google-genai (Gemini) |
 | Frontend | HTML + CSS + JS Vanilla (PWA: manifest + service worker) + Web Speech API (voz local) |
-| Desktop (Fase 21) | Electron 31 (Node 24) — cliente fino `VEGA.exe` |
-| Mobile (Fase 21) | Kotlin 1.9 + Jetpack Compose + AGP 8.4 — cliente fino `app-debug.apk` |
+| Desktop (Fase 21) | Electron 31 (Node 24) — cliente fino `VEGA.exe` (distribuições Windows Fase 22) |
+| Mobile (Fase 21) | Kotlin 1.9 + Jetpack Compose + AGP 8.4 — cliente fino `app-release.apk` assinado (Fase 22) |
 | Testes | pytest (+ pytest-asyncio, TestClient), node:test (bridge desktop) |
 
 Sem Docker/Redis/Celery nesta fase (não há necessidade real ainda).
@@ -1060,7 +1060,44 @@ próprios. Elas apenas **REGISTER** (identidade `PENDING` com `id` emitido pelo 
 - **Migração idempotente**: `_ensure_device_bridge_schema` re-aplica sem erro em bancos já
   migrados (validado no E2E).
 - **Não versionados** (gerados localmente, fora do git): `desktop/dist/` (EXE),
-  `android/**/build/` (APK), `android/local.properties`, `.gradle/`.
+  `android/**/build/` (APK), `android/local.properties`, `.gradle/`, `releases/`.
+
+## Fase 22 — VEGA Distribution & Client Experience ✔
+
+- **Uma única fonte de versão**: `VERSION` (raiz) = `0.22.0`; lida pelo backend
+  (`config.py`), sincronizada pelo Desktop (`desktop/scripts/sync-version.js`, drift
+  detectado no teste) e lida pelo Gradle (`android/app/build.gradle.kts`) com
+  `versionCode` derivado (0.22.0 → 2200). `GET /api/health` e a Central de Operações
+  já expõem essa versão. Teste `backend/tests/test_fase22_version.py` garante a paridade.
+- **Windows**: `electron-builder` gera instalador **NSIS**
+  (`VEGA-<v>-win-x64.exe`), **portátil** (`VEGA-<v>-win-x64-portable.exe`) e **zip**;
+  após o pack, ícone + metadados VEGA são reaplicados com `@electron/rcedit`
+  (`desktop/scripts/after-pack.js`) porque o `winCodeSign` do builder exigiria
+  criação de symlinks (privilégio ausente neste host). Build: `npm run dist`.
+- **Android**: `assembleRelease` assinado com keystore **nunca versionado**
+  (`android/keystore.properties` + `android/app/keystore/` gitignored; template em
+  `android/keystore.properties.example`; CI assina via secrets
+  `VEGA_KEYSTORE_BASE64`/`VEGA_KEYSTORE_PASSWORD`/`VEGA_KEYSTORE_KEY_ALIAS`/
+  `VEGA_KEYSTORE_KEY_PASSWORD`). APK `VEGA-<v>-android.apk` assinado (v2),
+  `versionName=0.22.0`, `versionCode=2200`.
+- **Identidade consistente** (`scripts/gen_icons.py`, stdlib puro): ícone **diamante
+  em fundo escuro** (`#05080f` + gradiente `#7ce8ff→#3aa8ff→#2f6bff` + ponto `#2fe6a5`)
+  → `desktop/resources/icon.ico|icon.png` + ícone adaptável Android
+  (`mipmap-anydpi-v26/ic_launcher.xml`).
+- **Client experience**: Desktop reescrito — tela de **setup** no primeiro uso (URL do
+  Core, conectar, verificar atualização), estados claros (conectado/reconectando/
+  indisponível), tray com "Configurações" e "Verificar atualizações", single-instance;
+  Android — auto-conexão quando pareado, status legível e versão do app na UI.
+- **Auto-update (foundation)**: `desktop/updates.js` consulta o GitHub Release apenas
+  para **metadata** (`parseTag`/`compareVersions`/`classifyUpdate`/`checkForUpdate`;
+  nunca baixa/executa arquivos) — 6 testes.
+- **Release**: `.github/workflows/build-windows.yml`, `build-android.yml` e
+  `release.yml` (tag `v*` cria GitHub Release com artefatos + `SHA256SUMS.txt` via
+  `scripts/release_checksums.py`); gradle wrapper 8.7 commitado. Publicação local
+  requer `gh` (não instalado) — o pipeline executa no GitHub.
+- **Artefatos locais**: `releases/0.22.0/` (4 binários + `SHA256SUMS.txt`).
+- **Validação**: backend **823 passed, 1 skipped** (7 testes Fase 22 novos); Desktop
+  20 testes (6 bridge + 3 version + 6 updates + 5 config).
 
 ## Roadmap (resumo)
 
@@ -1194,21 +1231,33 @@ autenticam, capabilities normalizadas com allow-list, `claimed_device_id` valida
 (info/rename/capabilities/revoke), `/api/remote/heartbeat` (`token` no corpo); card DEVICES na
 Central de Operações; migração idempotente; 53 testes herméticos novos + E2E isolado ALL_OK com
 segundo boot — backend 816 passed, 1 skipped) ·
-22. V2 — Multi-turn Agentic Context (planejado): memória do turno (agenda de passos e
+22. VEGA Distribution & Client Experience ✔ (Fase 22 COMPLETA: **uma única fonte de
+versão** `VERSION` raiz → backend/Desktop/Android com `versionCode` derivado; Windows
+**distribuível** — instalador NSIS `VEGA-<v>-win-x64.exe`, portátil e zip via
+`electron-builder` com identidade reaplicada por `@electron/rcedit`; Android
+`assembleRelease` **assinado** com keystore nunca no git (template em
+`keystore.properties.example`; CI via secrets); **identidade consistente** diamante
+on-dark (`scripts/gen_icons.py` stdlib → ico/png + adaptável Android); **client
+experience** — setup no primeiro uso, estados conectado/reconectando/indisponível,
+tray com verificação de atualização, auto-conexão Android; **auto-update foundation**
+metadata-only (`updates.js`, 6 testes); **CI/release** `.github/workflows`
+(build-windows/build-android/release com SHA256SUMS via `release_checksums.py`) e
+gradle wrapper 8.7; backend **823 passed, 1 skipped**) ·
+23. V2 — Multi-turn Agentic Context (planejado): memória do turno (agenda de passos e
 justificativas) + contexto inter-turno persistente para tarefas longas ·
-23. V3 — Computer Use mais profundo (planejado): gestão de janelas, drag/scroll contínuo,
+24. V3 — Computer Use mais profundo (planejado): gestão de janelas, drag/scroll contínuo,
 uso de atalhos seguros e tolerância a layout (por via segura e confirmada) ·
-24. V4 — Planejamento hierárquico (planejado): tasks decomponíveis com dependências,
+25. V4 — Planejamento hierárquico (planejado): tasks decomponíveis com dependências,
 paralelismo controlado e view de progresso na Central de Operações ·
-25. V5 — Proativo contextual (planejado): silêncio ativo, monitoramento de estados
+26. V5 — Proativo contextual (planejado): silêncio ativo, monitoramento de estados
 (janela/carga/agenda) e sugestões com confirmação explícita ·
-26. V6 — Pesquisa agêntica (planejado): research multi-iteração com síntese em
+27. V6 — Pesquisa agêntica (planejado): research multi-iteração com síntese em
 conhecimento persistente e fontes citáveis ·
-27. V7 — Voz agêntica (planejado): TTS proativo de estados/resultados e comando
+28. V7 — Voz agêntica (planejado): TTS proativo de estados/resultados e comando
 hands-free com confirmação auditiva ·
-28. V8 — Perfil do usuário (planejado): memória de preferências com consentimento,
+29. V8 — Perfil do usuário (planejado): memória de preferências com consentimento,
 estilos de interação e affordances por dispositivo ·
-29. V9 — Autonomia governada (planejado): políticas por tarefa/domínio, revisão de
+30. V9 — Autonomia governada (planejado): políticas por tarefa/domínio, revisão de
 decisões passadas e auditoria de confiança, sempre com supervisão humana.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

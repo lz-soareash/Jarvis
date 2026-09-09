@@ -31,6 +31,9 @@ frontend/dist/
 logs/
 *.log
 
+# Release local (Fase 22 — binários gerados fora do repo; SHA256SUMS.txt pode ser gerado no CI)
+releases/
+
 # IDE / SO
 .vscode/
 .idea/

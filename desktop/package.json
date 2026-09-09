@@ -1,18 +1,77 @@
 {
   "name": "vega-desktop",
   "productName": "VEGA",
-  "version": "1.0.0",
-  "description": "VEGA Desktop — cliente fino do JARVIS Core (Device Bridge, Fase 21). Sem segundo AI Core: toda a inteligência vive no Core em http://127.0.0.1:8100.",
+  "version": "0.22.0",
+  "description": "VEGA Desktop — cliente fino do JARVIS Core (Device Bridge, Fase 21; Distribution & Client Experience, Fase 22). Sem segundo AI Core: toda a inteligência vive no Core em http://127.0.0.1:8100.",
   "main": "main.js",
-  "author": "JARVIS",
+  "author": "VEGA",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "test": "node --test --test-force-exit bridge.test.mjs",
-    "dist:win": "electron-packager . VEGA --platform=win32 --arch=x64 --overwrite --out=dist --app-version=1.0.0"
+    "sync:version": "node scripts/sync-version.js",
+    "test": "node --test --test-force-exit bridge.test.mjs && node --test --test-force-exit version.test.mjs && node --test --test-force-exit updates.test.mjs && node --test --test-force-exit config.test.mjs",
+    "dist:packager": "electron-packager . VEGA --platform=win32 --arch=x64 --overwrite --out=dist --app-version=%npm_package_version% --icon=resources/icon.ico --win32metadata.CompanyName=VEGA --win32metadata.FileDescription=VEGA --win32metadata.ProductName=VEGA --win32metadata.OriginalFilename=VEGA.exe",
+    "dist": "npm run sync:version && electron-builder --win nsis portable zip"
+  },
+  "build": {
+    "appId": "com.vega.client",
+    "productName": "VEGA",
+    "afterPack": "scripts/after-pack.js",
+    "directories": {
+      "output": "dist",
+      "buildResources": "resources"
+    },
+    "files": [
+      "main.js",
+      "bridge.js",
+      "config.js",
+      "updates.js",
+      "renderer/**",
+      "resources/icon.png",
+      "package.json"
+    ],
+    "win": {
+      "icon": "resources/icon.ico",
+      "signAndEditExecutable": false,
+      "artifactName": "VEGA-${version}-win-x64-portable.${ext}",
+      "target": [
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "VEGA",
+      "artifactName": "VEGA-${version}-win-x64.${ext}"
+    },
+    "portable": {
+      "artifactName": "VEGA-${version}-win-x64-portable.${ext}"
+    }
   },
   "devDependencies": {
     "electron": "^31.7.7",
-    "electron-packager": "^17.1.2"
+    "electron-builder": "^24.13.3",
+    "electron-packager": "^17.1.2",
+    "rcedit": "^5.0.2"
   }
 }

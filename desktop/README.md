@@ -37,14 +37,35 @@ npm start
 Timeout/seguidor de Core diferente: `VEGA_CORE_URL` (ex.: se o backend escuta
 nesta máquina em outra porta).
 
-## Build `VEGA.exe` (Windows x64)
+## Distribuições (Windows x64 — Fase 22)
 
 ```bash
 cd desktop
 npm install
-npm run dist:win
-# resultado: desktop/dist/VEGA/VEGA.exe   (Electron 31, app-version 1.0.0)
+npm run dist
+# resultado em desktop/dist/:
+#   VEGA-<v>-win-x64.exe            instalador NSIS
+#   VEGA-<v>-win-x64-portable.exe   executável portátil
+#   VEGA-<v>-win-x64-portable.zip   pasta portátil zipada
 ```
 
-O `dist/` é ignorado pelo Git (binário fora do repo). Ícone é gerado em
-memória (PNG 16x16) — nenhum asset binário é versionado.
+- Versão vinda de `../VERSION` (raiz do repositório) — **fonte única**; `npm run
+  sync:version` reescreve `package.json` e o teste `version.test.mjs` detecta drift.
+- Após o pack, `scripts/after-pack.js` reaplica ícone + metadados VEGA com
+  `@electron/rcedit` (o `winCodeSign` do builder exigiria symlinks — indisponível
+  neste host). `VEGA.exe` final: ProductName=VEGA, FileVersion=`<v>`.
+- `dist/` é ignorado pelo Git (binários fora do repo). Ícones `resources/icon.ico|png`
+  são gerados por `scripts/gen_icons.py` (stdlib) e versionados.
+
+## Configuração e primeiros passos (Fase 22)
+
+- Primeiro uso abre a janela de **setup**: informe a URL do Core (padrão
+  `http://127.0.0.1:8100`), conecte e veja o resultado; depois a janela principal
+  abre e o app conecta automaticamente.
+- `config.json` fica em `%APPDATA%\vega-desktop\` (`userData`); credenciais do
+  pareamento em `device.json` (somente leitura do dono, 0600). Nenhum token é
+  registrado em log.
+- Tray: Abrir VEGA / Configurações / status / **Verificar atualizações** / Abrir
+  Central / Sair. Verificação usa `updates.js` (metadata do GitHub Release — nunca
+  faz download/executa); rede fora → linha de update mostra indisponível, sem erro.
+- Single-instance: um segundo processo apenas foca a janela existente.

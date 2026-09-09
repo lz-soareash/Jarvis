@@ -23,6 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -37,6 +38,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+}
+
+private fun stateLabel(state: String): Pair<String, Color> {
+    return when (state) {
+        "connected" -> "● Conectado" to Color(0xFF2FE6A5)
+        "registering", "pairing" -> "○ Conectando…" to Color(0xFFFFD166)
+        "connecting" -> "○ Reconectando…" to Color(0xFFFFD166)
+        "error" -> "○ Servidor indisponível" to Color(0xFFFF6B6B)
+        else -> "◌ Não conectado" to Color(0xFF8FA3B6)
     }
 }
 
@@ -62,6 +73,15 @@ private fun VegaScreen() {
         }
     }
 
+    // Fase 22 — Já pareado? Reconecta automaticamente ao abrir (Device Bridge).
+    LaunchedEffect(Unit) {
+        if (bridge.hasToken) {
+            phase = "connecting"
+            bridge.coreUrl = url.trim().ifBlank { VegaBridge.DEFAULT_CORE_URL }
+            scope.launch { bridge.boot() }
+        }
+    }
+
     fun connect() {
         bridge.coreUrl = url.trim().ifBlank { VegaBridge.DEFAULT_CORE_URL }
         phase = "connecting"
@@ -75,13 +95,15 @@ private fun VegaScreen() {
         }
     }
 
+    val (label, labelColor) = stateLabel(status)
+
     Column(
         Modifier
             .fillMaxSize()
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("VEGA Mobile — cliente fino do Core", style = MaterialTheme.typography.titleLarge)
+        Text("VEGA Mobile — V${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleLarge)
         Text("UMA IA, MÚLTIPLOS CLIENTES: sem segundo AI Core neste APK.")
 
         OutlinedTextField(
@@ -95,18 +117,21 @@ private fun VegaScreen() {
 
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Estado: $status", style = MaterialTheme.typography.titleMedium)
+                Text("Estado: $label", color = labelColor, style = MaterialTheme.typography.titleMedium)
                 Text(detail.ifBlank { "device_id: ${bridge.deviceId?.take(16) ?: "—"}" })
                 Text(
                     "Heartbeats: $heartbeats · token ${if (hasToken) "salvo" else "ausente"} · " +
-                        "intervalo ${bridge.heartbeatMs / 1000}s"
+                        "intervalo ${bridge.heartbeatMs / 1000}s · app v${BuildConfig.VERSION_NAME}"
                 )
+                if (status == "error") {
+                    Text("O servidor VEGA não está disponível. Verifique o Core URL e a rede.")
+                }
             }
         }
 
         if (phase == "manual") {
             Button(onClick = { connect() }, Modifier.fillMaxWidth()) {
-                Text("Conectar ao Core")
+                Text("Conectar ao VEGA")
             }
         } else {
             Button(onClick = { disconnect() }, Modifier.fillMaxWidth()) {

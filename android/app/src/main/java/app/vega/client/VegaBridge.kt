@@ -1,4 +1,4 @@
-package app.vega.client
+﻿package app.vega.client
 
 import android.content.Context
 import android.util.Log
@@ -14,13 +14,13 @@ import java.net.URL
 import java.util.UUID
 
 /**
- * Device Bridge mobile — UMA IA, MÚLTIPLOS CLIENTES (Fase 21).
+ * Device Bridge mobile â€” UMA IA, MÃšLTIPLOS CLIENTES (Fase 21).
  *
  * Cliente fino espelhando desktop/bridge.js: REGISTER (device PENDING com id do
- * servidor) → PAIRING (ancora o registro pendente com o código criado aqui em
- * POST /api/remote/pairings) → HEARTBEAT (connect/reconnect/heartbeat/disconnect).
- * O token fica em SharedPreferences; device_id é sempre emitido pelo Core.
- * Nenhum segundo AI Core/Memória/Permissões vive neste APK.
+ * servidor) â†’ PAIRING (ancora o registro pendente com o cÃ³digo criado aqui em
+ * POST /api/remote/pairings) â†’ HEARTBEAT (connect/reconnect/heartbeat/disconnect).
+ * O token fica em SharedPreferences; device_id Ã© sempre emitido pelo Core.
+ * Nenhum segundo AI Core/MemÃ³ria/PermissÃµes vive neste APK.
  */
 class VegaBridge(
     private val context: Context,
@@ -58,7 +58,7 @@ class VegaBridge(
             try {
                 conn.requestMethod = method
                 conn.setRequestProperty("Content-Type", "application/json")
-                conn.setRequestProperty("User-Agent", "jarvis/1.0.0 (android; device-bridge)")
+                conn.setRequestProperty("User-Agent", "jarvis/${BuildConfig.VERSION_NAME} (android; device-bridge)")
                 conn.setRequestProperty("X-Request-ID", UUID.randomUUID().toString())
                 conn.connectTimeout = 5000
                 conn.readTimeout = 8000
@@ -84,19 +84,19 @@ class VegaBridge(
 
     suspend fun boot() {
         if (heartbeatJob != null) return
-        setState("registering", "registrando identidade no Core…")
+        setState("registering", "registrando identidade no Coreâ€¦")
         try {
             val storedToken = prefs.getString("token", null)
             val storedId = prefs.getString("device_id", null)
             if (!storedToken.isNullOrBlank()) {
                 try {
                     heartbeat("reconnect", storedId)
-                    setState("connected", "reconectado (${storedId?.take(8)}…)")
+                    setState("connected", "reconectado (${storedId?.take(8)}â€¦)")
                     startLoop()
                     return
                 } catch (e: HttpException) {
                     if (e.status != 401) throw e
-                    prefs.edit().clear().apply() // token revogado → re-pareia
+                    prefs.edit().clear().apply() // token revogado â†’ re-pareia
                 }
             }
             pair(storedId)
@@ -112,14 +112,14 @@ class VegaBridge(
     }
 
     private suspend fun pair(storedId: String?) {
-        setState("pairing", "gerando código de pareamento…")
+        setState("pairing", "gerando cÃ³digo de pareamentoâ€¦")
         val register = httpJSON(
             "POST", "/api/remote/devices/register",
             JSONObject().apply {
                 put("name", "VEGA Mobile")
                 put("device_type", "mobile")
                 put("platform", "android")
-                put("client_version", "1.0.0")
+                put("client_version", BuildConfig.VERSION_NAME)
                 put("capabilities", org.json.JSONArray(listOf("chat", "tts", "notifications")))
             }
         )
@@ -132,7 +132,7 @@ class VegaBridge(
                 put("device_name", "VEGA Mobile")
                 put("device_type", "mobile")
                 put("platform", "android")
-                put("client_version", "1.0.0")
+                put("client_version", BuildConfig.VERSION_NAME)
                 put("capabilities", org.json.JSONArray(listOf("chat", "tts", "notifications")))
                 put("pending_device_id", storedId ?: deviceId)
             }
@@ -150,7 +150,7 @@ class VegaBridge(
                 put("token", prefs.getString("token", ""))
                 put("event", event)
                 put("platform", "android")
-                put("client_version", "1.0.0")
+                put("client_version", BuildConfig.VERSION_NAME)
                 put("capabilities", org.json.JSONArray(listOf("chat", "tts", "notifications")))
                 claimedDeviceId?.let { put("claimed_device_id", it) }
             }
@@ -194,6 +194,6 @@ class VegaBridge(
     }
 
     companion object {
-        const val DEFAULT_CORE_URL = "http://10.0.2.2:8100" // emulador → host
+        const val DEFAULT_CORE_URL = "http://10.0.2.2:8100" // emulador â†’ host
     }
 }

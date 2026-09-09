@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Identidade VEGA (Fase 19.6): diamante com gradiente ciano->azul,
+         recorte escuro interno, ponto central ciano e acento verde. -->
+    <path
+        android:fillColor="#05080f"
+        android:pathData="M28,14 L80,14 A14,14 0 0 1 94,28 L94,80 A14,14 0 0 1 80,94 L28,94 A14,14 0 0 1 14,80 L14,28 A14,14 0 0 1 28,14 Z" />
+    <path
+        android:pathData="M54,31 L77,54 L54,77 L31,54 Z">
+        <aapt:attr xmlns:aapt="http://schemas.android.com/aapt" name="android:fillColor">
+            <gradient
+                android:startX="31"
+                android:startY="31"
+                android:endX="77"
+                android:endY="77"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FF7CE8FF" />
+                <item android:offset="0.55" android:color="#FF3AA8FF" />
+                <item android:offset="1.0" android:color="#FF2F6BFF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:fillColor="#FF05080F"
+        android:pathData="M54,40.5 L67.5,54 L54,67.5 L40.5,54 Z" />
+    <path
+        android:fillColor="#FF7CE8FF"
+        android:pathData="M54,49.5 A4.5,4.5 0 1 1 54,58.5 A4.5,4.5 0 1 1 54,49.5 Z" />
+    <path
+        android:fillColor="#FF2FE6A5"
+        android:strokeColor="#FF05080F"
+        android:strokeWidth="2.5"
+        android:pathData="M73,68 A5,5 0 1 1 73,78 A5,5 0 1 1 73,68 Z" />
+</vector>
