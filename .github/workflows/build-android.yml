@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['VERSION', 'android/**']
+    paths: ['VERSION', 'android/**', '.github/**']
 
 permissions:
   contents: read
@@ -25,27 +25,9 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: gradle cache
-        uses: actions/cache@v4
+      - uses: ./.github/actions/build-android
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/wrapper/gradle-wrapper.properties') }}
-
-      - name: build APK
-        working-directory: android
-        shell: bash
-        run: |
-          VERSION=$(cat ../VERSION)
-          mkdir -p ../releases-staging
-          if [ -n "$VEGA_KEYSTORE_BASE64" ]; then
-            ./gradlew :app:assembleRelease
-            cp app/build/outputs/apk/release/app-release.apk "../releases-staging/VEGA-${VERSION}-android.apk"
-          else
-            ./gradlew :app:assembleDebug
-            cp app/build/outputs/apk/debug/app-debug.apk "../releases-staging/VEGA-${VERSION}-android-debug.apk"
-          fi
+          staging: releases-staging
 
       - name: upload artifact
         uses: actions/upload-artifact@v4

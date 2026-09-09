@@ -1099,6 +1099,43 @@ próprios. Elas apenas **REGISTER** (identidade `PENDING` com `id` emitido pelo 
 - **Validação**: backend **823 passed, 1 skipped** (7 testes Fase 22 novos); Desktop
   20 testes (6 bridge + 3 version + 6 updates + 5 config).
 
+## Download
+
+Distribuições oficiais publicadas como **GitHub Release**:
+[VEGA Releases](https://github.com/lz-soareash/Jarvis/releases) ·
+[Latest Release](https://github.com/lz-soareash/Jarvis/releases/latest)
+
+### Windows
+
+- [`VEGA-0.22.0-win-x64.exe`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.22.0) —
+  instalador (NSIS, 64 bits)
+- [`VEGA-0.22.0-win-x64-portable.exe`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.22.0) —
+  versão portátil (executa sem instalação)
+- [`VEGA-0.22.0-win-x64-portable.zip`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.22.0) —
+  pasta portátil compactada
+
+### Android
+
+- [`VEGA-0.22.0-android.apk`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.22.0) —
+  aplicativo Android (APK assinado, v2)
+
+### Checksums
+
+- [`SHA256SUMS.txt`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.22.0) — verificação dos
+  downloads. Ex.: baixe o arquivo junto e rode no diretório dos downloads:
+  `sha256sum -c SHA256SUMS.txt`.
+
+### Instalação e primeiro uso
+
+- **Windows (instalador)**: execute e siga o assistente (NSIS). No primeiro uso o app abre a tela de
+  configuração: informe a URL do Core (padrão `http://127.0.0.1:8100`), conecte e, ao parear, a janela
+  principal abre com conexão automática. O Core deve estar rodando com `REMOTE_ENABLED=true` e
+  `DEVICE_ENABLED=true`.
+- **Windows (portátil)**: extraia/execute o `.exe` portátil (ou o ZIP); o restante é igual.
+- **Android**: instalar um APK fora da Play Store pode exigir permitir "instalar aplicativos
+  desconhecidos" para a origem do download. A tela conecta a partir do campo de URL do Core e
+  reconecta automaticamente quando um pareamento já existe.
+
 ## Roadmap (resumo)
 
 0. Foundation ✔ · 1. Chat (backend + frontend) ✔ · 2. Memory/Context ✔ · 3. Tool Engine ✔ ·

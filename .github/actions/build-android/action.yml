@@ -1,0 +1,69 @@
+name: Build, validate and stage Android APK
+description: |-
+  Compila app-release.apk (assinado com as secrets VEGA_KEYSTORE_* quando
+  presentes; caso contrário com um keystore efêmero self-signed gerado no
+  próprio job — nunca persistido), valida o APK (aapt2 + apksigner) e o copia
+  para o diretório staging informado (relativo à raiz do repositório).
+  Nenhuma chave/password sai do job ou entra no Git.
+inputs:
+  staging:
+    description: "Diretório destino do APK (ex.: releases-staging). Obrigatório."
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: gradle cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: gradle-${{ runner.os }}-${{ hashFiles('android/app/build.gradle.kts', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+
+    - name: build APK
+      working-directory: android
+      shell: bash
+      run: |
+        set -euo pipefail
+        VERSION=$(cat ../VERSION)
+        if [ -n "${VEGA_KEYSTORE_BASE64:-}" ]; then
+          echo "Assinatura oficial: usando secrets VEGA_KEYSTORE_*."
+          ./gradlew :app:assembleRelease
+        else
+          echo "Secrets ausentes: gerando keystore efêmero de CI (self-signed VEGA) neste job."
+          CI_KEYSTORE_PASS=$(openssl rand -hex 16)
+          mkdir -p app/keystore
+          keytool -genkeypair -v -keystore app/keystore/ci-release.jks -alias vega-release \
+            -keyalg RSA -keysize 2048 -validity 3650 \
+            -storepass "$CI_KEYSTORE_PASS" -keypass "$CI_KEYSTORE_PASS" \
+            -dname "CN=VEGA, OU=CI Self-Signed, O=JARVIS, C=BR" >/dev/null 2>&1
+          printf 'storePassword=%s\nkeyPassword=%s\nkeyAlias=vega-release\nstoreFile=keystore/ci-release.jks\n' \
+            "$CI_KEYSTORE_PASS" "$CI_KEYSTORE_PASS" > keystore.properties
+          ./gradlew :app:assembleRelease
+          rm -rf app/keystore keystore.properties
+        fi
+        APK=app/build/outputs/apk/release/app-release.apk
+        test -s "$APK" || { echo "FALTA APK: $APK"; exit 1; }
+
+    - name: validate APK
+      working-directory: android
+      shell: bash
+      run: |
+        set -euo pipefail
+        APK=app/build/outputs/apk/release/app-release.apk
+        BT=$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -n 1)
+        echo "== aapt2 badging =="
+        "$BT/aapt2" dump badging "$APK" | grep -E "^package:|^application-label:|^launchable-activity" | head -n 5
+        echo "== apksigner =="
+        "$BT/apksigner" verify --verbose --print-certs "$APK" | grep -E "Verified using|Signer #1 certificate DN" | head -n 8
+
+    - name: stage APK
+      working-directory: android
+      shell: bash
+      run: |
+        set -euo pipefail
+        VERSION=$(cat ../VERSION)
+        mkdir -p "$GITHUB_WORKSPACE/${{ inputs.staging }}"
+        cp app/build/outputs/apk/release/app-release.apk \
+          "$GITHUB_WORKSPACE/${{ inputs.staging }}/VEGA-${VERSION}-android.apk"
+        ls -la "$GITHUB_WORKSPACE/${{ inputs.staging }}/"

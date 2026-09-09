@@ -20,29 +20,16 @@ jobs:
           cache: npm
           cache-dependency-path: desktop/package-lock.json
 
-      - name: npm install
-        working-directory: desktop
-        run: npm ci --no-audit --no-fund
-
-      - name: build (nsis + portable + zip)
-        working-directory: desktop
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: npm run dist
-
-      - name: stage
-        working-directory: desktop
-        shell: bash
-        run: |
-          VERSION=$(cat ../VERSION)
-          mkdir -p ../release-artifacts
-          cp dist/VEGA-${VERSION}-win-x64.exe dist/VEGA-${VERSION}-win-x64-portable.exe dist/VEGA-${VERSION}-win-x64-portable.zip ../release-artifacts/
+      - uses: ./.github/actions/build-windows
+        with:
+          stage-dir: release-artifacts
 
       - name: upload
         uses: actions/upload-artifact@v4
         with:
           name: release-windows
           path: release-artifacts/
+          if-no-files-found: error
 
   android:
     runs-on: ubuntu-latest
@@ -59,20 +46,16 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: build APK
-        working-directory: android
-        shell: bash
-        run: |
-          VERSION=$(cat ../VERSION)
-          mkdir -p ../release-artifacts
-          ./gradlew :app:assembleRelease
-          cp app/build/outputs/apk/release/app-release.apk "../release-artifacts/VEGA-${VERSION}-android.apk"
+      - uses: ./.github/actions/build-android
+        with:
+          staging: release-artifacts
 
       - name: upload
         uses: actions/upload-artifact@v4
         with:
           name: release-android
           path: release-artifacts/
+          if-no-files-found: error
 
   release:
     needs: [windows, android]
@@ -88,15 +71,18 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: sums + release tag
+      - name: flatten + checksums
         id: meta
         shell: bash
         run: |
-          set -e
-          VERSION=$(cat VERSION)
-          find release-artifacts/merged -type f \( -name 'VEGA-*.exe' -o -name 'VEGA-*.apk' -o -name 'VEGA-*.zip' \) -exec cp -u {} release-artifacts/merged/ \;
-          python scripts/release_checksums.py --version "$VERSION" --out SHA256SUMS.txt release-artifacts/merged/VEGA-*.apk release-artifacts/merged/VEGA-*.exe release-artifacts/merged/VEGA-*.zip
-          mv SHA256SUMS.txt release-artifacts/merged/SHA256SUMS.txt
+          set -euo pipefail
+          cd release-artifacts/merged
+          find . -mindepth 2 -type f -name 'VEGA-*' -exec mv -f {} . \;
+          rm -rf release-windows release-android
+          VERSION=$(cat ../../VERSION)
+          python ../../scripts/release_checksums.py --version "$VERSION" --out SHA256SUMS.txt VEGA-*.apk VEGA-*.exe VEGA-*.zip
+          sha256sum -c SHA256SUMS.txt
+          ls -la .
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: create GitHub Release
@@ -104,17 +90,38 @@ jobs:
         with:
           tag_name: v${{ steps.meta.outputs.version }}
           name: VEGA v${{ steps.meta.outputs.version }}
+          overwrite: true
+          generate_release_notes: false
           body: |
-            ## VEGA ${{ steps.meta.outputs.version }}
+            # VEGA v${{ steps.meta.outputs.version }}
 
-            - `VEGA-...-win-x64.exe` — instalador Windows (NSIS)
-            - `VEGA-...-win-x64-portable.exe` — executável portátil Windows
-            - `VEGA-...-win-x64-portable.zip` — pasta portátil Windows
-            - `VEGA-...-android.apk` — cliente Android assinado
-            - `SHA256SUMS.txt` — somas de verificação de todos os artefatos
+            Primeira versão distribuível do VEGA — **UMA IA, MÚLTIPLOS CLIENTES**.
 
-            Todas as versões vêm de `VERSION` (raiz do repositório) e são validadas pelos
-            testes de `backend`, `desktop` e `android` antes do build.
+            ## Windows
+
+            - `VEGA-${{ steps.meta.outputs.version }}-win-x64.exe` — instalador (NSIS, 64 bits)
+            - `VEGA-${{ steps.meta.outputs.version }}-win-x64-portable.exe` — versão portátil (sem instalação)
+            - `VEGA-${{ steps.meta.outputs.version }}-win-x64-portable.zip` — pasta portátil compactada
+
+            ## Android
+
+            - `VEGA-${{ steps.meta.outputs.version }}-android.apk` — aplicativo Android (APK assinado)
+
+            ## Checksums
+
+            - `SHA256SUMS.txt` — soma de verificação de todos os artefatos acima
+
+            ## Destaques
+
+            - Cliente Desktop Windows (Electron 31) e cliente Android (Kotlin + Compose) como **clientes finos** — toda a inteligência vive no Core local (`http://127.0.0.1:8100`)
+            - Device Bridge (Registro/Pareamento/Heartbeat) com `device_id` emitido pelo servidor
+            - Identidade e presença VEGA, Computer Action/Use foundation e Proactive (planejado/limitado)
+            - Distribuição automatizada e reproduzível via GitHub Actions (Fase 22)
+
+            ### Notas de assinatura
+
+            - Artefatos Windows **não** são assinados com Authenticode (sem certificado de code-signing); verifique via `SHA256SUMS.txt`.
+            - APK Android assinado (v2). Se as secrets `VEGA_KEYSTORE_*` não estiverem configuradas, a assinatura usa um **keystore efêmero self-signed gerado no CI** (certificado VEGA/CI); para chave oficial estável, configure `VEGA_KEYSTORE_BASE64`/`VEGA_KEYSTORE_PASSWORD`/`VEGA_KEYSTORE_KEY_ALIAS`/`VEGA_KEYSTORE_KEY_PASSWORD` como GitHub Secrets e reexecute a release.
           files: |
             release-artifacts/merged/VEGA-*.apk
             release-artifacts/merged/VEGA-*.exe

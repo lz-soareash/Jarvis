@@ -1,0 +1,61 @@
+name: Build and stage Windows distributables
+description: |-
+  Instala dependências npm, roda os testes do Desktop, gera as distribuições
+  Windows via electron-builder (instalador NSIS + portátil + zip), valida os
+  artefatos (existência, tamanho, integridade do ZIP, metadata do EXE) e,
+  quando informado um stage-dir, copia os três artefatos para ele
+  (relativo à raiz do repositório).
+inputs:
+  stage-dir:
+    description: "Diretório destino dos artefatos (ex.: release-artifacts). Vazio = não copiar."
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: npm install
+      working-directory: desktop
+      shell: bash
+      run: npm ci --no-audit --no-fund
+
+    - name: tests
+      working-directory: desktop
+      shell: bash
+      run: npm test --silent
+
+    - name: build (nsis + portable + zip)
+      working-directory: desktop
+      shell: bash
+      env:
+        CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      run: npm run dist
+
+    - name: validate artifacts
+      working-directory: desktop
+      shell: bash
+      run: |
+        set -euo pipefail
+        VERSION=$(cat ../VERSION)
+        cd dist
+        for f in "VEGA-${VERSION}-win-x64.exe" \
+                 "VEGA-${VERSION}-win-x64-portable.exe" \
+                 "VEGA-${VERSION}-win-x64-portable.zip"; do
+          test -s "$f" || { echo "FALTA artefato: $f"; exit 1; }
+        done
+        find . -maxdepth 1 -name 'VEGA-*' -size +5M -exec ls -la {} \;
+        python -c "import zipfile,sys; r=zipfile.ZipFile('VEGA-${VERSION}-win-x64-portable.zip').testzip(); sys.exit(1 if r else 0)" \
+          || { echo "ZIP com erro de integridade"; exit 1; }
+        powershell -NoProfile -Command '$v=(Get-Item "win-unpacked/VEGA.exe").VersionInfo; Write-Host ("EXE VEGA FileVersion="+$v.FileVersion+" ProductName="+$v.ProductName+" FileDescription="+$v.FileDescription)'
+
+    - name: stage artifacts
+      if: ${{ inputs.stage-dir != '' }}
+      working-directory: desktop
+      shell: bash
+      run: |
+        set -euo pipefail
+        VERSION=$(cat ../VERSION)
+        mkdir -p "$GITHUB_WORKSPACE/${{ inputs.stage-dir }}"
+        cp dist/VEGA-${VERSION}-win-x64.exe \
+          dist/VEGA-${VERSION}-win-x64-portable.exe \
+          dist/VEGA-${VERSION}-win-x64-portable.zip \
+          "$GITHUB_WORKSPACE/${{ inputs.stage-dir }}/"

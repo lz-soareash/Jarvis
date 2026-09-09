@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['VERSION', 'desktop/**', 'scripts/gen_icons.py']
+    paths: ['VERSION', 'desktop/**', 'scripts/gen_icons.py', '.github/**']
 
 permissions:
   contents: read
@@ -21,19 +21,7 @@ jobs:
           cache: npm
           cache-dependency-path: desktop/package-lock.json
 
-      - name: npm install
-        working-directory: desktop
-        run: npm ci --no-audit --no-fund
-
-      - name: tests
-        working-directory: desktop
-        run: npm test --silent
-
-      - name: build (nsis + portable + zip)
-        working-directory: desktop
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: npm run dist
+      - uses: ./.github/actions/build-windows
 
       - name: upload artifacts
         uses: actions/upload-artifact@v4
