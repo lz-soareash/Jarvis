@@ -25,6 +25,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        chmod +x gradlew
         VERSION=$(cat ../VERSION)
         if [ -n "${VEGA_KEYSTORE_BASE64:-}" ]; then
           echo "Assinatura oficial: usando secrets VEGA_KEYSTORE_*."
