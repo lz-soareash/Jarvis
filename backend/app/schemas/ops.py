@@ -54,3 +54,4 @@ class OpsOverview(APIModel):
     computer_agent: dict = {}  # Fase 19: Computer Agent (tasks/estado/limits)
     identity: dict = {}  # Fase 19: identidade/persona do assistente (display VEGA)
     devices: dict = {}  # Fase 21: Device Bridge (total por status / plataformas)
+    remote_gateway: dict = {}  # Fase 23: Core Link WAN (enabled/running/counters)

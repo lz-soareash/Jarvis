@@ -104,6 +104,18 @@ def test_message_type_vocabulary_matches_spec():
         "command_ack",
         "command_result",
         "error",
+        # Fase 23 — WAN relay (tipos ADITIVOS; o protocolo v1 continua intacto).
+        "auth",
+        "auth_result",
+        "message",
+        "message_ack",
+        "message_result",
+        "agent_event",
+        "computer_task",
+        "computer_result",
+        "approval_respond",
+        "approval_result",
+        "close",
     }
 
 

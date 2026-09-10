@@ -149,6 +149,16 @@ class Settings(BaseSettings):
     remote_connect_timeout: float = 10.0  # s — timeout de estabelecimento
     remote_max_reconnect_delay: float = 60.0  # s — teto do backoff de reconexão
 
+    # Remote Gateway WAN (Fase 23) — core link outbound para o relé deployável
+    # (`backend/app/gateway/`). Gate mestre: quando `remote_gateway_enabled=false`
+    # (padrão), NENHUM worker/conexão de WAN é criado. O Core continua sendo a
+    # ÚNICA autoridade (identidade/permissões/IA); o relé só transporta.
+    remote_gateway_enabled: bool = False
+    # Segredo compartilhado com o relé que o identifica como core legítimo no
+    # handshake `hello` (mesmo valor de `GATEWAY_PEER_TOKEN` no deploy do relé).
+    # Nunca entregue a mobiles; nunca em logs.
+    remote_gateway_peer_token: str = ""
+
     # Remote Identity (Fase 12.2) — parâmetros de segurança do pairing/credenciais.
     # Código curto de pairing: 10 dígitos, TTL de 10 min, single-use.
     remote_pairing_code_length: int = 10

@@ -48,6 +48,13 @@ async def lifespan(app: FastAPI):
     gateway = await start_remote_gateway()
     if gateway is not None:
         app.state.remote_gateway = gateway
+    # Fase 23: Core Link WAN (relé WebSocket outbound, peer `core`). No-op
+    # quando REMOTE_GATEWAY_ENABLED=false (default) — sem conexão/thread.
+    from app.remote.link_runtime import start_remote_link, stop_remote_link
+
+    link = await start_remote_link()
+    if link is not None:
+        app.state.remote_gateway_link = link
     # Fase 17: worker proativo — apenas quando alguma capacidade está ligada
     # (default dos dois é False; sem thread/loop infinita no padrão).
     app.state.proactive_worker = None
@@ -73,6 +80,9 @@ async def lifespan(app: FastAPI):
         await stop_remote_gateway()
         if hasattr(app.state, "remote_gateway"):
             del app.state.remote_gateway
+        await stop_remote_link()
+        if hasattr(app.state, "remote_gateway_link"):
+            del app.state.remote_gateway_link
 
 
 def emit_proactive(event_type: str, *, source: str = "system") -> None:

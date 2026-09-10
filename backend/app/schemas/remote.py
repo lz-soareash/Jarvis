@@ -8,6 +8,8 @@ vez) quando o protocolo assim exige.
 from datetime import datetime
 from typing import Any
 
+from pydantic import Field
+
 from app.schemas.base import APIModel
 
 
@@ -200,7 +202,36 @@ class RemoteStatusOut(APIModel):
     pending_commands: int | None = None
     active_session: str | None = None
     revocation: str | None = None
+    # Fase 23 — Core Link WAN (relé WebSocket). Contadores e estado sanitizados.
+    gateway: dict | None = None
 
 
 class Empty(APIModel):
     ok: bool = True
+
+
+# ---------------------------------------------------------------------------
+# Fase 23 — Core Link WAN (relé WebSocket). Nunca expõe secrets nem payloads.
+# ---------------------------------------------------------------------------
+
+
+class RemoteGatewayConnectIn(APIModel):
+    url: str | None = None
+
+
+class RemoteGatewayOut(APIModel):
+    enabled: bool
+    configured: bool
+    running: bool
+    transport: str = "gateway_wan"
+    url: str = ""
+    connection: str = "disconnected"
+    healthy: bool = False
+    device_id: str | None = None
+    connected_at: datetime | None = None
+    last_heartbeat: datetime | None = None
+    reconnect_count: int = 0
+    last_error: str | None = None
+    revocation: str | None = None
+    devices_bound: int = 0
+    counters: dict[str, int] = Field(default_factory=dict)

@@ -347,7 +347,43 @@ def build_overview(db: OrmSession) -> OpsOverview:
         computer_agent=_computer_agent_stats(db),
         identity=_identity_stats(),
         devices=_device_stats(db),
+        remote_gateway=_remote_gateway_stats(),
     )
+
+
+def _remote_gateway_stats() -> dict:
+    """Fase 23 — Core Link WAN (relé): enabled/configured/running + contadores.
+
+    Sanitizado: só contagens e estado; nunca secrets nem payloads. Best-effort
+    (o link pode não estar iniciado em testes/processos sem o singleton).
+    """
+    from app.remote.link_runtime import get_remote_link, resolve_url, should_start
+
+    link = get_remote_link()
+    status: dict = {
+        "enabled": bool(settings.remote_gateway_enabled),
+        "configured": should_start(),
+        "running": link is not None,
+        "transport": "gateway_wan",
+        "url": resolve_url(),
+    }
+    if link is not None:
+        status.update(link.snapshot())
+    else:
+        status.update(
+            {
+                "connection": "disconnected",
+                "healthy": False,
+                "connected_at": None,
+                "last_heartbeat": None,
+                "reconnect_count": 0,
+                "last_error": "link não iniciado",
+                "revocation": None,
+                "devices_bound": 0,
+                "counters": {},
+            }
+        )
+    return status
 
 
 def _to_provider_out(status) -> OpsProvider:

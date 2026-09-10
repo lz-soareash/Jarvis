@@ -35,6 +35,27 @@ class MessageType(str, Enum):
     COMMAND_ACK = "command_ack"
     COMMAND_RESULT = "command_result"
     ERROR = "error"
+    # Fase 23 — WAN relay (tipos ADITIVOS; não alteram o protocolo v1 existente).
+    # AUTH/AUTH_RESULT: handshake do cliente fino; o relé encaminha ao Core e a
+    # autoridade de confiança continua sendo o Core (trust relay).
+    AUTH = "auth"
+    AUTH_RESULT = "auth_result"
+    # MESSAGE/MESSAGE_ACK/MESSAGE_RESULT: conversação WAN (reusa o AI Core).
+    MESSAGE = "message"
+    MESSAGE_ACK = "message_ack"
+    MESSAGE_RESULT = "message_result"
+    # AGENT_EVENT: stream/eventos do Core → cliente fino (chunks, progresso,
+    # approval_required, conclusão) durante mensagens/tarefas de Computer Use.
+    AGENT_EVENT = "agent_event"
+    # COMPUTER_TASK/COMPUTER_RESULT: Computer Use remoto (reusa Computer Agent).
+    COMPUTER_TASK = "computer_task"
+    COMPUTER_RESULT = "computer_result"
+    # APPROVAL_RESPOND/APPROVAL_RESULT: decisão de aprovação via WAN (reusa o
+    # mesmo fluxo de `/api/approvals/{id}/respond`).
+    APPROVAL_RESPOND = "approval_respond"
+    APPROVAL_RESULT = "approval_result"
+    # CLOSE: encerramento cooperativo do peer (sanitizado pelo relé).
+    CLOSE = "close"
 
 
 class UnsupportedVersionError(ValueError):
@@ -59,6 +80,9 @@ class RemoteEnvelope(BaseModel):
     message_id: str  # corrrelação/rastreabilidade (gerado por build_message)
     device_id: str | None = None
     command_id: str | None = None
+    # Fase 23 — correlação de operações WAN (mensagens/tarefas/approvals).
+    # ADITIVO: peers da v1 (Fase 12) não o enviam e o campo é opcional.
+    request_id: str | None = None
     timestamp: str  # ISO-8601 UTC (gerado por build_message)
     payload: dict[str, Any] = Field(default_factory=dict)
 
@@ -77,6 +101,7 @@ def build_message(
     device_id: str | None = None,
     message_id: str | None = None,
     command_id: str | None = None,
+    request_id: str | None = None,
     payload: dict[str, Any] | None = None,
 ) -> RemoteEnvelope:
     """Constrói um envelope válido com as convenções do protocolo."""
@@ -86,6 +111,7 @@ def build_message(
         message_id=message_id or str(uuid4()),
         device_id=device_id,
         command_id=command_id,
+        request_id=request_id,
         timestamp=_now_iso(),
         payload=payload or {},
     )

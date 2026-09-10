@@ -1099,6 +1099,41 @@ próprios. Elas apenas **REGISTER** (identidade `PENDING` com `id` emitido pelo 
 - **Validação**: backend **823 passed, 1 skipped** (7 testes Fase 22 novos); Desktop
   20 testes (6 bridge + 3 version + 6 updates + 5 config).
 
+## Fase 23 — Core Link WAN (relé separado + link outbound do Core) ✔
+
+- **Relé WAN deployável** (`backend/app/gateway/`, processo **standalone** — nunca o app
+  Core): uvicorn via `backend/scripts/run_gateway.py`, lê **somente** `GATEWAY_*` (config
+  `app/gateway/config.py`), sem banco (estado em memória), com rate limiting/dedup de peers
+  por IP, `max_payload_bytes` e `max_peers_per_ip`. Ex.: `GATEWAY_PEER_TOKEN`, `GATEWAY_HOST`,
+  `GATEWAY_PORT` (padrão 8200), `GATEWAY_WS_PATH` (padrão `/api/remote/ws`).
+- **Core link outbound** (`backend/app/remote/link.py`): o PC conecta ao relé como peer
+  `core` (handshake `hello` + `peer_token`, reconnect/backoff, heartbeat) — nenhuma porta de
+  entrada é aberta no Windows. Singleton supervisionado em
+  `backend/app/remote/link_runtime.py`, iniciado no lifespan do app somente com
+  `REMOTE_GATEWAY_ENABLED=true` (padrão **false**: nenhum worker WAN é criado).
+  Override de URL via `POST /api/remote/gateway/connect`; persistido best-effort apenas o URL
+  (`data/gateway.runtime.json` — identidade/token nunca gravados).
+- **Trust relay**: o relé **não decide autorização**. Mobile pendente só pode enviar
+  `auth`/`heartbeat`/`close`; o relé roteia o `auth` ao Core e só **atrela** o device ao peer
+  após `auth_result ok:true` (vindo do Core com o `target_device_id`). Correlação por
+  `request_id` para handshakes em andamento; substituição de core/mobile duplicado fecha o
+  antigo graciosamente. Uma única hop: `mobile → core → mobile` (mobile nunca roteia p/ outro
+  mobile). Contadores/observabilidade sanitizados (nunca tokens/payloads).
+- **Protocolo aditivo** (`app/remote/protocol.py`): novos `MessageType` `AUTH`/`AUTH_RESULT`/
+  `MESSAGE`/`MESSAGE_ACK`/`MESSAGE_RESULT`/`AGENT_EVENT`/`COMPUTER_TASK`/`COMPUTER_RESULT`/
+  `APPROVAL_RESPOND`/`APPROVAL_RESULT`/`CLOSE` + campo opcional `request_id` — sem breakar a v1
+  (Fase 12/16 continuam intactas; vocabulário versionado no teste).
+- **Autoridade única no Core**: conversação WAN reusa o **mesmo** AI Core (provider agnóstico,
+  mesma `Permission Engine`, `Computer Agent` e fluxo de aprovações `/api/approvals/{id}/respond`).
+- **API/UI**: `GET /api/remote/gateway` (status sanitizado), `POST /api/remote/gateway/connect`
+  e `/disconnect`, bloco `gateway` em `/api/remote/status` e card **Core Link WAN** na Central
+  de Operações; config em `.env.example` (`REMOTE_GATEWAY_*` + notas de deploy do relé).
+- **Android/Desktop**: cliente fino **inalterado** — Android fala REST direto com o Core; o leg
+  WAN é um caminho alternativo para thin clients fora da LAN e não afeta o app existente.
+  Desktop é um setup wizard (sem painéis de runtime), então também não ganha painel WAN.
+- **Validação**: backend **843 passed, 1 skipped** (20 testes novos da Fase 23:
+  `backend/tests/test_fase23_gateway.py` — hub do relé + CoreLink e2e em memória sem rede).
+
 ## Download
 
 Distribuições oficiais publicadas como **GitHub Release**:
@@ -1280,21 +1315,31 @@ tray com verificação de atualização, auto-conexão Android; **auto-update fo
 metadata-only (`updates.js`, 6 testes); **CI/release** `.github/workflows`
 (build-windows/build-android/release com SHA256SUMS via `release_checksums.py`) e
 gradle wrapper 8.7; backend **823 passed, 1 skipped**) ·
-23. V2 — Multi-turn Agentic Context (planejado): memória do turno (agenda de passos e
+23. Core Link WAN ✔ (Fase 23 COMPLETA: relé WebSocket **standalone** (`backend/app/gateway/`,
+deployável, lê só `GATEWAY_*`) + core link outbound do Core como peer `core` — thin clients fora
+da LAN autenticam via relé com **trust relay** (o relé não decide autorização; device é atrelado
+apenas após `auth_result ok:true` do Core); autoridades (auth/permissões/IA) continuam 100% no
+Core — conversação WAN reusa o MESMO AI Core/Computer Agent/fluxo de aprovações; protocolo v1
+extendido de forma **aditiva** (AUTH/AUTH_RESULT/MESSAGE/MESSAGE_ACK/MESSAGE_RESULT/
+AGENT_EVENT/COMPUTER_TASK/COMPUTER_RESULT/APPROVAL_RESPOND/APPROVAL_RESULT/CLOSE + request_id
+opcional); API `/api/remote/gateway` (status/connect/disconnect), bloco `gateway` nos status e
+card na Central de Operações; gate `REMOTE_GATEWAY_ENABLED=false` por padrão; Android/Desktop
+inalterados; 20 testes novos — backend **843 passed, 1 skipped**) ·
+24. V2 — Multi-turn Agentic Context (planejado): memória do turno (agenda de passos e
 justificativas) + contexto inter-turno persistente para tarefas longas ·
-24. V3 — Computer Use mais profundo (planejado): gestão de janelas, drag/scroll contínuo,
+25. V3 — Computer Use mais profundo (planejado): gestão de janelas, drag/scroll contínuo,
 uso de atalhos seguros e tolerância a layout (por via segura e confirmada) ·
-25. V4 — Planejamento hierárquico (planejado): tasks decomponíveis com dependências,
+26. V4 — Planejamento hierárquico (planejado): tasks decomponíveis com dependências,
 paralelismo controlado e view de progresso na Central de Operações ·
-26. V5 — Proativo contextual (planejado): silêncio ativo, monitoramento de estados
+27. V5 — Proativo contextual (planejado): silêncio ativo, monitoramento de estados
 (janela/carga/agenda) e sugestões com confirmação explícita ·
-27. V6 — Pesquisa agêntica (planejado): research multi-iteração com síntese em
+28. V6 — Pesquisa agêntica (planejado): research multi-iteração com síntese em
 conhecimento persistente e fontes citáveis ·
-28. V7 — Voz agêntica (planejado): TTS proativo de estados/resultados e comando
+29. V7 — Voz agêntica (planejado): TTS proativo de estados/resultados e comando
 hands-free com confirmação auditiva ·
-29. V8 — Perfil do usuário (planejado): memória de preferências com consentimento,
+30. V8 — Perfil do usuário (planejado): memória de preferências com consentimento,
 estilos de interação e affordances por dispositivo ·
-30. V9 — Autonomia governada (planejado): políticas por tarefa/domínio, revisão de
+31. V9 — Autonomia governada (planejado): políticas por tarefa/domínio, revisão de
 decisões passadas e auditoria de confiança, sempre com supervisão humana.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

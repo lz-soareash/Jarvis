@@ -62,6 +62,8 @@ from app.schemas.remote import (
     PairingSubmitOut,
     RemoteMessageIn,
     RemoteStatusOut,
+    RemoteGatewayConnectIn,
+    RemoteGatewayOut,
 )
 
 from app.api.chat import SSE_HEADERS
@@ -119,8 +121,69 @@ def remote_status(db: OrmSession = Depends(get_db)) -> RemoteStatusOut:
                 active_only=True,
             )
             out["pending_commands"] = len(active)
+        # Fase 23 — Core Link WAN (snapshot síncrono/opcional, sem secrets).
+        from app.remote.link_runtime import get_remote_link
+
+        link = get_remote_link()
+        if link is not None and settings.remote_gateway_enabled:
+            snap = link.snapshot()
+            out["gateway"] = {
+                "enabled": True,
+                "configured": True,
+                "running": True,
+                "transport": "gateway_wan",
+                "connection": snap.get("connection"),
+                "healthy": snap.get("healthy"),
+                "devices_bound": snap.get("devices_bound", 0),
+                "reconnect_count": snap.get("reconnect_count", 0),
+                "last_error": snap.get("last_error"),
+                "revocation": snap.get("revocation"),
+                "counters": snap.get("counters", {}),
+            }
         return RemoteStatusOut(**out)
     return RemoteStatusOut(**out)
+
+
+# ---------------------------------------------------------------------------
+# Fase 23 — Core Link WAN (relé WebSocket). Estado + conecta/desconecta.
+# ---------------------------------------------------------------------------
+
+@router.get("/remote/gateway", response_model=RemoteGatewayOut)
+async def remote_gateway_status() -> RemoteGatewayOut:
+    """Estado atual do Core Link WAN (nunca expõe secrets/counters brutos)."""
+    from app.remote.link_runtime import get_remote_link_status
+
+    return RemoteGatewayOut(**await get_remote_link_status())
+
+
+@router.post("/remote/gateway/connect", response_model=RemoteGatewayOut)
+async def remote_gateway_connect(body: RemoteGatewayConnectIn) -> RemoteGatewayOut:
+    """Sobe/reconecta o Core Link WAN. `url` opcional sobrescreve o config
+    (persistido best-effort; a identidade e o peer_token NUNCA são tocados)."""
+    if not settings.remote_gateway_enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="Core Link WAN desabilitado (REMOTE_GATEWAY_ENABLED=false)",
+        )
+    from app.remote.link_runtime import (
+        get_remote_link_status,
+        start_remote_link,
+    )
+
+    await start_remote_link(url=body.url)
+    return RemoteGatewayOut(**await get_remote_link_status())
+
+
+@router.post("/remote/gateway/disconnect", response_model=RemoteGatewayOut)
+async def remote_gateway_disconnect() -> RemoteGatewayOut:
+    """Desconecta o Core Link WAN (não desabilita o config nem apaga prefs)."""
+    from app.remote.link_runtime import (
+        get_remote_link_status,
+        stop_remote_link,
+    )
+
+    await stop_remote_link()
+    return RemoteGatewayOut(**await get_remote_link_status())
 
 
 @router.post("/remote/pairings", response_model=PairingCreateOut, status_code=201)

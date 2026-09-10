@@ -35,6 +35,7 @@ const OpsView = (() => {
     identityBody: document.getElementById("ops-identity-body"),
     devicesCard: document.getElementById("ops-devices"),
     devicesBody: document.getElementById("ops-devices-body"),
+    gatewayBody: document.getElementById("ops-gateway-body"),
     eventsBody: document.getElementById("ops-events-body"),
   };
 
@@ -407,6 +408,32 @@ const OpsView = (() => {
     `;
   }
 
+  function renderGateway(gw) {
+    if (!els.gatewayBody) return;
+    if (!gw || gw.enabled === false) {
+      els.gatewayBody.innerHTML = '<div class="ops-row"><span>Capacidade</span><b>desabilitada</b></div>' +
+        '<div class="ops-muted ops-note">REMOTE_GATEWAY_ENABLED=false — relé WAN off.</div>';
+      return;
+    }
+    const counters = gw.counters || {};
+    const conn = gw.connection === "connected"
+      ? '<span class="ops-badge ops-badge--ok">conectado</span>'
+      : `<span class="ops-badge ops-badge--warn">${esc(gw.connection || "desconectado")}</span>`;
+    els.gatewayBody.innerHTML = `
+      <div class="ops-row"><span>Capacidade</span><b>${gw.configured ? "habilitada" : "não configurada"}</b></div>
+      <div class="ops-row"><span>Relé</span><b>${esc(gw.url || "—")}</b></div>
+      <div class="ops-row"><span>Conexão</span><b>${conn}</b></div>
+      <div class="ops-row"><span>Devices atrelados</span><b>${gw.devices_bound ?? 0}</b></div>
+      <div class="ops-row"><span>Reconexões</span><b>${gw.reconnect_count ?? 0}</b></div>
+      <div class="ops-row"><span>Mensagens (total/falhas)</span><b>${counters.messages_total ?? 0} / ${counters.messages_failed ?? 0}</b></div>
+      <div class="ops-row"><span>Auth (ok/negadas)</span><b>${counters.auth_failures ?? 0} negadas</b></div>
+      <div class="ops-row"><span>Tarefas / Aprovações</span><b>${counters.tasks ?? 0} / ${counters.approvals_decided ?? 0}</b></div>
+      <div class="ops-row"><span>Último heartbeat</span><b>${time(gw.last_heartbeat)}</b></div>
+      ${gw.last_error ? `<div class="ops-muted ops-note">último erro: ${esc(gw.last_error)}</div>` : ""}
+      ${gw.revocation ? `<div class="ops-muted ops-note">estado terminal: ${esc(gw.revocation)}</div>` : ""}
+    `;
+  }
+
   function renderEvents(events) {
     if (!els.eventsBody) return;
     if (!events || !events.length) {
@@ -517,6 +544,7 @@ const OpsView = (() => {
       renderComputerTimeline(data.computer_agent, data.recent_events);
       renderIdentity(data.identity);
       renderDevices(data.devices);
+      renderGateway(data.remote_gateway);
       renderEvents(data.recent_events);
       // Fase 19.6 — atividade real do Computer Agent reflete no orb quando a Central
       // está aberta (via VegaUI; nunca inventa estado).
