@@ -32,7 +32,7 @@ def _make_factory(url: str):
         return WebSocketConnection(
             url=url,
             headers={},
-            timeout=settings.remote_connect_timeout,
+            timeout=settings.remote_gateway_connect_timeout_seconds,
         )
 
     return _factory
@@ -71,6 +71,12 @@ async def start_remote_link(url: str | None = None) -> CoreLink | None:
         gateway_url=effective,
         peer_token=settings.remote_gateway_peer_token,
         connection_factory=_make_factory(effective),
+        heartbeat_interval=settings.remote_gateway_heartbeat_seconds,
+        connect_timeout=settings.remote_gateway_connect_timeout_seconds,
+        max_reconnect_delay=settings.remote_gateway_max_backoff_seconds,
+        reconnect_enabled=settings.remote_gateway_reconnect_enabled,
+        message_timeout=settings.remote_gateway_message_timeout_seconds,
+        queue_ttl=settings.remote_gateway_queue_ttl_seconds,
     )
     await _link.start()
     return _link
@@ -91,7 +97,7 @@ def get_remote_link() -> CoreLink | None:
 async def get_remote_link_status() -> dict[str, Any]:
     """Snapshot sanitizado p/ UI/ops (nunca secrets)."""
     running = _link is not None
-    status: dict[str, Any] = {
+    base = {
         "enabled": bool(settings.remote_gateway_enabled),
         "configured": should_start(),
         "running": running,
@@ -101,23 +107,30 @@ async def get_remote_link_status() -> dict[str, Any]:
     if running and _link is not None:
         snapshot = _link.snapshot()
         snapshot.pop("enabled", None)
-        status.update(snapshot)
-    else:
-        status.update(
-            {
-                "connection": "disconnected",
-                "healthy": False,
-                "device_id": settings.remote_device_id,
-                "connected_at": None,
-                "last_heartbeat": None,
-                "reconnect_count": 0,
-                "last_error": "link não iniciado",
-                "revocation": None,
-                "devices_bound": 0,
-                "counters": {},
-            }
-        )
-    return status
+        base.update(snapshot)
+        return base
+    base.update(
+        {
+            "connection": "disconnected",
+            "connection_state": "disabled",
+            "authenticated": False,
+            "healthy": False,
+            "device_id": settings.remote_device_id,
+            "connected_at": None,
+            "last_heartbeat": None,
+            "last_state_change": None,
+            "reconnect_count": 0,
+            "last_error": "link não iniciado",
+            "last_error_code": None,
+            "revocation": None,
+            "devices_bound": 0,
+            "mobile_heartbeats": {},
+            "latency": {"relay_rtt_ms": None, "message_latency_ms": None},
+            "queued_proactive": 0,
+            "counters": {},
+        }
+    )
+    return base
 
 
 def reset_remote_link() -> None:

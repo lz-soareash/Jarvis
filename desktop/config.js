@@ -11,11 +11,13 @@
 const DEFAULT_CORE_URL = "http://127.0.0.1:8100";
 const DEFAULT_RELEASE_FEED = "https://api.github.com/repos/lz-soareash/Jarvis/releases/latest";
 const DEFAULT_FIRST_RUN = true;
+const DEFAULT_WAN_URL = "";
 
 const DEFAULTS = {
   coreUrl: DEFAULT_CORE_URL,
   releaseFeedUrl: DEFAULT_RELEASE_FEED,
   firstRun: DEFAULT_FIRST_RUN,
+  wanUrl: DEFAULT_WAN_URL,
 };
 
 function normalizeCoreUrl(value) {
@@ -24,6 +26,14 @@ function normalizeCoreUrl(value) {
   if (!/^https?:\/\//i.test(url)) url = `http://${url}`;
   url = url.replace(/\/+$/, "");
   return url;
+}
+
+// Fase 24 — WAN: aceita ws:// e wss:// (nunca http/https; o relé fala WebSocket).
+function normalizeWanUrl(value) {
+  const url = String(value || "").trim();
+  if (!url) return DEFAULT_WAN_URL;
+  if (!/^wss?:\/\//i.test(url)) return DEFAULT_WAN_URL;
+  return url.replace(/\/+$/, "");
 }
 
 function sanitizeReleaseFeedUrl(value) {
@@ -37,6 +47,7 @@ function validateConfig(input) {
   cfg.coreUrl = normalizeCoreUrl(cfg.coreUrl);
   cfg.releaseFeedUrl = sanitizeReleaseFeedUrl(cfg.releaseFeedUrl);
   cfg.firstRun = typeof cfg.firstRun === "boolean" ? cfg.firstRun : DEFAULT_FIRST_RUN;
+  cfg.wanUrl = normalizeWanUrl(cfg.wanUrl);
   return cfg;
 }
 
@@ -54,8 +65,10 @@ module.exports = {
   DEFAULT_CORE_URL,
   DEFAULT_RELEASE_FEED,
   DEFAULT_FIRST_RUN,
+  DEFAULT_WAN_URL,
   DEFAULTS,
   normalizeCoreUrl,
+  normalizeWanUrl,
   sanitizeReleaseFeedUrl,
   validateConfig,
   loadConfig,

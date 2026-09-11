@@ -159,6 +159,24 @@ class Settings(BaseSettings):
     # Nunca entregue a mobiles; nunca em logs.
     remote_gateway_peer_token: str = ""
 
+    # Fase 24 — política de conectividade do Core Link WAN (relé). Gate mestre
+    # continua `remote_gateway_enabled`; estes controles só entram em ação QUANDO
+    # o link está habilitado e configurado. Defaults seguros: nenhum deles abre
+    # porta, expõe segredo nem amplia a superfície de execução do Core.
+    # Reconexão automática de clientes (espelhado no `auth_result` p/ o móvel).
+    remote_gateway_reconnect_enabled: bool = True
+    # Intervalo de heartbeat do link (Core ↔ relé) e o sugerido aos móveis.
+    remote_gateway_heartbeat_seconds: float = 30.0
+    # Timeout de estabelecimento do handshake com o relé (s).
+    remote_gateway_connect_timeout_seconds: float = 10.0
+    # Teto (s) de um turno WAN visto pelo cliente — ADVISÓRIO no cliente; o Core
+    # NUNCA aborta um turno legítimo do agente por esse teto.
+    remote_gateway_message_timeout_seconds: float = 60.0
+    # Teto (s) do backoff de reconexão do link (protocol: 1,2,4,8,16,30,30…).
+    remote_gateway_max_backoff_seconds: float = 60.0
+    # TTL (s) da fila em memória de proativas para móveis offline (bounded).
+    remote_gateway_queue_ttl_seconds: float = 300.0
+
     # Remote Identity (Fase 12.2) — parâmetros de segurança do pairing/credenciais.
     # Código curto de pairing: 10 dígitos, TTL de 10 min, single-use.
     remote_pairing_code_length: int = 10

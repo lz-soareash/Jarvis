@@ -9,7 +9,7 @@
   "scripts": {
     "start": "electron .",
     "sync:version": "node scripts/sync-version.js",
-    "test": "node --test --test-force-exit bridge.test.mjs && node --test --test-force-exit version.test.mjs && node --test --test-force-exit updates.test.mjs && node --test --test-force-exit config.test.mjs",
+    "test": "node --test --test-force-exit bridge.test.mjs && node --test --test-force-exit version.test.mjs && node --test --test-force-exit updates.test.mjs && node --test --test-force-exit config.test.mjs && node --test --test-force-exit wan.test.mjs",
     "dist:packager": "electron-packager . VEGA --platform=win32 --arch=x64 --overwrite --out=dist --app-version=%npm_package_version% --icon=resources/icon.ico --win32metadata.CompanyName=VEGA --win32metadata.FileDescription=VEGA --win32metadata.ProductName=VEGA --win32metadata.OriginalFilename=VEGA.exe",
     "dist": "npm run sync:version && electron-builder --win nsis portable zip"
   },
@@ -24,6 +24,7 @@
     "files": [
       "main.js",
       "bridge.js",
+      "wan.js",
       "config.js",
       "updates.js",
       "renderer/**",

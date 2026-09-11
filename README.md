@@ -92,7 +92,11 @@ backend/
 │   │   ├── limits.py            # 16 — rate limit (auth/mensagem) + concorrência, reset em testes
 │   │   ├── sessions.py          # 16 — TTL/expiração/limpeza + revogação individual de sessões
 │   │   ├── message.py           # 16 — mensagem conversacional via AI Core (reply + SSE)
-│   │   └── config.py            # 16 — TTL/CORS/helpers centralizados da camada de acesso
+│   │   ├── config.py            # 16 — TTL/CORS/helpers centralizados da camada de acesso
+│   │   ├── link.py              # 23/24 — CoreLink WAN (conexão outbound do Core ao relé)
+│   │   ├── link_runtime.py      # 23/24 — singleton supervisionado do CoreLink
+│   │   └── gateway_prefs.py     # 23 — persistência best-effort do URL do relé
+│   ├── gateway/                  # Fase 23/24 — relé WAN standalone (hub, server, limits, backpressure, registry, ops, config, main)
 │   ├── websearch/                 # Fase 14 — providers de busca (DDG) + registry
 │   ├── research/                  # Fase 14 — SSRF, fetcher, extração, evidência, agente, síntese, knowledge
 │   ├── perception/                # Fase 15 — Perception Layer: abstração, provider Windows, state, tool
@@ -454,6 +458,9 @@ Core como nova capacidade `kind="research"` e exposta por tools `web_search`/`we
 | `PATCH/DELETE /api/proactive/schedules/{id}` | atualiza / remove um schedule (auditado) — Fase 17 |
 | `GET /api/proactive/stream` | SSE de mensagens proativas (replay + ao vivo) — Fase 17 |
 | `GET /api/remote/status` | estado sanitizado do agente remoto (connection_state, pending_commands, …) |
+| `GET /api/remote/gateway` | status sanitizado do Core Link WAN (relé; `REMOTE_GATEWAY_ENABLED=true`) — Fases 23/24 |
+| `POST /api/remote/gateway/connect` | conecta o Core ao relé (URL opcional; persistido best-effort, nunca secrets) — Fase 23 |
+| `POST /api/remote/gateway/disconnect` | desconecta o Core do relé — Fase 23 |
 | `GET /health` | saúde da API + banco (SQLite) e device detectado pelo User-Agent |
 | `GET /docs` | OpenAPI (Swagger UI) |
 
@@ -497,7 +504,15 @@ estados VEGA, `frontend/tests/vega-state.test.mjs`) somam **7 certificados**. A 
 (VEGA Multiplatform — Device Bridge)** adiciona **53 testes herméticos**
 (`tests/test_fase21_devices.py`) + E2E isolado com banco real em arquivo
 (register→pair→heartbeat→rename→info→list→claim→disconnect→**reboot**, `ALL_OK`) + **6 testes
-Node** do bridge desktop (`desktop/bridge.test.mjs`) → backend **816 passed, 1 skipped**. Os
+Node** do bridge desktop (`desktop/bridge.test.mjs`) → backend **816 passed, 1 skipped**. A
+**Fase 22** adiciona **7 testes** → backend **823 passed, 1 skipped**. A **Fase 23** adiciona
+**20 testes herméticos** (`tests/test_fase23_gateway.py` — relé hub + CoreLink e2e em memória)
+→ backend **843 passed, 1 skipped**. A **Fase 24** adiciona **56 testes herméticos**
+(`tests/test_fase24_wan.py` — relay heartbeat WAN com correção P1/P5, TTL de AUTH em voo,
+rate limit por peer, wake-event da mailbox, limites, snapshot/vocabulário do CoreLink,
+tunáveis do runtime, schema/API e 2 E2E em processo com banco real) → backend
+**899 passed, 1 skipped**. O Desktop valida `npm test` em `desktop/` (**28 testes Node**:
+bridge 6 + version 3 + updates 6 + config 5 + wan 8). Os
 `dev_*` usam `asyncio.run` (compatíveis com o
 Python 3.14, sem depender de event loop pré-existente). Os testes são herméticos: forçam
 `ENV=test`, `GEMINI_API_KEY=""`, `DATABASE_URL=sqlite:///:memory:`,
@@ -1134,6 +1149,67 @@ próprios. Elas apenas **REGISTER** (identidade `PENDING` com `id` emitido pelo 
 - **Validação**: backend **843 passed, 1 skipped** (20 testes novos da Fase 23:
   `backend/tests/test_fase23_gateway.py` — hub do relé + CoreLink e2e em memória sem rede).
 
+## Fase 24 — Secure WAN Gateway & Remote Connectivity ✔
+
+Conecta os clientes finos ao **MESMO AI Core fora da LAN** — sem NAT/port-forwarding,
+sem segundo Core/Memória/Permissões/Tools. O relé só **transporta**; TODA autoridade
+(auth, permissões, IA, aprovações) continua 100% no PC.
+
+```
+  VEGA Mobile (fora da LAN)          Relé WAN (VPS)               VEGA Core (PC)
+ ┌──────────────────────┐   wss   ┌──────────────────────┐   wss   ┌──────────────────────┐
+ │  VegaWan.kt / wan.js │ ─────▶ │   backend/app/gateway │ ─────▶ │  CoreLink (link.py)  │
+ │  auth -> heartbeat   │         │   RELÉ PURO: roteia   │         │  auth, AI Core,      │
+ │  msg -> result       │ ◀─────  │   envelopes (1 hop)   │ ◀─────  │  approvals, proact.  │
+ └──────────────────────┘   relé   └──────────────────────┘   relé   └──────────────────────┘
+            sem segundo AI Core          sem banco/estado         autoridade única
+```
+
+- **Heartbeat WAN corrigido (P1/P5)**: móvel **pendente** tem o `heartbeat` respondido
+  **inline** pelo próprio relé (`heartbeat_ack {ok, pending:true}`) — o Core NUNCA vê batida
+  de device não-atrelado; móvel **atrelado** tem o heartbeat encaminhado ao Core, que devolve
+  `heartbeat_ack` **roteável** de volta ao móvel (`target_device_id`, correlação `request_id`);
+  ACK do Core sem target é descartado e contado (`relays_dropped`).
+- **AUTH em voo com TTL** (`auth_timeout_seconds`, default 60 s): o relé correlaciona
+  `request_id` do `auth` → `auth_result` (single-try; se o Core não responder, o móvel usa um
+  novo `request_id`) com sweep anti-vazamento de memória + contador `auth_timeouts`.
+- **Rate limit local por peer** (defesa mínima do relé): token bucket por peer para
+  `message`/`computer_task` (heartbeat/ack nunca limitados), Excedido → `error rate_limited`
+  e contador `peer_messages_rate_limited` (réplica sempre `peer_messages_rejected` limpa).
+- **Backpressure** (`backpressure.py`): `Mailbox` com wake `asyncio.Event` — o server só
+  transmite quando há item (sem busy-wait); `put` em mailbox cheia/ fechada é contado e
+  descartado.
+- **Bootstrap por código de pareamento via relé**: `auth` sem token carrega `pairing_code` +
+  `device_name`/capabilities; o Core reusa `PairingService.submit_code` e devolve **`token`
+  emitido UMA única vez** (banco guarda só hash `sha256:`) + `conversation_id` +
+  `heartbeat_seconds`/`reconnect_enabled`/`message_timeout`/`queue_ttl` ao cliente.
+- **Proativas fora da LAN**: fila off-line no CoreLink (bounded 50/device, dedup por
+  `event_id`, TTL `remote_gateway_queue_ttl_seconds`) com `flush` no (re)auth.
+- **Observabilidade do link** (`CoreLink.snapshot()` → `/api/remote/gateway` + bloco
+  `gateway` em ops): `connection_state` (`WanLinkState`: disabled/disconnected/connecting/
+  connected/degraded/reconnecting/auth_failed/revoked), latência (`relay_rtt_ms`,
+  `message_latency_ms`), `mobile_heartbeats` por device e `queued_proactive` — sempre sem
+  secrets/payloads.
+- **Config** (`.env.example`): `REMOTE_GATEWAY_*` da Fase 23 +
+  `remote_gateway_reconnect_enabled`, `remote_gateway_heartbeat_seconds`,
+  `remote_gateway_connect_timeout_seconds`, `remote_gateway_message_timeout_seconds`,
+  `remote_gateway_max_backoff_seconds`, `remote_gateway_queue_ttl_seconds` — repassadas ao
+  CoreLink pelo `start_remote_link`.
+- **Desktop** (`desktop/wan.js`, **8 testes Node novos**): cliente WAN puro Node WebSocket
+  com o mesmo vocabulário (`offline/connecting/connected/reconnecting/authentication_error/
+  core_unavailable`), `connect/disconnect/revoke`, heartbeat e turnos de mensagem — sem
+  dependências novas.
+- **Android**: `VegaWan.kt` (OkHttp WebSocket, `okhttp 4.12.0` como dependência única) + card
+  **WAN** na `MainActivity` (URL do relé + código de pareamento, estados, device_id, heartbeat,
+  token gerado pelo Core; token nunca em URL/logs). Build local indisponível (JDK 8 no host) →
+  validação no CI `build-android.yml` (temurin 17, `:app:assembleRelease`).
+- **MANUAL VALIDATION REQUIRED** para a voa real/rota CGNAT: o fluxo e2e é validado em
+  processo com banco real; o teste de campo com WSS público via proxy (Caddy/nginx) é manual
+  (o relé serve `ws://`; `wss://` exige TLS no proxy). Token de pareamento nunca aparece em
+  logs/URLs/SSE.
+- **Validação**: backend **899 passed, 1 skipped** (56 testes novos da Fase 24 em
+  `backend/tests/test_fase24_wan.py`); Desktop **28/28 testes Node** verdes (`npm test`).
+
 ## Download
 
 Distribuições oficiais publicadas como **GitHub Release**:
@@ -1325,21 +1401,33 @@ AGENT_EVENT/COMPUTER_TASK/COMPUTER_RESULT/APPROVAL_RESPOND/APPROVAL_RESULT/CLOSE
 opcional); API `/api/remote/gateway` (status/connect/disconnect), bloco `gateway` nos status e
 card na Central de Operações; gate `REMOTE_GATEWAY_ENABLED=false` por padrão; Android/Desktop
 inalterados; 20 testes novos — backend **843 passed, 1 skipped**) ·
-24. V2 — Multi-turn Agentic Context (planejado): memória do turno (agenda de passos e
+24. Secure WAN Gateway & Remote Connectivity ✔ (Fase 24 COMPLETA: clientes finos conversam
+com o MESMO AI Core **fora da LAN** sem NAT/port-forwarding — o relé (`backend/app/gateway/`)
+só TRANSPORTA; toda autoridade (auth/permissões/IA) continua no Core; heartbeat WAN corrigido
+(móvel pendente responde inline no relé, atrelado roteia ao Core e `heartbeat_ack` retorna
+roteável por `target_device_id`); AUTH em voo com TTL (sweep + contador `auth_timeouts`),
+rate limit por peer e wake-event na mailbox; bootstrap por código de pareamento via relé com
+`token` emitido UMA vez + `conversation_id`/tunables; fila off-line de proativas (bounded,
+dedup, TTL) com flush no (re)auth; observabilidade rica do link (`WanLinkState` + latência +
+`mobile_heartbeats` + `queued_proactive`); Desktop (`desktop/wan.js`, 8 testes Node) e Android
+(`VegaWan.kt` OkHttp + card WAN, validado no CI) como thin clients WAN — sem segundo AI
+Core/Memória/Tools; MANUAL VALIDATION REQUIRED para rota real/CGNAT e WSS via proxy; **56
+testes backend novos — 899 passed, 1 skipped**) ·
+25. V2 — Multi-turn Agentic Context (planejado): memória do turno (agenda de passos e
 justificativas) + contexto inter-turno persistente para tarefas longas ·
-25. V3 — Computer Use mais profundo (planejado): gestão de janelas, drag/scroll contínuo,
+26. V3 — Computer Use mais profundo (planejado): gestão de janelas, drag/scroll contínuo,
 uso de atalhos seguros e tolerância a layout (por via segura e confirmada) ·
-26. V4 — Planejamento hierárquico (planejado): tasks decomponíveis com dependências,
+27. V4 — Planejamento hierárquico (planejado): tasks decomponíveis com dependências,
 paralelismo controlado e view de progresso na Central de Operações ·
-27. V5 — Proativo contextual (planejado): silêncio ativo, monitoramento de estados
+28. V5 — Proativo contextual (planejado): silêncio ativo, monitoramento de estados
 (janela/carga/agenda) e sugestões com confirmação explícita ·
-28. V6 — Pesquisa agêntica (planejado): research multi-iteração com síntese em
+29. V6 — Pesquisa agêntica (planejado): research multi-iteração com síntese em
 conhecimento persistente e fontes citáveis ·
-29. V7 — Voz agêntica (planejado): TTS proativo de estados/resultados e comando
+30. V7 — Voz agêntica (planejado): TTS proativo de estados/resultados e comando
 hands-free com confirmação auditiva ·
-30. V8 — Perfil do usuário (planejado): memória de preferências com consentimento,
+31. V8 — Perfil do usuário (planejado): memória de preferências com consentimento,
 estilos de interação e affordances por dispositivo ·
-31. V9 — Autonomia governada (planejado): políticas por tarefa/domínio, revisão de
+32. V9 — Autonomia governada (planejado): políticas por tarefa/domínio, revisão de
 decisões passadas e auditoria de confiança, sempre com supervisão humana.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

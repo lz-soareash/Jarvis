@@ -9,6 +9,7 @@ garante a entrega (ex.: outbox do Core / re-consulta do cliente).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import queue as _queue
 from typing import Any
@@ -23,6 +24,7 @@ class Mailbox:
         self._q: _queue.Queue[Any] = _queue.Queue(maxsize=maxsize)
         self._closed = False
         self.dropped = 0
+        self._wake: asyncio.Event | None = None
 
     def put(self, item: Any) -> bool:
         """Enfileira `item`; False se cheio (descartado, contado) ou fechado."""
@@ -30,11 +32,13 @@ class Mailbox:
             return False
         try:
             self._q.put_nowait(item)
-            return True
         except _queue.Full:
             self.dropped += 1
             logger.warning("Backpressure: mailbox cheia, envelope descartado (%d)", self.dropped)
             return False
+        if self._wake is not None and not self._wake.is_set():
+            self._wake.set()
+        return True
 
     def get(self) -> Any | None:
         """Retorna o próximo item ou None se vazio/fechado (non-blocking)."""
@@ -45,6 +49,14 @@ class Mailbox:
 
     def close(self) -> None:
         self._closed = True
+        if self._wake is not None:
+            self._wake.set()
+
+    def wake_event(self) -> asyncio.Event:
+        """Evento de acordar a TX loop (criado sob demanda, no loop do server)."""
+        if self._wake is None:
+            self._wake = asyncio.Event()
+        return self._wake
 
     @property
     def size(self) -> int:

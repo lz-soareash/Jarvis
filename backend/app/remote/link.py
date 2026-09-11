@@ -24,7 +24,10 @@ import asyncio
 import json
 import logging
 import random
+import time
+from collections import deque
 from datetime import datetime
+from enum import Enum
 from typing import Any, AsyncIterator
 
 from app.ai.providers import get_default_provider
@@ -56,9 +59,43 @@ _LINK_STATS_KEYS = (
     "approvals_decided",
     "approvals_failed",
     "broker_events_forwarded",
+    # Fase 24 — heartbeat WAN, bootstrap de pairing e proativas.
+    "heartbeats",
+    "pairings",
+    "proactive_delivered",
+    "proactive_queued",
+    "proactive_expired",
+    "rate_limited",
 )
 
-_BROKER_EVENT_PREFIXES = ("remote.", "device.", "session.")
+_BROKER_EVENT_PREFIXES = ("remote.", "device.", "session.", "proactive.")
+
+# Fase 24 — fila off-line de proativas: bounded por device (nunca infinita).
+_MAX_PROACTIVE_QUEUE = 50
+_MAX_KNOWN_MOBILES = 50
+_PROACTIVE_CONTENT_LIMIT = 1000
+_MAX_RTT_HISTORY = 10
+_MAX_LATENCY_HISTORY = 10
+
+
+class WanLinkState(str, Enum):
+    """Estados observáveis do Core Link WAN (Fase 24).
+
+    Vocabulário mais rico que o do transporte (`ConnectionState`): descreve o
+    estado REAL do link (o relé só transporta), nunca finge conexão e distingue
+    os modos de falha. `AUTH_FAILED` (peer_token rejeitado pelo relé) e `REVOKED`
+    são terminais nesta sessão do processo; `DEGRADED` reflete conexão ativa com
+    erros/móveis em trânsito.
+    """
+
+    DISABLED = "disabled"
+    DISCONNECTED = "disconnected"
+    CONNECTING = "connecting"
+    CONNECTED = "connected"
+    DEGRADED = "degraded"
+    RECONNECTING = "reconnecting"
+    AUTH_FAILED = "auth_failed"
+    REVOKED = "revoked"
 
 
 class LinkStateError(ValueError):
@@ -80,6 +117,9 @@ class CoreLink:
         min_reconnect_delay: float = 0.5,
         max_reconnect_delay: float = 60.0,
         jitter: float = 0.1,
+        reconnect_enabled: bool | None = None,
+        message_timeout: float = 60.0,
+        queue_ttl: float = 300.0,
     ) -> None:
         self.device_id = device_id
         self._gateway_url = gateway_url
@@ -90,6 +130,14 @@ class CoreLink:
         self._min_reconnect_delay = min_reconnect_delay
         self._max_reconnect_delay = max_reconnect_delay
         self._jitter = jitter
+        # Fase 24 — política de reconexão e fila de proativas (defaults seguros).
+        self._reconnect_enabled = (
+            bool(settings.remote_gateway_reconnect_enabled)
+            if reconnect_enabled is None
+            else bool(reconnect_enabled)
+        )
+        self._message_timeout = message_timeout
+        self._queue_ttl = queue_ttl
 
         self._running = False
         self._terminal_reason: str | None = None
@@ -101,9 +149,20 @@ class CoreLink:
         self._connected_at: datetime | None = None
         self._last_heartbeat: datetime | None = None
         self._last_error: str | None = None
+        self._last_error_code: str | None = None
         self._reconnect_count = 0
         self._bindings: dict[str, dict[str, str]] = {}
         self.stats: dict[str, int] = {k: 0 for k in _LINK_STATS_KEYS}
+
+        # Fase 24 — estado observável rico + métricas sanitizadas de latência.
+        self._state = WanLinkState.DISCONNECTED
+        self._state_changed_at = _utcnow()
+        self._heartbeat_sent_at: float | None = None
+        self._rtt_history: list[float] = []
+        self._latency_history: list[float] = []
+        self._last_mobile_heartbeat: dict[str, datetime] = {}
+        self._proactive_queue: dict[str, deque] = {}
+        self._known_mobiles: dict[str, datetime] = {}
 
     # -- observabilidade ------------------------------------------------------
 
@@ -111,22 +170,64 @@ class CoreLink:
         return {
             "enabled": True,
             "transport": "gateway_wan",
-            "connection_state": (
-                ConnectionState.CONNECTED.value
-                if self._connected
-                else ConnectionState.DISCONNECTED.value
-            ),
+            "connection_state": self._state.value,
+            "connection": self._state.value,
             "authenticated": self._connected,
             "healthy": self._connected,
             "device_id": self.device_id,
             "connected_at": self._connected_at,
             "last_heartbeat": self._last_heartbeat,
+            "last_state_change": self._state_changed_at,
             "reconnect_count": self._reconnect_count,
             "last_error": self._last_error,
+            "last_error_code": self._last_error_code,
             "revocation": self._terminal_reason,
             "devices_bound": len(self._bindings),
+            "mobile_heartbeats": {
+                device_id: ts.isoformat()
+                for device_id, ts in self._last_mobile_heartbeat.items()
+            },
+            "latency": {
+                "relay_rtt_ms": self._avg(self._rtt_history),
+                "message_latency_ms": self._avg(self._latency_history),
+            },
+            "queued_proactive": sum(len(q) for q in self._proactive_queue.values()),
             "counters": dict(self.stats),
         }
+
+    def _avg(self, values: list[float]) -> float | None:
+        if not values:
+            return None
+        return round(sum(values) / len(values), 1)
+
+    def _record_latency(self, started: float) -> None:
+        latency = (time.monotonic() - started) * 1000.0
+        self._latency_history.append(latency)
+        if len(self._latency_history) > _MAX_LATENCY_HISTORY:
+            self._latency_history.pop(0)
+
+    # -- estado observável + eventos sanitizados -----------------------------
+
+    def _set_state(self, state: WanLinkState, *, reason: str | None = None) -> None:
+        if state == self._state:
+            return
+        previous = self._state
+        self._state = state
+        self._state_changed_at = _utcnow()
+        self._publish_gateway_event(
+            f"remote.gateway.{state.value}",
+            {"from": previous.value, "reason": reason},
+        )
+
+    def _publish_gateway_event(
+        self, event_type: str, data: dict[str, Any] | None = None
+    ) -> None:
+        from app.remote.events import publish_event
+
+        try:
+            publish_event(event_type, data)
+        except Exception:  # noqa: BLE001 — eventos nunca derrubam o link
+            pass
 
     # -- ciclo de vida --------------------------------------------------------
 
@@ -135,6 +236,7 @@ class CoreLink:
             return
         self._running = True
         self._terminal_reason = None
+        self._set_state(WanLinkState.CONNECTING, reason="start")
         self._supervisor = asyncio.create_task(self._supervise())
 
     async def stop(self) -> None:
@@ -151,6 +253,7 @@ class CoreLink:
                 pass
         await self._teardown_manager()
         self._connected = False
+        self._set_state(WanLinkState.DISCONNECTED, reason="stop")
 
     async def _teardown_manager(self) -> None:
         broker = self._broker_task
@@ -176,6 +279,7 @@ class CoreLink:
             return
         await self._teardown_manager()
         self._connected = False
+        self._set_state(WanLinkState.CONNECTING, reason="reconnect")
 
     # -- supervisor (reconnect com backoff) ----------------------------------
 
@@ -185,18 +289,36 @@ class CoreLink:
             outcome = await self._connect_once()
             if outcome == "terminal":
                 self._connected = False
+                if self._terminal_reason == "peer_token_rejeitado":
+                    self._set_state(WanLinkState.AUTH_FAILED, reason=self._terminal_reason)
+                elif self._terminal_reason:
+                    self._set_state(WanLinkState.REVOKED, reason=self._terminal_reason)
+                else:
+                    self._set_state(WanLinkState.DISCONNECTED, reason="terminal")
                 logger.error("Core link terminal (%s)", self._terminal_reason)
                 break
             if not self._running:
                 break
             self._connected = False
             self._last_error = "desconectado do relé"
+            if not self._reconnect_enabled:
+                self._set_state(WanLinkState.DISCONNECTED, reason="reconnect_disabled")
+                break
             delay = self._backoff(delay)
+            self._set_state(
+                WanLinkState.RECONNECTING,
+                reason=f"backoff {delay:.1f}s",
+            )
+            self._publish_gateway_event(
+                "remote.gateway.reconnecting",
+                {"delay_seconds": round(delay, 2), "attempt": self._reconnect_count + 1},
+            )
             if not await self._wait(delay):
                 break
 
     async def _connect_once(self) -> str:
         """Conecta e processa até desconectar. Retorna "ok"/"error"/"terminal"."""
+        self._set_state(WanLinkState.CONNECTING, reason="connect_once")
         try:
             manager = self._build_manager()
         except Exception as exc:  # noqa: BLE001
@@ -241,13 +363,21 @@ class CoreLink:
         self._connected = True
         self._connected_at = _utcnow()
         self._last_error = None
+        self._last_error_code = None
         self._reconnect_count += 1
+        self._set_state(WanLinkState.CONNECTED, reason="handshake_ok")
+        self._publish_gateway_event(
+            "remote.gateway.connected",
+            {"device_id": self.device_id, "reconnect_count": self._reconnect_count},
+        )
         logger.info("Core link conectado ao relé (device=%s)", self.device_id)
         self._broker_task = asyncio.create_task(self._broker_forward())
         try:
             await self._monitor_disconnect()
         finally:
             self._connected = False
+            self._set_state(WanLinkState.DISCONNECTED, reason="link_drop")
+            self._publish_gateway_event("remote.gateway.disconnected", {})
             await self._teardown_manager()
         return "ok"
 
@@ -257,6 +387,7 @@ class CoreLink:
             connection,
             device_id=self.device_id,
             heartbeat_interval=self._heartbeat_interval,
+            heartbeat_sent_hook=self._on_heartbeat_sent,
         )
         manager.register(MessageType.HELLO_ACK, self._on_hello_ack)
         manager.register(MessageType.HEARTBEAT_ACK, self._on_heartbeat_ack)
@@ -264,6 +395,7 @@ class CoreLink:
         manager.register(MessageType.AUTH, self._on_auth)
         manager.register(MessageType.MESSAGE, self._on_message)
         manager.register(MessageType.MESSAGE_ACK, self._on_message_ack)
+        manager.register(MessageType.HEARTBEAT, self._on_heartbeat)
         manager.register(MessageType.COMPUTER_TASK, self._on_computer_task)
         manager.register(MessageType.APPROVAL_RESPOND, self._on_approval_respond)
         manager.register(MessageType.CLOSE, self._on_close)
@@ -305,17 +437,78 @@ class CoreLink:
             self._handshake_ok.set()
         return None
 
+    def _on_heartbeat_sent(self) -> None:
+        """Marca o instante do último heartbeat enviado (medição de RTT WAN)."""
+        self._heartbeat_sent_at = time.monotonic()
+
     async def _on_heartbeat_ack(self, envelope: RemoteEnvelope) -> RemoteEnvelope | None:
         self._last_heartbeat = _utcnow()
+        rtt = 0.0
+        if self._heartbeat_sent_at is not None:
+            rtt = (time.monotonic() - self._heartbeat_sent_at) * 1000.0
+            self._rtt_history.append(rtt)
+            if len(self._rtt_history) > _MAX_RTT_HISTORY:
+                self._rtt_history.pop(0)
+            self._heartbeat_sent_at = None
+        self._publish_gateway_event(
+            "remote.gateway.heartbeat",
+            {"relay_rtt_ms": round(rtt, 1)},
+        )
         return None
+
+    # -- heartbeat WAN de móveis (atrelados) ---------------------------------
+
+    async def _on_heartbeat(self, envelope: RemoteEnvelope) -> RemoteEnvelope | None:
+        """Renova a sessão do device no WAN e devolve o ACK roteável.
+
+        Correção Fase 24: o heartbeat de um móvel atrelado NUNCA mais cai em
+        `unsupported_type` — aqui a sessão remota é validada (renova o TTL) e o
+        ACK é respondido com `target_device_id`, roteável pelo relé ao móvel.
+        """
+        payload = envelope.payload or {}
+        device_id = envelope.device_id
+        if not device_id:
+            return None
+        bound = self._bound(device_id)
+        if bound is None:
+            return None  # relé só roteia heartbeat de atrelados; sem ACK falso
+        try:
+            with SessionLocal() as db:
+                device, credential, session = self._load_bound(db, bound)
+                from app.remote.devices import heartbeat as device_heartbeat
+
+                device_heartbeat(
+                    db,
+                    device,
+                    event="heartbeat",
+                    transport_meta={"transport": "wss", "gateway_relay": True},
+                )
+        except (LinkStateError, RemoteError, Exception) as exc:  # noqa: BLE001
+            logger.debug("Heartbeat WAN recusado (device=%s): %s", device_id, _brief(exc))
+            return None
+        self.stats["heartbeats"] += 1
+        self._last_mobile_heartbeat[device_id] = _utcnow()
+        return build_message(
+            MessageType.HEARTBEAT_ACK,
+            device_id=self.device_id,
+            request_id=envelope.request_id,
+            payload={
+                "ok": True,
+                "target_device_id": device_id,
+                "echo_sent_at": payload.get("sent_at"),
+                "heartbeat_seconds": int(settings.device_heartbeat_seconds),
+            },
+        )
 
     async def _on_error(self, envelope: RemoteEnvelope) -> RemoteEnvelope | None:
         payload = envelope.payload or {}
         code = payload.get("error") or "error"
+        self._last_error_code = code
         if code in ("core_denied",):
             self._terminal_reason = "peer_token_rejeitado"
             self._last_error = "handshake rejeitado (peer_token inválido)"
             self._handshake_ok.set()
+            self._set_state(WanLinkState.AUTH_FAILED, reason="peer_token_rejeitado")
             logger.error("Relé rejeitou o core link: %s", code)
         return None
 
@@ -323,6 +516,9 @@ class CoreLink:
         who = envelope.device_id or (envelope.payload or {}).get("source_device_id")
         if who and who in self._bindings:
             self._bindings.pop(who, None)
+            self._publish_gateway_event(
+                "remote.gateway.device_disconnected", {"device_id": who}
+            )
         return None
 
     async def _on_message_ack(self, envelope: RemoteEnvelope) -> RemoteEnvelope | None:
@@ -335,12 +531,15 @@ class CoreLink:
         payload = envelope.payload or {}
         self.stats["auth_requests"] += 1
         device_id = envelope.device_id  # rotulado pelo relé (não confiável p/ identidade)
+        if payload.get("pairing_code"):
+            return await self._on_pairing_auth(envelope, device_id, payload)
         token = payload.get("token")
         try:
             from app.remote.limits import check_auth_rate
 
             check_auth_rate(None)
         except RemoteError:
+            self.stats["rate_limited"] += 1
             return self._auth_failed(envelope, device_id)
         if not isinstance(token, str) or not token:
             return self._auth_failed(envelope, device_id)
@@ -372,11 +571,16 @@ class CoreLink:
                     "credential_id": authed.credential.id,
                     "session_id": authed.session_id,
                 }
+                self._remember_mobile(authed.device_id)
         except (RemoteAuthError, Exception) as exc:  # noqa: BLE001
             if not isinstance(exc, RemoteAuthError):
                 logger.error("Falha interna em auth do link: %s", _brief(exc))
             return self._auth_failed(envelope, device_id)
 
+        self._publish_gateway_event(
+            "remote.gateway.device_connected", {"device_id": authed.device_id}
+        )
+        await self._flush_proactive(authed.device_id)
         return build_message(
             MessageType.AUTH_RESULT,
             device_id=self.device_id,
@@ -388,12 +592,81 @@ class CoreLink:
                 "session_id": authed.session_id,
                 "conversation_id": conversation_id,
                 "heartbeat_seconds": int(settings.device_heartbeat_seconds),
-                "reconnect_enabled": bool(settings.device_reconnect_enabled),
+                "reconnect_enabled": bool(self._reconnect_enabled),
+                "message_timeout": self._message_timeout,
+                "queue_ttl": self._queue_ttl,
+            },
+        )
+
+    async def _on_pairing_auth(
+        self, envelope: RemoteEnvelope, device_id: str | None, payload: dict[str, Any]
+    ) -> RemoteEnvelope | None:
+        """Bootstrap WAN (Fase 24): móvel fora da LAN pareia pelo código.
+
+        Reusa `submit_code` (cria device confiável + credencial) e a seguir o
+        MESMO `authenticate_bearer` do token recebido — o WAN nunca cria device
+        por conta própria. O token bruto é devolvido UMA ÚNICA vez no
+        `auth_result`; nunca é logado nem entra em eventos.
+        """
+        from app.remote.pairing import PairingError, submit_code
+
+        try:
+            with SessionLocal() as db:
+                device, token = submit_code(
+                    db,
+                    code=str(payload.get("pairing_code") or "").strip(),
+                    device_name=str(payload.get("device_name") or "Mobile WAN").strip()[:120],
+                    device_type=str(payload.get("device_type") or "mobile"),
+                    platform=payload.get("platform"),
+                    client_version=payload.get("client_version"),
+                    capabilities=payload.get("capabilities"),
+                    metadata={"transport": "wss", "gateway_relay": True},
+                )
+                authed = authenticate_bearer(
+                    db,
+                    token,
+                    transport_meta={"transport": "wss", "gateway_relay": True},
+                )
+                conversation_id = get_or_create_jarvis_session(db, authed.device)
+        except (PairingError, RemoteAuthError) as exc:
+            logger.info("Pairing WAN negado (device=%s): %s", device_id, str(exc)[:80])
+            return self._auth_failed(envelope, device_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Falha interna em pairing do link: %s", _brief(exc))
+            return self._auth_failed(envelope, device_id)
+
+        self.stats["pairings"] += 1
+        self._bindings[authed.device.id] = {
+            "device_id": authed.device.id,
+            "credential_id": authed.credential.id,
+            "session_id": authed.session.id,
+        }
+        self._remember_mobile(authed.device.id)
+        self._publish_gateway_event(
+            "remote.gateway.device_connected", {"device_id": authed.device.id}
+        )
+        await self._flush_proactive(authed.device.id)
+        return build_message(
+            MessageType.AUTH_RESULT,
+            device_id=self.device_id,
+            request_id=envelope.request_id,
+            payload={
+                "ok": True,
+                "target_device_id": authed.device.id,
+                "device_id": authed.device.id,
+                "session_id": authed.session.id,
+                "conversation_id": conversation_id,
+                "token": token,  # ÚNICA emissão do token pelo WAN (Single-Fix)
+                "heartbeat_seconds": int(settings.device_heartbeat_seconds),
+                "reconnect_enabled": bool(self._reconnect_enabled),
+                "message_timeout": self._message_timeout,
+                "queue_ttl": self._queue_ttl,
             },
         )
 
     def _auth_failed(self, envelope: RemoteEnvelope, device_id: str | None) -> RemoteEnvelope:
         self.stats["auth_failures"] += 1
+        self._publish_gateway_event("remote.gateway.auth_failed", {"device_id": device_id})
         return build_message(
             MessageType.AUTH_RESULT,
             device_id=self.device_id,
@@ -412,6 +685,7 @@ class CoreLink:
         device_id = envelope.device_id
         request_id = envelope.request_id or envelope.message_id
         self.stats["messages_total"] += 1
+        started = time.monotonic()
         bound = self._bound(device_id)
         if bound is None:
             return self._message_reject(envelope, device_id, "unauthorized", "device não autenticado")
@@ -455,6 +729,7 @@ class CoreLink:
             return self._message_reject(envelope, device_id, "internal_error", "erro interno do Core")
 
         if outcome["kind"] == "reply":
+            self._record_latency(started)
             body = dict(outcome["body"])
             body["target_device_id"] = device_id
             body["ok"] = True
@@ -468,6 +743,7 @@ class CoreLink:
         ok, error = await self._pump_sse(
             outcome["generator"], device_id, request_id, kind="chat"
         )
+        self._record_latency(started)
         if not ok:
             self.stats["messages_failed"] += 1
             return build_message(
@@ -505,6 +781,15 @@ class CoreLink:
         bound = self._bound(device_id)
         if bound is None:
             return self._task_result(envelope, device_id, request_id, False, "device não autenticado")
+        # Fase 24 — o caminho WAN aplica a MESMA taxa de mensagens do HTTP
+        # (computer/approval não detêm slot de conversação: são streams longos).
+        try:
+            from app.remote.limits import check_message_rate
+
+            check_message_rate(device_id)
+        except RemoteError:
+            self.stats["rate_limited"] += 1
+            return self._task_result(envelope, device_id, request_id, False, "limite de taxa excedido")
         if not settings.computer_agent_enabled:
             return self._task_result(
                 envelope, device_id, request_id, False, "Computer Agent desabilitado no Core"
@@ -589,6 +874,16 @@ class CoreLink:
         if bound is None or not isinstance(approval_id, str) or not approval_id:
             self.stats["approvals_failed"] += 1
             return self._approval_result(envelope, device_id, request_id, False, "requisição inválida")
+        # Fase 24 — aprovação também respeita a taxa de mensagens WAN (como HTTP).
+        try:
+            from app.remote.limits import check_message_rate
+
+            check_message_rate(device_id)
+        except RemoteError:
+            self.stats["rate_limited"] += 1
+            return self._approval_result(
+                envelope, device_id, request_id, False, "limite de taxa excedido"
+            )
 
         from app.core.enums import ApprovalStatus
         from app.services import approvals as approval_service
@@ -801,15 +1096,22 @@ class CoreLink:
         from app.remote.events import subscribe_events, unsubscribe_events
 
         q, _history = subscribe_events()
+        last_sweep = time.monotonic()
         try:
             while self._running and self._connected:
                 try:
                     entry = q.get_nowait()
                 except Exception:  # noqa: BLE001 — fila vazia
+                    if time.monotonic() - last_sweep >= self._heartbeat_interval:
+                        self._sweep_stale_heartbeats()
+                        last_sweep = time.monotonic()
                     await asyncio.sleep(1.0)
                     continue
                 entry_type = (entry or {}).get("type") or ""
                 data = (entry or {}).get("data") or {}
+                if entry_type.startswith("proactive."):
+                    await self._route_proactive(entry)
+                    continue
                 device_id = data.get("target_device_id") or data.get("device_id")
                 if (
                     device_id
@@ -830,6 +1132,93 @@ class CoreLink:
                     )
         finally:
             unsubscribe_events(q)
+
+    # -- proativas (raro; fila BOUNDED + TTL, dedup por message_id) ----------
+
+    def _remember_mobile(self, device_id: str) -> None:
+        """Registra um device que já usou o WAN (p/ fila de proativas off-line).
+
+        Lista BOUNDED: nunca cresce sem limite; o mais antigo sai com a fila.
+        """
+        self._known_mobiles[device_id] = _utcnow()
+        if len(self._known_mobiles) > _MAX_KNOWN_MOBILES:
+            oldest = min(self._known_mobiles, key=self._known_mobiles.get)
+            self._known_mobiles.pop(oldest, None)
+            self._proactive_queue.pop(oldest, None)
+
+    def _enqueue_proactive(self, device_id: str, entry: dict[str, Any]) -> None:
+        """Enfileira para um móvel off-line: bounded por device + TTL + dedup."""
+        message_id = (entry.get("data") or {}).get("message_id")
+        q = self._proactive_queue.setdefault(
+            device_id, deque(maxlen=_MAX_PROACTIVE_QUEUE)
+        )
+        if message_id:
+            for _ts, old in q:
+                if (old.get("data") or {}).get("message_id") == message_id:
+                    return  # dedup: já enfileirado
+        q.append((time.monotonic(), entry))
+        self.stats["proactive_queued"] += 1
+
+    async def _flush_proactive(self, device_id: str) -> None:
+        """Despacha a fila off-line de um móvel no (re)auth — TTL aplicado."""
+        q = self._proactive_queue.pop(device_id, None)
+        if not q:
+            return
+        now = time.monotonic()
+        expired = 0
+        for ts, entry in list(q):
+            if now - ts > self._queue_ttl:
+                expired += 1
+                continue
+            await self._send_proactive(device_id, entry)
+        if expired:
+            self.stats["proactive_expired"] += expired
+
+    async def _route_proactive(self, entry: dict[str, Any]) -> None:
+        """Proativa: entrega aos atrelados e enfileira aos off-line conhecidos."""
+        for device_id in list(self._bindings):
+            self.stats["proactive_delivered"] += 1
+            await self._send_proactive(device_id, entry)
+        for device_id in list(self._known_mobiles):
+            if device_id not in self._bindings and device_id:
+                self._enqueue_proactive(device_id, entry)
+
+    async def _send_proactive(self, device_id: str, entry: dict[str, Any]) -> None:
+        data = (entry or {}).get("data") or {}
+        event_id = (entry or {}).get("event_id") or ""
+        await self._send_agent_event(
+            device_id,
+            event_id,
+            kind="proactive",
+            event={
+                "event_type": (entry or {}).get("type"),
+                "event_id": event_id,
+                "message_id": data.get("message_id"),
+                "priority": data.get("priority"),
+                "title": data.get("title"),
+                "created_at": data.get("created_at"),
+                "content": str(data.get("content") or "")[:_PROACTIVE_CONTENT_LIMIT],
+            },
+        )
+
+    def _sweep_stale_heartbeats(self) -> None:
+        """Marca device_deconectado para atrelados sem heartbeat no intervalo.
+
+        Apenas observabilidade: o binding é conservado (o relé pode manter o peer
+        vivo), apenas o heartbeat antigo é limpo e o evento é emitido uma vez.
+        """
+        if not self._last_mobile_heartbeat:
+            return
+        threshold = self._heartbeat_interval * 3
+        now = _utcnow()
+        stale = [
+            d for d, ts in self._last_mobile_heartbeat.items() if (now - ts).total_seconds() > threshold
+        ]
+        for device_id in stale:
+            self._last_mobile_heartbeat.pop(device_id, None)
+            self._publish_gateway_event(
+                "remote.gateway.device_disconnected", {"device_id": device_id}
+            )
 
 
 def _parse_sse_item(item: str) -> dict[str, Any] | str:

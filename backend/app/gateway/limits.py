@@ -28,9 +28,11 @@ class GatewayLimits:
         self._settings = settings or get_settings()
         self._lock = threading.Lock()
         self._buckets: dict[str, RateLimiter] = {}
+        self._peer_buckets: dict[str, RateLimiter] = {}
         self._per_ip: dict[str, int] = {}
         self.rejected_connects = 0
         self.oversized_envelopes = 0
+        self.peer_messages_rate_limited = 0
 
     def allow_connect(self, origin: str | None) -> bool:
         """Decide se um handshake vindo de `origin` (IP) é aceito."""
@@ -73,9 +75,30 @@ class GatewayLimits:
             return False
         return True
 
+    def allow_peer_message(self, peer_id: str) -> bool:
+        """Taxa local de mensagens roteadas por peer (defesa mínima do relé).
+
+        Diferente dos limites do Core (autoridade real), este é um teto
+        conservador de recurso local para um único peer não monopolizar o relé.
+        """
+        with self._lock:
+            bucket = self._peer_buckets.get(peer_id)
+            if bucket is None:
+                bucket = RateLimiter(
+                    self._settings.peer_message_rate_capacity,
+                    self._settings.peer_message_rate_refill_per_sec,
+                )
+                self._peer_buckets[peer_id] = bucket
+        allowed = bucket.allow()
+        if not allowed:
+            self.peer_messages_rate_limited += 1
+        return allowed
+
     def reset(self) -> None:
         with self._lock:
             self._buckets.clear()
+            self._peer_buckets.clear()
             self._per_ip.clear()
             self.rejected_connects = 0
             self.oversized_envelopes = 0
+            self.peer_messages_rate_limited = 0

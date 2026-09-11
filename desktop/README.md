@@ -69,3 +69,25 @@ npm run dist
   Central / Sair. Verificação usa `updates.js` (metadata do GitHub Release — nunca
   faz download/executa); rede fora → linha de update mostra indisponível, sem erro.
 - Single-instance: um segundo processo apenas foca a janela existente.
+
+## Conexão WAN — fora da LAN (Fase 24)
+
+Quando o Core está fora da LAN local (ou atrás de CGNAT), o cliente pode falar com
+o MESMO AI Core através do **relé WAN** (`backend/app/gateway/`, deploy separado) —
+sem NAT/port-forwarding e sem segundo AI Core/Memória/Tools: o relé só transporta.
+
+- Implementação: `wan.js` (Node WebSocket puro, sem dependências novas; validado
+  8/8 em `wan.test.mjs`). Mesmo vocabulário de estados do bridge:
+  `offline / connecting / connected / reconnecting / authentication_error /
+  core_unavailable`, com heartbeat e reconexão com backoff.
+- Bootstrap: envie `auth` com o **código de pareamento** (gerado no Core via
+  `POST /api/remote/pairings`) + `device_name`; o Core devolve `auth_result` com
+  `token` (emitido UMA vez), `device_id` e tunables (`heartbeat_seconds`,
+  `reconnect_enabled`, `message_timeout`, `queue_ttl`). O token fica só em
+  `device.json` (0600) e nunca aparece em logs/URL/SSE.
+- Turnos: `message` → `message_result` (e `agent_event` em streaming): a conversação
+  reusa o MESMO AI Core/Computer Agent/fluxo de aprovações do Core.
+- Requisitos no Core: `REMOTE_GATEWAY_ENABLED=true` e `REMOTE_GATEWAY_PEER_TOKEN`
+  igual ao `GATEWAY_PEER_TOKEN` do relé (ver `.env.example`).
+- `wss://` fora da LAN exige um proxy TLS (Caddy/nginx) na frente do relé
+  (`ws://`). Validação de campo é manual (`MANUAL VALIDATION REQUIRED`).

@@ -56,6 +56,12 @@ class GatewaySettings(BaseSettings):
     idle_timeout_seconds: float = 90.0
     heartbeat_interval_seconds: float = 30.0
 
+    # Fase 24 — TTL de AUTH em vôo (s) e taxa local de mensagens por peer (viola
+    # apenas o relé; a autoridade de limitação REAL continua no Core).
+    auth_timeout_seconds: float = 60.0
+    peer_message_rate_capacity: float = 20.0
+    peer_message_rate_refill_per_sec: float = 1.0
+
     log_level: str = "INFO"
 
 

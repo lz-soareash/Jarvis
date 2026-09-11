@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+import time
 from typing import Any
 
 from app.gateway.backpressure import Mailbox
@@ -64,6 +65,16 @@ _CORE_ROUTED = {
     MessageType.COMPUTER_RESULT,
     MessageType.APPROVAL_RESULT,
     MessageType.COMMAND_RESULT,
+    # Fase 24 — ACK de heartbeat WAN do Core é ROTEÁVEL ao móvel de destino.
+    MessageType.HEARTBEAT_ACK,
+}
+
+# Envelopes de aplicação do móvel cujo roteamento ao Core é rate-limited no relé
+# (defesa local mínima; a autoridade de limitação REAL continua no Core).
+_RATE_LIMITED_MOBILE_TYPES = {
+    MessageType.MESSAGE,
+    MessageType.COMPUTER_TASK,
+    MessageType.APPROVAL_RESPOND,
 }
 
 
@@ -78,9 +89,10 @@ class RelayHub:
         self.registry = registry or GatewayRegistry()
         self.limits = limits or GatewayLimits()
         self.settings = get_settings()
-        # AUTH em vôo: request_id do móvel -> peer. O AUTH_RESULT do Core chega
-        # ANTES de o device ser atrelado, então não há como rotear por device_id.
-        self._pending_auths: dict[str, str] = {}
+        # AUTH em vôo: request_id do móvel -> (peer_id, instante). O AUTH_RESULT
+        # do Core chega ANTES de o device ser atrelado, então não há como rotear
+        # por device_id. TTL evita vazamento de memória se o Core não responder.
+        self._pending_auths: dict[str, tuple[str, float]] = {}
 
     # -- pontos de entrada ----------------------------------------------------
 
@@ -97,6 +109,7 @@ class RelayHub:
         if peer is None:
             return None
         self.registry.touch(peer_id)
+        self._sweep_pending_auths()
 
         if envelope.type == MessageType.HELLO:
             return self._on_hello(envelope, peer)
@@ -206,9 +219,9 @@ class RelayHub:
         `device_id` já atrelado (re-auth) e, em último caso, por `source`.
         """
         if request_id:
-            pending_peer_id = self._pending_auths.get(request_id)
-            if pending_peer_id is not None:
-                mobile = self.registry.peer(pending_peer_id)
+            pending = self._pending_auths.get(request_id)
+            if pending is not None:
+                mobile = self.registry.peer(pending[0])
                 if mobile is not None:
                     return mobile
         return self._resolve_target_peer(target)
@@ -232,12 +245,27 @@ class RelayHub:
         if not peer.device_id:
             if envelope.type not in _MOBILE_PENDING_ALLOWED:
                 return self._error(envelope, "not_authenticated", "device ainda não atrelado")
+            # Fase 24 — móvel pendente não perturba o Core: heartbeat respondido
+            # INLINE pelo relé (o Core só vê heartbeats de devices já atrelados).
+            if envelope.type == MessageType.HEARTBEAT:
+                return build_message(
+                    MessageType.HEARTBEAT_ACK,
+                    device_id=envelope.device_id,
+                    request_id=envelope.request_id,
+                    payload={"ok": True, "pending": True},
+                )
         else:
             if envelope.type not in _MOBILE_BOUND_ALLOWED:
                 self.registry.counters["peer_messages_rejected"] = (
                     self.registry.counters.get("peer_messages_rejected", 0) + 1
                 )
                 return self._error(envelope, "forbidden", "tipo não permitido para dispositivo")
+            # Defesa local mínima: taxa de mensagens por peer no próprio relé.
+            if envelope.type in _RATE_LIMITED_MOBILE_TYPES and not self.limits.allow_peer_message(
+                peer.peer_id
+            ):
+                self.registry.counters["peer_messages_rate_limited"] += 1
+                return self._error(envelope, "rate_limited", "muitas mensagens; aguarde")
 
         if envelope.type == MessageType.CLOSE:
             self._drop_pending(peer.peer_id)
@@ -252,7 +280,7 @@ class RelayHub:
         if envelope.type == MessageType.AUTH:
             self.registry.counters["auth_requests"] += 1
             if envelope.request_id:
-                self._pending_auths[envelope.request_id] = peer.peer_id
+                self._pending_auths[envelope.request_id] = (peer.peer_id, time.monotonic())
 
         # O relé SEMPRE rotula o envelope com o device autenticado (nunca confia
         # no device_id alegado) e remove qualquer target escolhido pelo móvel.
@@ -282,8 +310,26 @@ class RelayHub:
 
     def _drop_pending(self, peer_id: str) -> None:
         for request_id, other in list(self._pending_auths.items()):
-            if other == peer_id:
+            if other[0] == peer_id:
                 self._pending_auths.pop(request_id, None)
+
+    def _sweep_pending_auths(self) -> None:
+        """Elimina AUTH em vôo sem resposta do Core além do TTL (anti-vazamento).
+
+        O AUTH é single-try: se o Core não responder a tempo, o móvel re-envia
+        num request_id novo (o TTL é só defesa de memória no relé).
+        """
+        ttl = float(getattr(self.settings, "auth_timeout_seconds", 60.0) or 60.0)
+        if not self._pending_auths:
+            return
+        now = time.monotonic()
+        expired = [k for k, (_, ts) in self._pending_auths.items() if now - ts > ttl]
+        for k in expired:
+            self._pending_auths.pop(k, None)
+        if expired:
+            self.registry.counters["auth_timeouts"] = (
+                self.registry.counters.get("auth_timeouts", 0) + len(expired)
+            )
 
     def _error(
         self, envelope: RemoteEnvelope, code: str, message: str

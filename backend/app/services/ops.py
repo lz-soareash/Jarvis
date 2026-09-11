@@ -373,13 +373,19 @@ def _remote_gateway_stats() -> dict:
         status.update(
             {
                 "connection": "disconnected",
+                "connection_state": "disabled",
                 "healthy": False,
                 "connected_at": None,
                 "last_heartbeat": None,
+                "last_state_change": None,
                 "reconnect_count": 0,
                 "last_error": "link não iniciado",
+                "last_error_code": None,
                 "revocation": None,
                 "devices_bound": 0,
+                "mobile_heartbeats": {},
+                "latency": {"relay_rtt_ms": None, "message_latency_ms": None},
+                "queued_proactive": 0,
                 "counters": {},
             }
         )

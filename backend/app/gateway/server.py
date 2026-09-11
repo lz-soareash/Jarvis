@@ -43,6 +43,7 @@ async def remote_ws_endpoint(websocket: Any) -> None:
 
     origin = _client_host(websocket)
     if not hub.limits.allow_connect(origin):
+        hub.registry.counters["connect_rejected"] += 1
         await websocket.close(code=CLOSE_POLICY)
         return
     await websocket.accept()
@@ -88,6 +89,7 @@ async def _rx(websocket: Any, hub: RelayHub, peer_id: str, mailbox: Mailbox) -> 
 
         if not hub.limits.allow_payload(len(raw)):
             logger.warning("Envelope acima do teto (peer=%s)", peer_id)
+            hub.registry.counters["oversized_envelopes"] += 1
             await websocket.close(code=CLOSE_TOO_BIG)
             return
 
@@ -109,15 +111,23 @@ async def _rx(websocket: Any, hub: RelayHub, peer_id: str, mailbox: Mailbox) -> 
 
 
 async def _tx(websocket: Any, peer_id: str, mailbox: Mailbox) -> None:
+    """Drena a mailbox p/ o cliente — acordado por evento (sem busy-wait 20ms)."""
+    wake = mailbox.wake_event()
     while True:
         item = mailbox.get()
-        if item is None:
-            if mailbox._closed:  # noqa: SLF001 — encerramento gracioso
+        if item is not None:
+            await _safe_send(websocket, encode_message(item))
+            if getattr(item, "type", None) == MessageType.CLOSE:
                 return
-            await asyncio.sleep(0.02)
             continue
-        await _safe_send(websocket, encode_message(item))
-        if getattr(item, "type", None) == MessageType.CLOSE:
+        if mailbox._closed:  # noqa: SLF001 — encerramento gracioso
+            return
+        wake.clear()
+        try:
+            await asyncio.wait_for(wake.wait(), timeout=60.0)
+        except asyncio.TimeoutError:
+            continue
+        except Exception:  # noqa: BLE001 — cliente sumiu durante a espera
             return
 
 

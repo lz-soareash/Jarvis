@@ -38,11 +38,15 @@ class RemoteConnectionManager:
         device_id: str,
         heartbeat_interval: float = 30.0,
         send_limiter: RateLimiter | None = None,
+        heartbeat_sent_hook: Callable[[], None] | None = None,
     ) -> None:
         self.connection = connection
         self.device_id = device_id
         self.heartbeat_interval = heartbeat_interval
         self.send_limiter = send_limiter
+        # Gancho chamado após cada envio de heartbeat (Fase 24: medição de RTT
+        # do link Core ↔ relé — nunca toca payloads/secrets).
+        self.heartbeat_sent_hook = heartbeat_sent_hook
         self.handlers: dict[MessageType, MessageHandler] = {}
         self.on_event: EventHook | None = None
         self._running = False
@@ -80,6 +84,8 @@ class RemoteConnectionManager:
             await self.send_limiter.acquire()
         await self.connection.send(envelope)
         await self._emit(EVENT_SENT, envelope)
+        if self.heartbeat_sent_hook is not None:
+            self.heartbeat_sent_hook()
 
     async def stop(self) -> None:
         """Encerramento gracioso: para loops e fecha a conexão (STOPPING→DISCONNECTED)."""

@@ -226,12 +226,18 @@ class RemoteGatewayOut(APIModel):
     transport: str = "gateway_wan"
     url: str = ""
     connection: str = "disconnected"
+    connection_state: str = "disabled"
     healthy: bool = False
     device_id: str | None = None
     connected_at: datetime | None = None
+    last_state_change: datetime | None = None
     last_heartbeat: datetime | None = None
     reconnect_count: int = 0
     last_error: str | None = None
+    last_error_code: str | None = None
     revocation: str | None = None
     devices_bound: int = 0
+    mobile_heartbeats: dict[str, Any] = Field(default_factory=dict)
+    latency: dict[str, Any] | None = None
+    queued_proactive: int = 0
     counters: dict[str, int] = Field(default_factory=dict)

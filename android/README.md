@@ -59,3 +59,28 @@ Exige JDK 17 + Android SDK `platforms;android-34` (`android/local.properties` �
 sdk/build-tools/34.0.0/aapt.exe dump badging app-release.apk   # versionName/versionCode/label
 sdk/build-tools/34.0.0/apksigner.bat verify --verbose --print-certs app-release.apk
 ```
+
+## Conexão WAN — fora da LAN (Fase 24)
+
+Quando o Core está fora da LAN local (ou atrás de CGNAT), o app pode falar com o
+**MESMO AI Core** através do **relé WAN** (`backend/app/gateway/`, deploy separado)
+— sem NAT/port-forwarding e sem segundo AI Core/Memória/Tools: o relé só transporta.
+
+- Implementação: `VegaWan.kt` (OkHttp WebSocket; dependência única `okhttp` no
+  `libs.versions.toml`). Estados `offline/connecting/connected/reconnecting/
+  authentication_error/core_unavailable`, com heartbeat, reconexão com backoff e
+  arquivamento do token só em `SharedPreferences`(`vega_wan`; o token NUNCA vai
+  para URL/logs/SSE).
+- UI: card **WAN** na `MainActivity` — URL do relé (`wss://…`) + **código de
+  pareamento** digitável, com botões Conectar/Desconectar WAN e o estado ao vivo
+  (device_id, heartbeat, token emitido pelo Core no `auth_result`).
+- Bootstrap: envie `auth` com `pairing_code` + `device_name`; o Core devolve o
+  `token` (emitido UMA vez) e tunables (`heartbeat_seconds`, `reconnect_enabled`,
+  `message_timeout`, `queue_ttl`). Turnos de `message`, tarefas de computador e
+  aprovações reusam o MESMO AI Core do pareamento local.
+- Requisitos no Core: `REMOTE_GATEWAY_ENABLED=true` e `REMOTE_GATEWAY_PEER_TOKEN`
+  igual ao `GATEWAY_PEER_TOKEN` do relé (ver `.env.example`). `wss://` exige proxy
+  TLS (Caddy/nginx) na frente do relé; validação de campo é manual
+  (`MANUAL VALIDATION REQUIRED`).
+- Build/Dependência: sem SDK local (JDK 8) o build roda no CI
+  (`build-android.yml`, temurin 17, `:app:assembleRelease`).

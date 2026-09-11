@@ -28,6 +28,7 @@ const fs = require("fs");
 const zlib = require("zlib");
 
 const { DeviceBridge } = require("./bridge");
+const { WanClient } = require("./wan");
 const config = require("./config");
 const updates = require("./updates");
 const { version: VERSION } = require("./package.json");
@@ -40,6 +41,7 @@ let mainWindow = null;
 let setupWindow = null;
 let tray = null;
 let bridge = null;
+let wan = null;
 let skipDisconnect = false;
 let lastConfig = config.validateConfig({});
 
@@ -172,17 +174,95 @@ function deviceIcon() {
 }
 
 /* --------------------------------------------------------------------------
+   WAN Gateway (Fase 24) — conectividade remota fora da LAN.
+   Reusa a MESMA identidade pareada (device.json); o relé só transporta.
+   -------------------------------------------------------------------------- */
+function wanStatus() {
+  if (!wan) return { state: "offline", detail: "WAN desabilitado", url: "", configured: false };
+  return {
+    state: wan.state,
+    detail: wan.detail,
+    url: wan.url,
+    configured: !!wan.url,
+    device_id: wan.deviceId,
+    conversation_id: wan.conversationId,
+  };
+}
+
+function startWan(opts = {}) {
+  const url = opts.url != null ? opts.url : lastConfig.wanUrl;
+  if (!url) {
+    if (wan) {
+      wan.stop();
+      wan = null;
+    }
+    return wanStatus();
+  }
+  if (wan) wan.stop();
+  wan = new WanClient({
+    url,
+    io: { load: creds, save: saveCreds },
+    deviceId: creds()?.device_id || null,
+    token: creds()?.token || null,
+    pairingCode: opts.pairingCode || null,
+    deviceName: DEVICE_NAME,
+    platform: DEVICE_PLATFORM,
+    clientVersion: VERSION,
+    capabilities: CAPABILITIES,
+    onState: () => {
+      broadcastStatus();
+      updateTray();
+    },
+    onAuth: () => {
+      if (wan && wan.deviceId !== creds()?.device_id) {
+        saveCreds({ ...(creds() || {}), device_id: wan.deviceId });
+      }
+      broadcastStatus();
+      updateTray();
+    },
+  });
+  wan.connect();
+  return wanStatus();
+}
+
+function stopWan() {
+  if (wan) {
+    wan.leave();
+    wan = null;
+  }
+  return wanStatus();
+}
+
+function safeWanLeave() {
+  if (wan) return wan.leave();
+  return Promise.resolve();
+}
+
+function wanLabel() {
+  if (!wan || !wan.url) return "";
+  const states = {
+    connecting: "↻ wan conectando",
+    connected: "● wan ativo",
+    reconnecting: "↻ wan reconectando",
+    core_unavailable: "○ wan: core indisponível",
+    authentication_error: "○ wan: par necessário",
+    offline: "○ wan desconectado",
+  };
+  return states[wan.state] || wan.state;
+}
+
+/* --------------------------------------------------------------------------
    Estado de conexão (rótulos honestos Fase 22).
    -------------------------------------------------------------------------- */
 function statusPayload() {
   if (!bridge) {
-    return { state: "idle", detail: "aguardando…", version: VERSION };
+    return { state: "idle", detail: "aguardando…", version: VERSION, wan: wanStatus() };
   }
   const detail =
     bridge.state === "connected"
       ? `device_id: ${bridge.token ? "pareado" : "…"}`
       : bridge.detail || "";
-  return { state: bridge.state, detail, version: VERSION };
+  return { state: bridge.state, detail, version: VERSION, wan: wanStatus() };
 }
 
 function broadcastStatus() {
@@ -260,7 +340,7 @@ function createMainWindow() {
   mainWindow.on("close", async (e) => {
     if (skipDisconnect) return;
     e.preventDefault();
-    await safeLeave();
+    await Promise.all([safeLeave(), safeWanLeave()]);
     skipDisconnect = true;
     app.quit();
   });
@@ -320,24 +400,35 @@ function bridgeLabel() {
   return `${dot} ${states[bridge.state] || bridge.state}`;
 }
 
+function trayLabel() {
+  const parts = [bridgeLabel()];
+  const wan = wanLabel();
+  if (wan) parts.push(wan);
+  return parts.join(" · ");
+}
+
 function trayMenuTemplate() {
   return Menu.buildFromTemplate([
     { label: "Abrir VEGA", click: () => createMainWindow() },
     { label: "Configurações", click: () => createSetupWindow() },
     { type: "separator" },
-    { label: bridgeLabel(), enabled: false },
+    { label: trayLabel(), enabled: false },
     { label: "Verificar atualizações", click: () => checkUpdateNow() },
     { label: "Abrir Central (navegador)", click: () => shell.openExternal(lastConfig.coreUrl) },
     { type: "separator" },
     { label: `VEGA ${VERSION}`, enabled: false },
-    { label: "Sair", click: async () => { await safeLeave(); skipDisconnect = true; app.quit(); } },
+    { label: "Sair", click: async () => {
+      await Promise.all([safeLeave(), safeWanLeave()]);
+      skipDisconnect = true;
+      app.quit();
+    } },
   ]);
 }
 
 function updateTray() {
   if (!tray) return;
-  tray.setTitle(bridgeLabel());
-  tray.setToolTip(`VEGA Desktop ${VERSION} — ${bridgeLabel()}`);
+  tray.setTitle(trayLabel());
+  tray.setToolTip(`VEGA Desktop ${VERSION} — ${trayLabel()}`);
   tray.setContextMenu(trayMenuTemplate());
 }
 
@@ -366,6 +457,7 @@ function registerIpc() {
   ipcMain.handle("vega:get-config", () => ({
     coreUrl: lastConfig.coreUrl,
     releaseFeedUrl: lastConfig.releaseFeedUrl,
+    wanUrl: lastConfig.wanUrl,
     version: VERSION,
   }));
   ipcMain.handle("vega:set-url", (_evt, url) => {
@@ -373,6 +465,17 @@ function registerIpc() {
     stopBridge();
     updateTray();
     return { coreUrl: lastConfig.coreUrl };
+  });
+  ipcMain.handle("vega:set-wan-url", (_evt, url) => {
+    lastConfig = config.saveConfig(configStore(), { wanUrl: url });
+    startWan();
+    updateTray();
+    return { wanUrl: lastConfig.wanUrl, wan: wanStatus() };
+  });
+  ipcMain.handle("vega:wan-pair", (_evt, code) => {
+    startWan({ pairingCode: code });
+    updateTray();
+    return wanStatus();
   });
   ipcMain.handle("vega:connect", async () => {
     startBridge();
@@ -411,6 +514,7 @@ if (!gotLock) {
     } else {
       createMainWindow();
       startBridge();
+      if (lastConfig.wanUrl) startWan();
     }
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
@@ -418,10 +522,10 @@ if (!gotLock) {
   });
 
   app.on("before-quit", async (e) => {
-    if (bridge && !skipDisconnect) {
+    if ((bridge || wan) && !skipDisconnect) {
       e.preventDefault();
       skipDisconnect = true;
-      await bridge.leave();
+      await Promise.all([safeLeave(), safeWanLeave()]);
       app.quit();
     }
   });

@@ -74,6 +74,9 @@ class GatewayRegistry:
             "relays_dropped": 0,
             "oversized_envelopes": 0,
             "connect_rejected": 0,
+            "peer_messages_rejected": 0,
+            "peer_messages_rate_limited": 0,
+            "auth_timeouts": 0,
         }
 
     # -- lifecycle -----------------------------------------------------------
