@@ -716,6 +716,91 @@ async def test_core_link_on_heartbeat_without_device_id_returns_none():
     assert reply is None
 
 
+# -- Fase 24.1 — diagnóstico honesto: revogado/sessão expirada no heartbeat -----
+
+
+class _StubDb:
+    def __init__(self, device, credential):
+        self.device = device
+        self.credential = credential
+
+    def get(self, model, _pk):
+        if model.__name__ == "Device":
+            return self.device
+        return self.credential
+
+
+class _StubSession:
+    def __init__(self, device, credential):
+        self.db = _StubDb(device, credential)
+
+    def __enter__(self):
+        return self.db
+
+    def __exit__(self, *_args):
+        return False
+
+
+def _heartbeat_reject_fixture(monkeypatch, link, device_active: bool, credential_active: bool):
+    from app.remote.link import LinkStateError
+
+    _bind_link(link, "dev-rev")
+
+    def _load_bound_reject(db, bound):
+        raise LinkStateError("device não autorizado")
+
+    link._load_bound = _load_bound_reject
+    device = SimpleNamespace(id="dev-rev", name="M", device_type="mobile", status="active")
+    credential = SimpleNamespace(id="c")
+    device.is_active = device_active
+    credential.is_active = credential_active
+    monkeypatch.setattr("app.remote.link.SessionLocal", lambda: _StubSession(device, credential))
+
+
+@pytest.mark.asyncio
+async def test_core_link_on_heartbeat_revoked_device_returns_revoked_ack(monkeypatch):
+    link = _make_link()
+    _heartbeat_reject_fixture(monkeypatch, link, device_active=False, credential_active=True)
+    reply = await link._on_heartbeat(
+        _env(MessageType.HEARTBEAT, device_id="dev-rev", request_id="hb-rev")
+    )
+    assert reply is not None and reply.type == MessageType.HEARTBEAT_ACK
+    assert reply.payload.get("ok") is False
+    assert reply.payload.get("error") == "revoked"
+    assert reply.payload.get("target_device_id") == "dev-rev"
+    assert link.stats["heartbeats"] == 0
+    assert "dev-rev" not in link._last_mobile_heartbeat  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_core_link_on_heartbeat_expired_session_returns_not_authenticated_ack(monkeypatch):
+    link = _make_link()
+    _heartbeat_reject_fixture(monkeypatch, link, device_active=True, credential_active=True)
+    reply = await link._on_heartbeat(
+        _env(MessageType.HEARTBEAT, device_id="dev-rev", request_id="hb-exp")
+    )
+    assert reply is not None and reply.type == MessageType.HEARTBEAT_ACK
+    assert reply.payload.get("ok") is False
+    assert reply.payload.get("error") == "not_authenticated"
+    assert reply.payload.get("target_device_id") == "dev-rev"
+    assert link.stats["heartbeats"] == 0
+
+
+@pytest.mark.asyncio
+async def test_core_link_on_heartbeat_db_error_still_returns_none(monkeypatch):
+    """Falha interna continua do VERDADEIRO None (não finge revogação)."""
+
+    def _boom_db():
+        raise RuntimeError("db falhou")
+
+    link = _make_link()
+    _bind_link(link, "dev-bad")
+    monkeypatch.setattr("app.remote.link.SessionLocal", _boom_db)
+    reply = await link._on_heartbeat(_env(MessageType.HEARTBEAT, device_id="dev-bad"))
+    assert reply is None
+    assert link.stats["heartbeats"] == 0
+
+
 # -- fila de proativas (bounded + TTL + dedup) ------------------------------
 
 

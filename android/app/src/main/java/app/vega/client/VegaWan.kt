@@ -54,6 +54,9 @@ class VegaWan(
     private var failures = 0
     private var intentionalClose = false
     private var sawHelloAck = false
+    private var reauthAttempts = 0
+    private var heartbeatsNoAck = 0
+    private var revokedTerminal = false
     private var lastUrl: String = ""
     private var heartbeatMs: Long = 30_000
     private var token: String? = null
@@ -96,6 +99,9 @@ class VegaWan(
         token = token ?: prefs.getString("wan_token", null)
         if (lastDeviceId == null) lastDeviceId = prefs.getString("wan_device_id", null)
         intentionalClose = false
+        revokedTerminal = false
+        reauthAttempts = 0
+        heartbeatsNoAck = 0
         openSocket()
     }
 
@@ -132,6 +138,7 @@ class VegaWan(
             object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {
                     sawHelloAck = false
+                    heartbeatsNoAck = 0
                     sendEnvelope(
                         "hello",
                         JSONObject().apply {
@@ -160,6 +167,7 @@ class VegaWan(
                         setState("offline", "desconectado pelo usuário")
                         return
                     }
+                    if (revokedTerminal) return  // terminal — estado já informado
                     if (sawHelloAck) {
                         setState("reconnecting", "conexão caiu (código $code)")
                     } else {
@@ -174,6 +182,7 @@ class VegaWan(
                         setState("offline", "desconectado pelo usuário")
                         return
                     }
+                    if (revokedTerminal) return  // terminal — estado já informado
                     if (sawHelloAck) {
                         setState("reconnecting", "conexão caiu (${t.message})")
                     } else {
@@ -222,9 +231,23 @@ class VegaWan(
             "hello_ack" -> onHelloAck(env)
             "auth_result" -> onAuthResult(env)
             "heartbeat_ack" -> {
-                failures = 0
-                val ok = env.optJSONObject("payload")?.optBoolean("ok", false) ?: false
-                Log.i(logTag, "heartbeat_ack ok=$ok")
+                val p = env.optJSONObject("payload")
+                val ok = p?.optBoolean("ok", false) ?: false
+                if (ok) {
+                    heartbeatsNoAck = 0
+                    failures = 0
+                    Log.i(logTag, "heartbeat_ack ok")
+                } else {
+                    // Fase 24.1 — sinalização honesta do Core: revogação é
+                    // terminal; sessão não reconhecida tenta re-autenticar.
+                    heartbeatsNoAck = 0
+                    val code = (p?.optString("error") ?: "not_authenticated").lowercase()
+                    if (code == "revoked") {
+                        onRevokedFrame("credenciais WAN revogadas pelo Core")
+                    } else {
+                        onNotAuthenticatedFrame()
+                    }
+                }
             }
             "message_result", "agent_event" -> Log.i(logTag, "${env.optString("type")} recebido")
             "error" -> onErrorFrame(env)
@@ -241,6 +264,8 @@ class VegaWan(
             return
         }
         sawHelloAck = true
+        reauthAttempts = 0
+        heartbeatsNoAck = 0
         authenticate()
     }
 
@@ -254,7 +279,7 @@ class VegaWan(
             payload.put("platform", "android")
             payload.put("client_version", BuildConfig.VERSION_NAME)
             payload.put("capabilities", org.json.JSONArray(listOf("chat", "tts", "notifications")))
-            payload.put("transport_meta", JSONObject().put("app", "android").put("transport", "wss"))
+            payload.put("transport_meta", transportMeta())
             sendEnvelope("auth", payload)
         } else {
             val tok = token.orEmpty()
@@ -267,7 +292,7 @@ class VegaWan(
             payload.put("platform", "android")
             payload.put("client_version", BuildConfig.VERSION_NAME)
             payload.put("capabilities", org.json.JSONArray(listOf("chat", "tts", "notifications")))
-            payload.put("transport_meta", JSONObject().put("app", "android").put("transport", "wss"))
+            payload.put("transport_meta", transportMeta())
             sendEnvelope("auth", payload)
         }
     }
@@ -287,6 +312,8 @@ class VegaWan(
         if (hb > 0) heartbeatMs = hb * 1000L
         token?.let { persist(it) }
         failures = 0
+        reauthAttempts = 0
+        heartbeatsNoAck = 0
         setState("connected", "WAN ativo (${lastDeviceId?.take(8)}…)")
         startHeartbeat()
     }
@@ -300,7 +327,7 @@ class VegaWan(
                 scheduleReconnect("core_unavailable")
             }
             code == "not_authenticated" -> {
-                setState("authentication_error", "sessão WAN não reconhecida")
+                onNotAuthenticatedFrame()
             }
             code == "rate_limited" -> {
                 Log.w(logTag, "muitas mensagens; aguarde")
@@ -312,6 +339,30 @@ class VegaWan(
     private fun onError(message: String) {
         Log.w(logTag, "wan error: $message")
     }
+
+    private fun onNotAuthenticatedFrame() {
+        // Paridade com o Desktop: re-autoriza até 3x com o token salvo.
+        val tok = token.orEmpty()
+        if (tok.isNotEmpty() && reauthAttempts < 3) {
+            reauthAttempts += 1
+            authenticate()
+            return
+        }
+        setState("authentication_error", "sessão WAN não reconhecida")
+    }
+
+    private fun onRevokedFrame(reason: String) {
+        // Terminal nesta sessão do processo: informa e encerra, sem reconectar.
+        cancelTimers()
+        revokedTerminal = true
+        ws?.close(1000, "revoked")
+        setState("authentication_error", reason)
+    }
+
+    private fun transportMeta(): JSONObject =
+        JSONObject()
+            .put("app", "android")
+            .put("transport", if (lastUrl.startsWith("ws://")) "ws" else "wss")
 
     fun sendMessage(content: String, opts: JSONObject = JSONObject()): String {
         if (state != "connected") throw IllegalStateException("sem conexão WAN autenticada")
@@ -353,9 +404,15 @@ class VegaWan(
     private fun startHeartbeat() {
         heartbeatJob?.cancel()
         heartbeatJob = scope.launch {
-            while (state == "connected" && !intentionalClose) {
+            while (state == "connected" && !intentionalClose && !revokedTerminal) {
                 delay(heartbeatMs)
-                if (state == "connected" && !intentionalClose) {
+                if (state == "connected" && !intentionalClose && !revokedTerminal) {
+                    // Fase 24.1 — heartbeat sem ACK (half-open) fecha e reconecta.
+                    heartbeatsNoAck += 1
+                    if (heartbeatsNoAck >= 3) {
+                        ws?.close(1000, "heartbeat timeout")
+                        break
+                    }
                     sendEnvelope("heartbeat", JSONObject().put("sent_at", System.currentTimeMillis()))
                     heartbeatsTotal++
                 }

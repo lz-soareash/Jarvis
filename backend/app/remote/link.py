@@ -483,7 +483,25 @@ class CoreLink:
                     event="heartbeat",
                     transport_meta={"transport": "wss", "gateway_relay": True},
                 )
-        except (LinkStateError, RemoteError, Exception) as exc:  # noqa: BLE001
+        except (LinkStateError, RemoteError):
+            # Fase 24.1 — diagnóstico honesto: um móvel que perdeu a autorização
+            # (device/credencial revogados ou sessão expirada) deve receber um
+            # ACK ok:false ROTEÁVEL, em vez de silêncio (antes ficava "connected"
+            # para sempre aguardando um ACK que nunca vinha).
+            code = self._heartbeat_reject_code(bound)
+            logger.info("Heartbeat WAN recusado (device=%s): %s", device_id, code)
+            return build_message(
+                MessageType.HEARTBEAT_ACK,
+                device_id=self.device_id,
+                request_id=envelope.request_id,
+                payload={
+                    "ok": False,
+                    "target_device_id": device_id,
+                    "error": code,
+                    "echo_sent_at": payload.get("sent_at"),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
             logger.debug("Heartbeat WAN recusado (device=%s): %s", device_id, _brief(exc))
             return None
         self.stats["heartbeats"] += 1
@@ -499,6 +517,28 @@ class CoreLink:
                 "heartbeat_seconds": int(settings.device_heartbeat_seconds),
             },
         )
+
+    def _heartbeat_reject_code(self, bound: dict[str, str]) -> str:
+        """Classifica a rejeição de heartbeat: `revoked` ou `not_authenticated`.
+
+        Nunca expõe detalhes; apenas diferencia revogação (device/credencial
+        inválidos) de sessão expirada para o cliente decidir entre parar ou
+        re-autenticar.
+        """
+        try:
+            with SessionLocal() as db:
+                device = db.get(Device, bound.get("device_id"))
+                credential = db.get(Credential, bound.get("credential_id"))
+        except Exception:  # noqa: BLE001 — classificador é best-effort
+            return "not_authenticated"
+        if (
+            device is None
+            or not getattr(device, "is_active", False)
+            or credential is None
+            or not getattr(credential, "is_active", False)
+        ):
+            return "revoked"
+        return "not_authenticated"
 
     async def _on_error(self, envelope: RemoteEnvelope) -> RemoteEnvelope | None:
         payload = envelope.payload or {}

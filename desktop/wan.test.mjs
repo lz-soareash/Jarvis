@@ -359,3 +359,93 @@ test("WanClient: token nunca aparece no URL (construtor sanitiza)", async () => 
   assert.ok(!client.url.includes("tok-1"));
   client.stop();
 });
+
+test("WanClient: heartbeat_ack ok:false revoked -> authentication_error terminal (sem reconectar)", async () => {
+  const relay = await startRelay((env, { send }) => {
+    if (env.type === "hello") send({ type: "hello_ack", payload: { role: "mobile", ok: true } });
+    else if (env.type === "auth") send(authOk(env));
+    else if (env.type === "heartbeat") send({ type: "heartbeat_ack", payload: { ok: false, error: "revoked" } });
+  });
+  try {
+    const client = new WanClient(makeDefaultEnv({ url: relay.url, heartbeatMs: 15 }));
+    await client.connect();
+    await waitFor(() => client.state === "authentication_error", 2500);
+    assert.equal(client.authenticated, false);
+    await wait(120);
+    assert.equal(client._reconnectTimer, null, "não agenda reconexão após revogação");
+    assert.equal(client.state, "authentication_error", "estado terminal permanece");
+    client.stop();
+  } finally {
+    await relay.close();
+  }
+});
+
+test("WanClient: heartbeat_ack ok:false not_authenticated re-autentica com token", async () => {
+  let authCount = 0;
+  const relay = await startRelay((env, { send }) => {
+    if (env.type === "hello") send({ type: "hello_ack", payload: { role: "mobile", ok: true } });
+    else if (env.type === "auth") {
+      authCount += 1;
+      if (authCount === 1) send(authOk(env));
+      else send({ type: "auth_result", payload: { ok: false, reason: "sessão não reconhecida" } });
+    } else if (env.type === "heartbeat") send({ type: "heartbeat_ack", payload: { ok: false, error: "not_authenticated" } });
+  });
+  try {
+    const client = new WanClient(makeDefaultEnv({ url: relay.url, heartbeatMs: 15 }));
+    await client.connect();
+    await waitFor(() => client.state === "connected");
+    await waitFor(() => authCount >= 2, 2500);
+    await waitFor(() => client.state === "authentication_error", 2500);
+    assert.ok(authCount >= 2, "re-autenticação enviada após sessão não reconhecida");
+    client.stop();
+  } finally {
+    await relay.close();
+  }
+});
+
+test("WanClient: heartbeats sem ACK fecham a conexão e reconectam (half-open)", async () => {
+  const relay = await startRelay((env, { send }) => {
+    if (env.type === "hello") send({ type: "hello_ack", payload: { role: "mobile", ok: true } });
+    else if (env.type === "auth") send(authOk(env));
+    // heartbeat intencionalmente NUNCA respondido
+  });
+  try {
+    const states = [];
+    const client = new WanClient(
+      makeDefaultEnv({
+        url: relay.url,
+        heartbeatMs: 15,
+        maxBackoffMs: 50,
+        onState: (s) => states.push(s),
+      }),
+    );
+    await client.connect();
+    await waitFor(() => client.state === "connected");
+    await waitFor(() => states.includes("reconnecting") || states.includes("core_unavailable"), 4000);
+    assert.ok(states.some((s) => s === "reconnecting" || s === "core_unavailable"), "detectou perda de heartbeat");
+    client.stop();
+  } finally {
+    await relay.close();
+  }
+});
+
+test("WanClient: transport_meta reflete o scheme real (ws:// -> ws)", async () => {
+  let meta = null;
+  const relay = await startRelay((env, { send }) => {
+    if (env.type === "hello") send({ type: "hello_ack", payload: { role: "mobile", ok: true } });
+    else if (env.type === "auth") {
+      meta = env.payload.transport_meta;
+      send(authOk(env));
+    }
+  });
+  try {
+    const client = new WanClient(makeDefaultEnv({ url: relay.url }));
+    await client.connect();
+    await waitFor(() => client.state === "connected");
+    assert.ok(meta, "auth enviado");
+    assert.equal(meta.transport, "ws");
+    await client.leave();
+  } finally {
+    await relay.close();
+  }
+});

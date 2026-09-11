@@ -68,10 +68,12 @@ class WanClient {
     this.authenticated = false;
     this.ws = null;
     this.reauthAttempts = 0;
+    this.heartbeatsNoAck = 0;
     this._handshakeTimer = null;
     this._pingTimer = null;
     this._reconnectTimer = null;
     this._intentionalClose = false;
+    this._terminalFailed = false;
     this._sawHelloAck = false;
   }
 
@@ -92,6 +94,8 @@ class WanClient {
   async connect() {
     this._clearTimers();
     this._intentionalClose = false;
+    this._terminalFailed = false;
+    this.heartbeatsNoAck = 0;
     if (!this.url) {
       this.setState("offline", "URL do gateway WAN não configurada");
       return;
@@ -151,12 +155,15 @@ class WanClient {
 
       ws.addEventListener("close", (evt) => {
         this._clearHandshake();
+        this.ws = null;
         if (this._intentionalClose) {
-          this.ws = null;
           this.setState("offline", "desconectado pelo usuário");
           return;
         }
-        this.ws = null;
+        if (this._terminalFailed) {
+          // Revogação/sessão inválida já refletida no estado — nunca reconectar.
+          return;
+        }
         if (this._sawHelloAck || this.authenticated) {
           this.authenticated = false;
           this.setState("reconnecting", `conexão caiu (código ${evt.code})`);
@@ -183,10 +190,26 @@ class WanClient {
       case "auth_result":
         this._onAuthResult(env);
         break;
-      case "heartbeat_ack":
+      case "heartbeat_ack": {
+        const p = env.payload || {};
+        const ok = p.ok === true;
         this.failures = 0;
-        this.onHeartbeat((env.payload || {}).ok === true, env);
+        this.onHeartbeat(ok, env);
+        if (ok) {
+          this.heartbeatsNoAck = 0;
+          break;
+        }
+        // Fase 24.1 — ACK ok:false é sinalização honesta do Core: distingue
+        // revogação (terminal) de sessão não reconhecida (re-auth do token).
+        this.heartbeatsNoAck = 0;
+        const code = String(p.error || "not_authenticated").toLowerCase();
+        if (code === "revoked") {
+          this._rejectTerminal("credenciais WAN revogadas pelo Core");
+        } else {
+          this._handleNotAuthenticated();
+        }
         break;
+      }
       case "message_result":
         this.onMessageResult(env.payload || {}, env);
         break;
@@ -211,10 +234,13 @@ class WanClient {
       return;
     }
     this._sawHelloAck = true;
+    this.reauthAttempts = 0;
+    this.heartbeatsNoAck = 0;
     this._authenticate();
   }
 
   _authenticate() {
+    const scheme = String(this.url || "").startsWith("ws:") ? "ws" : "wss";
     let payload;
     if (this.pairingCode) {
       payload = {
@@ -224,7 +250,7 @@ class WanClient {
         platform: this.platform,
         client_version: this.clientVersion,
         capabilities: this.capabilities,
-        transport_meta: { app: "desktop", transport: "wss" },
+        transport_meta: { app: "desktop", transport: scheme },
       };
     } else if (this.token) {
       payload = {
@@ -233,7 +259,7 @@ class WanClient {
         platform: this.platform,
         client_version: this.clientVersion,
         capabilities: this.capabilities,
-        transport_meta: { app: "desktop", transport: "wss" },
+        transport_meta: { app: "desktop", transport: scheme },
       };
     } else {
       this.setState("authentication_error", "sem token nem código de pareamento");
@@ -283,17 +309,35 @@ class WanClient {
       this.setState("core_unavailable", "Core offline pelo relé");
       this._scheduleReconnect("core_unavailable");
     } else if (code === "not_authenticated") {
-      // Relé perdeu o atrelamento: tenta re-autorizar UMA vez nesta conexão.
-      if (this.token && this.reauthAttempts < 3) {
-        this.reauthAttempts += 1;
-        this._authenticate();
-      } else {
-        this.setState("authentication_error", "sessão WAN não reconhecida");
-      }
+      // Relé perdeu o atrelamento: tenta re-autorizar com o token salvo.
+      this._handleNotAuthenticated();
     } else if (code === "rate_limited") {
       this.onError(new Error("muitas mensagens; aguarde"));
     } else {
       this.onError(new Error(p.message || p.detail || "erro do relé"));
+    }
+  }
+
+  _handleNotAuthenticated() {
+    if (this.token && this.reauthAttempts < 3) {
+      this.reauthAttempts += 1;
+      this._authenticate();
+    } else {
+      this.setState("authentication_error", "sessão WAN não reconhecida");
+    }
+  }
+
+  _rejectTerminal(message) {
+    this._terminalFailed = true;
+    this.authenticated = false;
+    this._clearTimers();
+    this.setState("authentication_error", message);
+    if (this.ws) {
+      try {
+        this.ws.close(1000, "revoked");
+      } catch {
+        /* noop */
+      }
     }
   }
 
@@ -318,6 +362,17 @@ class WanClient {
     this._pingTimer = setTimeout(() => {
       this._pingTimer = null;
       if (this.ws && this.authenticated) {
+        // Fase 24.1 — heartbeat perdido (relé/Core em half-open) não fica
+        // invisível: após 3 envios sem ACK, fecha e o close dispara reconexão.
+        this.heartbeatsNoAck += 1;
+        if (this.heartbeatsNoAck >= 3) {
+          try {
+            this.ws.close(1000, "heartbeat timeout");
+          } catch {
+            /* noop */
+          }
+          return;
+        }
         this._sendEnvelope("heartbeat", { sent_at: Date.now() });
         this._scheduleHeartbeat();
       }
