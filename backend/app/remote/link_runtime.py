@@ -33,6 +33,7 @@ def _make_factory(url: str):
             url=url,
             headers={},
             timeout=settings.remote_gateway_connect_timeout_seconds,
+            recv_timeout=max(settings.remote_gateway_heartbeat_seconds * 3.0, 90.0),
         )
 
     return _factory

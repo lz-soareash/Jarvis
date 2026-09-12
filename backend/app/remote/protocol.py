@@ -54,6 +54,11 @@ class MessageType(str, Enum):
     # mesmo fluxo de `/api/approvals/{id}/respond`).
     APPROVAL_RESPOND = "approval_respond"
     APPROVAL_RESULT = "approval_result"
+    # Fase 25 — VEGA Mobile Control: comando de dispositivo Core → móvel
+    # (MOBILE_COMMAND) e seu resultado móvel → Core (reusa COMMAND_RESULT).
+    # A autoridade de execução permanece NO MÓVEL (allowlist local + permissões
+    # do SO); o Core valida contra o registry de capabilities e correlaciona.
+    MOBILE_COMMAND = "mobile_command"
     # CLOSE: encerramento cooperativo do peer (sanitizado pelo relé).
     CLOSE = "close"
 

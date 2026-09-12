@@ -66,6 +66,11 @@ _LINK_STATS_KEYS = (
     "proactive_queued",
     "proactive_expired",
     "rate_limited",
+    # Fase 25 — comandos de dispositivo móvel (MOBILE_COMMAND/COMMAND_RESULT).
+    "commands_dispatched",
+    "commands_results",
+    "commands_timeouts",
+    "commands_dropped",
 )
 
 _BROKER_EVENT_PREFIXES = ("remote.", "device.", "session.", "proactive.")
@@ -76,6 +81,11 @@ _MAX_KNOWN_MOBILES = 50
 _PROACTIVE_CONTENT_LIMIT = 1000
 _MAX_RTT_HISTORY = 10
 _MAX_LATENCY_HISTORY = 10
+
+# Fase 25 — comandos de dispositivo móvel em vôo (bounded + TTL; nunca crescem).
+_MAX_PENDING_COMMANDS = 100
+_MAX_COMMAND_RESULT_HISTORY = 50
+_DEFAULT_COMMAND_TIMEOUT_MS = 15_000
 
 
 class WanLinkState(str, Enum):
@@ -164,6 +174,13 @@ class CoreLink:
         self._proactive_queue: dict[str, deque] = {}
         self._known_mobiles: dict[str, datetime] = {}
 
+        # Fase 25 — comandos de dispositivo em vôo/resultados recentes.
+        # pending: command_id -> {request_id, device_id, capability, timeout_ms,
+        #                        dispatched_ts, deadline_ts}
+        self._pending_commands: dict[str, dict[str, Any]] = {}
+        # history: command_id -> resultado sanitizado (não retorna args/erros brutos).
+        self._command_results: dict[str, dict[str, Any]] = {}
+
     # -- observabilidade ------------------------------------------------------
 
     def snapshot(self) -> dict[str, Any]:
@@ -192,6 +209,8 @@ class CoreLink:
                 "message_latency_ms": self._avg(self._latency_history),
             },
             "queued_proactive": sum(len(q) for q in self._proactive_queue.values()),
+            "commands_pending": len(self._pending_commands),
+            "commands_last": self._recent_command_results(limit=5),
             "counters": dict(self.stats),
         }
 
@@ -398,6 +417,7 @@ class CoreLink:
         manager.register(MessageType.HEARTBEAT, self._on_heartbeat)
         manager.register(MessageType.COMPUTER_TASK, self._on_computer_task)
         manager.register(MessageType.APPROVAL_RESPOND, self._on_approval_respond)
+        manager.register(MessageType.COMMAND_RESULT, self._on_command_result)
         manager.register(MessageType.CLOSE, self._on_close)
         return manager
 
@@ -1083,6 +1103,203 @@ class CoreLink:
                 "target_device_id": device_id,
             },
         )
+
+    # -- VEGA Mobile Control (Fase 25): comandos de dispositivo -----------------
+
+    async def dispatch_mobile_command(
+        self,
+        *,
+        command_id: str,
+        device_id: str,
+        capability: str,
+        args: dict[str, Any] | None = None,
+        timeout_ms: int | None = None,
+    ) -> dict[str, Any]:
+        """Despacha um comando de dispositivo ao móvel (idempotente por command_id).
+
+        O Core valida capability/args (registry) e o móvel aplica a allowlist
+        LOCAL + permissões do SO — validação em DUAS camadas. Retorna um resumo
+        sanitizado do comando em vôo. Envelopes vão pela mailbox do relé (o
+        cliente lento nunca bloqueia o Core).
+        """
+        from app.remote.mobile_capabilities import (
+            MobileCommandError,
+            validate_command,
+        )
+
+        try:
+            validate_command(capability, args)
+        except MobileCommandError:
+            self.stats["commands_dropped"] += 1
+            raise
+
+        if command_id in self._pending_commands:
+            return self._pending_command_summary(command_id)
+        timeout_ms = max(1_000, int(timeout_ms or _DEFAULT_COMMAND_TIMEOUT_MS))
+        now = time.monotonic()
+
+        bound = self._bound(device_id)
+        if bound is None:
+            self.stats["commands_dropped"] += 1
+            raise LinkStateError(f"device não é um destino vinculado: {device_id}")
+
+        envelope = build_message(
+            MessageType.MOBILE_COMMAND,
+            device_id=self.device_id,
+            request_id=command_id,
+            payload={
+                "command_id": command_id,
+                "target_device_id": device_id,
+                "capability": capability,
+                "args": dict(args or {}),
+                "timeout_ms": timeout_ms,
+            },
+        )
+        if self._manager is None:
+            self.stats["commands_dropped"] += 1
+            raise LinkStateError("Core Link WAN não está conectado")
+        await self._send(envelope)
+
+        self._pending_commands[command_id] = {
+            "request_id": command_id,
+            "device_id": device_id,
+            "capability": capability,
+            "timeout_ms": timeout_ms,
+            "dispatched_ts": now,
+            "dispatched_at": _utcnow(),
+            "deadline_ts": now + timeout_ms / 1000.0,
+        }
+        self.stats["commands_dispatched"] += 1
+        self._bump_pending_commands()
+        return self._pending_command_summary(command_id)
+
+    def _bump_pending_commands(self) -> None:
+        """Capita a fila de comandos em vôo (anti-vazamento de memória)."""
+        if len(self._pending_commands) <= _MAX_PENDING_COMMANDS:
+            return
+        # Expira primeiro; ainda acima do teto, descarta os mais antigos.
+        self._sweep_expired_commands()
+        while len(self._pending_commands) > _MAX_PENDING_COMMANDS:
+            oldest = min(self._pending_commands, key=lambda k: self._pending_commands[k]["dispatched_ts"])
+            self._pending_commands.pop(oldest, None)
+            self.stats["commands_dropped"] += 1
+
+    def _sweep_expired_commands(self) -> None:
+        """Marca como TIMEOUT comandos cuja deadline passou (lazy nos acessos)."""
+        now = time.monotonic()
+        expired = [
+            command_id
+            for command_id, pending in self._pending_commands.items()
+            if now > pending["deadline_ts"]
+        ]
+        for command_id in expired:
+            self._pending_commands.pop(command_id, None)
+            self.stats["commands_timeouts"] += 1
+            self._remember_command_result(
+                {
+                    "command_id": command_id,
+                    "status": "timeout",
+                    "error": "tempo do comando excedido sem resposta do dispositivo",
+                    "finished_at": _utcnow(),
+                }
+            )
+
+    def _pending_command_summary(self, command_id: str) -> dict[str, Any]:
+        pending = self._pending_commands.get(command_id)
+        if pending is None:
+            history = self._command_results.get(command_id)
+            if history is not None:
+                summary = {
+                    "command_id": command_id,
+                    "status": history.get("status"),
+                    "result": history.get("result"),
+                    "error": history.get("error"),
+                    "started_at": history.get("started_at"),
+                    "finished_at": history.get("finished_at"),
+                }
+                if history.get("capability"):
+                    summary["capability"] = history["capability"]
+                if history.get("device_id"):
+                    summary["device_id"] = history["device_id"]
+                return summary
+            raise LinkStateError(f"comando desconhecido: {command_id}")
+        self._sweep_expired_commands()
+        if command_id in self._pending_commands:
+            return {
+                "command_id": command_id,
+                "status": "pending",
+                "device_id": pending["device_id"],
+                "capability": pending["capability"],
+                "timeout_ms": pending["timeout_ms"],
+                "dispatched_at": pending["dispatched_at"],
+            }
+        # Expirou durante a busca — devolve o estado timeout.
+        return {
+            "command_id": command_id,
+            "status": "timeout",
+            "device_id": pending["device_id"],
+            "capability": pending["capability"],
+        }
+
+    def pending_command_summary(self, command_id: str) -> dict[str, Any]:
+        """API pública (sincronizada) de status de um comando de dispositivo."""
+        return self._pending_command_summary(command_id)
+
+    def _remember_command_result(self, result: dict[str, Any]) -> None:
+        self._command_results[result["command_id"]] = result
+        if len(self._command_results) > _MAX_COMMAND_RESULT_HISTORY:
+            oldest = min(
+                self._command_results,
+                key=lambda k: self._command_results[k].get("finished_at", ""),
+            )
+            self._command_results.pop(oldest, None)
+
+    def _recent_command_results(self, limit: int) -> list[dict[str, Any]]:
+        recent = sorted(
+            self._command_results.values(),
+            key=lambda r: str(r.get("finished_at") or ""),
+            reverse=True,
+        )
+        return recent[:limit]
+
+    async def _on_command_result(self, envelope: RemoteEnvelope) -> RemoteEnvelope | None:
+        """Recebe COMMAND_RESULT do móvel e correlaciona com o comando em vôo.
+
+        Identidade confiável: `envelope.device_id` foi rotulado pelo relé (o Core
+        nunca confia no `device_id` alegado). O `command_id` correlaciona com o
+        comando despachado; resultados desconhecidos são contados e descartados.
+        """
+        payload = envelope.payload or {}
+        command_id = payload.get("command_id") or envelope.command_id
+        device_id = envelope.device_id
+        if not command_id:
+            self.stats["commands_dropped"] += 1
+            return None
+        pending = self._pending_commands.get(command_id)
+        bound = self._bound(device_id)
+        if bound is None or pending is None or pending["device_id"] != device_id:
+            self.stats["commands_dropped"] += 1
+            return None
+
+        self._pending_commands.pop(command_id, None)
+        status = str(payload.get("status") or "failed")
+        result: dict[str, Any] = {
+            "command_id": command_id,
+            "device_id": device_id,
+            "capability": pending["capability"],
+            "status": status,
+            "started_at": payload.get("started_at"),
+            "finished_at": payload.get("finished_at") or _utcnow(),
+            "result": payload.get("result"),
+            "error": payload.get("error"),
+        }
+        self._remember_command_result(result)
+        self.stats["commands_results"] += 1
+        self._publish_gateway_event(
+            "remote.gateway.command_result",
+            {"command_id": command_id, "status": status},
+        )
+        return None
 
     async def _send(self, envelope: RemoteEnvelope) -> None:
         manager = self._manager

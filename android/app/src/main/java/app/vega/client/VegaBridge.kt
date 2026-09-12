@@ -12,6 +12,7 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.UUID
+import kotlin.math.min
 
 /**
  * Device Bridge mobile â€” UMA IA, MÃšLTIPLOS CLIENTES (Fase 21).
@@ -42,8 +43,13 @@ class VegaBridge(
 
     val deviceId: String?
         get() = prefs.getString("device_id", null)
+    val token: String?
+        get() = prefs.getString("token", null)
     val hasToken: Boolean
         get() = !prefs.getString("token", null).isNullOrBlank()
+
+    var conversationId: String? = null
+        private set
 
     private fun setState(newState: String, newDetail: String = "") {
         state = newState
@@ -111,6 +117,12 @@ class VegaBridge(
         }
     }
 
+    private fun graphCapabilities(): List<String> {
+        val caps = app.vega.client.model.MobileCapabilities.ALL.map { it.name }.toMutableList()
+        caps.addAll(listOf("chat", "tts", "notifications"))
+        return caps
+    }
+
     private suspend fun pair(storedId: String?) {
         setState("pairing", "gerando cÃ³digo de pareamentoâ€¦")
         val register = httpJSON(
@@ -120,7 +132,7 @@ class VegaBridge(
                 put("device_type", "mobile")
                 put("platform", "android")
                 put("client_version", BuildConfig.VERSION_NAME)
-                put("capabilities", org.json.JSONArray(listOf("chat", "tts", "notifications")))
+                put("capabilities", org.json.JSONArray(graphCapabilities()))
             }
         )
         val deviceId = register!!.getJSONObject("device").getString("id")
@@ -133,7 +145,7 @@ class VegaBridge(
                 put("device_type", "mobile")
                 put("platform", "android")
                 put("client_version", BuildConfig.VERSION_NAME)
-                put("capabilities", org.json.JSONArray(listOf("chat", "tts", "notifications")))
+                put("capabilities", org.json.JSONArray(graphCapabilities()))
                 put("pending_device_id", storedId ?: deviceId)
             }
         )!!
@@ -151,24 +163,61 @@ class VegaBridge(
                 put("event", event)
                 put("platform", "android")
                 put("client_version", BuildConfig.VERSION_NAME)
-                put("capabilities", org.json.JSONArray(listOf("chat", "tts", "notifications")))
+                put("capabilities", org.json.JSONArray(graphCapabilities()))
                 claimedDeviceId?.let { put("claimed_device_id", it) }
             }
         )
         heartbeatsTotal++
         heartbeatMs = (out?.optInt("heartbeat_seconds", 30) ?: 30) * 1000L
+        conversationId = out?.optString("conversation_id", "").orEmpty().ifBlank { conversationId }
         return out
+    }
+
+    private suspend fun reauthenticate(): Boolean {
+        val tok = prefs.getString("token", null).orEmpty()
+        if (tok.isBlank()) return false
+        val out = httpJSON(
+            "POST", "/api/remote/auth",
+            JSONObject().apply {
+                put("token", tok)
+                deviceId?.let { put("claimed_device_id", it) }
+            }
+        )
+        conversationId = out?.optString("conversation_id", "").orEmpty().ifBlank { conversationId }
+        return out?.optBoolean("authenticated", false) == true
     }
 
     private fun startLoop() {
         heartbeatJob = CoroutineScope(Dispatchers.IO).launch {
+            var failures = 0
             while (true) {
                 try {
                     heartbeat("heartbeat", prefs.getString("device_id", null))
+                    failures = 0
+                    if (state != "connected") setState("connected", "conectado ao Core")
                 } catch (e: Exception) {
-                    setState("error", "heartbeat falhou (${e.message})")
+                    val status = (e as? HttpException)?.status ?: 0
+                    if (status == 401) {
+                        val ok = try { reauthenticate() } catch (_: Exception) { false }
+                        if (ok) {
+                            if (state != "connected") setState("connected", "sessão renovada")
+                        } else {
+                            prefs.edit().clear().apply()
+                            setState("error", "credenciais revogadas — reconecte")
+                            break
+                        }
+                    } else if (status == 503) {
+                        setState("error", "Remote/Device Bridge desabilitado no Core")
+                        break
+                    } else {
+                        failures += 1
+                        setState("reconnecting", "sem contato com o Core (tentativa $failures)")
+                    }
                 }
-                delay(heartbeatMs)
+                val backoff = if (failures == 0) heartbeatMs
+                else min(30_000L, 2_000L * (1L shl min(failures - 1, 4)))
+                delay(backoff)
+                if (failures > 0 && prefs.getString("token", null).isNullOrBlank()) break
             }
         }
     }

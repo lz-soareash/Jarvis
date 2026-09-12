@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_description">Scaffold de acessibilidade do VEGA (Fase 25). Sem leitura de árvore, sem controle de tela — destinado ao controle de acessibilidade em fase futura.</string>
+</resources>

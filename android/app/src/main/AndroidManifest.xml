@@ -2,6 +2,23 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Fase 25 — visibilidade de pacotes necessária para OPEN_APP e OPEN_URL
+         (nunca QUERY_ALL_PACKAGES; allowlist restrita por <queries>). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="http" />
+            <data android:scheme="https" />
+        </intent>
+    </queries>
 
     <application
         android:name=".VegaApplication"
@@ -20,6 +37,21 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Fase 25 — scaffold de acessibilidade (consentimento manual nas
+             Configurações; sem leitura de árvore nesta fase). -->
+        <service
+            android:name=".VegaAccessibilityService"
+            android:exported="false"
+            android:label="VEGA Device Control (scaffold)"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/vega_accessibility_config" />
+        </service>
     </application>
 
 </manifest>

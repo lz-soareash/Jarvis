@@ -57,7 +57,7 @@ Implementações: `GeminiProvider`, `LocalLLMProvider` (local, via llama.cpp) e
 | IA | google-genai (Gemini) |
 | Frontend | HTML + CSS + JS Vanilla (PWA: manifest + service worker) + Web Speech API (voz local) |
 | Desktop (Fase 21) | Electron 31 (Node 24) — cliente fino `VEGA.exe` (distribuições Windows Fase 22) |
-| Mobile (Fase 21) | Kotlin 1.9 + Jetpack Compose + AGP 8.4 — cliente fino `app-release.apk` assinado (Fase 22) |
+| Mobile (Fase 21/25) | Kotlin 1.9 + Jetpack Compose + AGP 8.4 — cliente fino com chat em voz/texto (Fase 25) `app-release.apk` assinado (Fase 22) |
 | Testes | pytest (+ pytest-asyncio, TestClient), node:test (bridge desktop) |
 
 Sem Docker/Redis/Celery nesta fase (não há necessidade real ainda).
@@ -69,7 +69,7 @@ frontend/                  # interface concha: HTML + CSS + JS Vanilla + PWA
 └── (index.html, sw.js, manifest.webmanifest, css/, js/, icons/)
     # js/ops.js + css/ops.css: Central de Operações (aba do SPA) — Fase 11
 desktop/                   # VEGA Desktop — cliente fino Electron (bridge.js testável) → VEGA.exe
-android/                   # VEGA Mobile — cliente fino Kotlin + Jetpack Compose (VegaBridge.kt) → APK
+android/                   # VEGA Mobile — chat em voz/texto (MainActivity + ChatViewModel + ui/) → APK
 backend/
 ├── app/
 │   ├── ai/
@@ -461,6 +461,9 @@ Core como nova capacidade `kind="research"` e exposta por tools `web_search`/`we
 | `GET /api/remote/gateway` | status sanitizado do Core Link WAN (relé; `REMOTE_GATEWAY_ENABLED=true`) — Fases 23/24 |
 | `POST /api/remote/gateway/connect` | conecta o Core ao relé (URL opcional; persistido best-effort, nunca secrets) — Fase 23 |
 | `POST /api/remote/gateway/disconnect` | desconecta o Core do relé — Fase 23 |
+| `GET /api/remote/mobile-capabilities` | registry canônico de capabilities de dispositivo (Fase 25) |
+| `POST /api/remote/gateway/command` | despacha um comando de dispositivo ao móvel (idempotente por `command_id`) — Fase 25 |
+| `GET /api/remote/gateway/command/{command_id}` | status de um comando em vôo/resultado recente — Fase 25 |
 | `GET /health` | saúde da API + banco (SQLite) e device detectado pelo User-Agent |
 | `GET /docs` | OpenAPI (Swagger UI) |
 
@@ -511,7 +514,11 @@ Node** do bridge desktop (`desktop/bridge.test.mjs`) → backend **816 passed, 1
 (`tests/test_fase24_wan.py` — relay heartbeat WAN com correção P1/P5, TTL de AUTH em voo,
 rate limit por peer, wake-event da mailbox, limites, snapshot/vocabulário do CoreLink,
 tunáveis do runtime, schema/API e 2 E2E em processo com banco real) → backend
-**899 passed, 1 skipped**. O Desktop valida `npm test` em `desktop/` (**28 testes Node**:
+**899 passed, 1 skipped**. A **Fase 25** adiciona **31 testes herméticos** em
+`tests/test_fase25_mobile_commands.py` (registry/validação de capabilities, dispatch/idempotência/
+timeout/histórico do CoreLink, roteamento `mobile_command`/`command_result` pelo relé, schemas e
+API) e registra `MessageType.MOBILE_COMMAND` (aditivo) → backend **931 passed, 1 skipped**.
+O Desktop valida `npm test` em `desktop/` (**28 testes Node**:
 bridge 6 + version 3 + updates 6 + config 5 + wan 8). Os
 `dev_*` usam `asyncio.run` (compatíveis com o
 Python 3.14, sem depender de event loop pré-existente). Os testes são herméticos: forçam
@@ -1210,6 +1217,137 @@ sem segundo Core/Memória/Permissões/Tools. O relé só **transporta**; TODA au
 - **Validação**: backend **899 passed, 1 skipped** (56 testes novos da Fase 24 em
   `backend/tests/test_fase24_wan.py`); Desktop **28/28 testes Node** verdes (`npm test`).
 
+## VEGA Mobile — cliente de conversa em voz e texto (Fase 25)
+
+O Mobile deixa de ser painel de conexão e vira um **cliente de conversa real** que conversa
+com o **mesmo** AI Core do Windows/Web — ZERO lógica de IA no aparelho (sem segundo Core,
+sem Memória, sem Permissões). A mesma conversa e o mesmo modelo de mensagens; transporte
+escolhido automaticamente: **HTTP + SSE na LAN** (Device Bridge) ou **WebSocket via relé WAN**
+quando fora da LAN.
+
+**Arquitetura** (todas as novas/alteradas em `android/app/src/main/java/app/vega/client/`):
+
+| Camada | Arquivo | Papel |
+|---|---|---|
+| Root UI | `MainActivity.kt` | 5 abas: Chat, Histórico, Operações, Dispositivo, Config |
+| Orquestração | `ChatViewModel.kt` | estado global, transporte, presença, turnos, voz |
+| Identidade LAN | `VegaBridge.kt` | register → pair → validate → heartbeat (+token/conversation_id expostos) |
+| WAN | `VegaWan.kt` | WebSocket (OkHttp); `onTurnFrame` roteia `agent_event`/`message_result` |
+| REST/SSE | `net/VegaHttp.kt` | `/api/sessions`, histórico, ops, aprovações, `sendMessageSse` |
+| Voz | `voice/SpeechIn.kt` `voice/TtsPlayer.kt` | STT nativo (pt-BR) e TTS do Core |
+| UI | `ui/*` | theme (tokens), markdown, orb, abas |
+
+**Endpoints consumidos** (todos reais, já existentes no Core):
+- `POST /api/remote/devices/register`, `POST /api/remote/pairings[/validate]`,
+  `POST /api/remote/heartbeat`, `POST /api/remote/auth` — identidade/parceria LAN.
+- `POST /api/remote/message` (`stream=true`) — SSE do turno (start → tool_start/tool_done →
+  approval_request → chunk* → done; `error` intermediário é **não-terminal** — o turno
+  continua e termina em `done`; a leitura encerra ao receber `done`/`error` ou fim do fluxo).
+- `POST /api/sessions`, `GET /api/sessions`, `GET /api/sessions/{id}/messages` —
+  conversas novas/histórico (a mensagem final de `done` traz `session_id` se ainda não havia).
+- `POST /api/approvals/{id}/respond` — aprovação binária de ferramenta.
+- `GET /api/ops/overview` — painel Operações. `GET /api/vega/state` — presença do Core.
+- `GET /api/tts?text=` — áudio `audio/mpeg` do TTS (somente rota LAN; não há TTS via relé WAN).
+
+**Fluxo de conexão** (LAN): botão Conectar → `boot()` tenta HEARTBEAT com o token salvo →
+401 ⇒ re-autentica (`/api/remote/auth`) → persistindo 401 ⇒ limpa credenciais e exige novo
+pareamento; 503 ⇒ erro explicado (REMOTE/DEVICE desabilitado no Core); falhas de rede entram
+em **reconnecting** com backoff 2/4/8/16/30 s (teto 30 s). Cada `heartbeat` renova
+`heartbeatsTotal` e, na 1ª vez, propaga `conversation_id` para conversa ativa.
+**WAN**: `connect()` (precisa `ws://`/`wss://`) → hello → auth (token ou código) → heartbeat;
+recupera com backoff exponencial + jitter; senha revogada/sessão não reconhecida ⇒
+`authentication_error` terminal no app.
+
+**Estados**: enum `ConnectionState` (INITIALIZING/CONNECTING/ONLINE/RECONNECTING/OFFLINE/ERROR)
+espelhando `vega-state.js`; presença canônica de 16 estados + aliases (ex.: `online→idle`) em
+`VegaPresence` (testada). O orb animado e o chip de presença traduzem a presença ao vivo do Core.
+
+**Streaming (UI)**: mensagem do assistente nasce como SENDING → vira STREAMING ao entrar o
+1º `chunk` (conteúdo markdown renderizado) → DONE no `done` (a resposta persistida do Core
+substitui o texto acumulado). O core das ferramentas roda como chips acima do balão
+(`tool_start`/`tool_done`). Ao chegar `approval_request`, um card Aprovar/Negar é fixado acima
+do compositor e o SSE permanece aberto aguardando a resposta.
+
+**Config da URL do Core**: aba Config → "URL do Core" (persistida em `SharedPreferences`);
+default `http://127.0.0.1:8100` — com `adb reverse tcp:8100 tcp:8100` o aparelho fala com o
+Core do PC **sem expor nada na rede**; alternativa Wi-Fi: `HOST=0.0.0.0` no `.env` do backend
++ porta liberada. `RECORD_AUDIO` é pedido em runtime só ao ativar a entrada por voz.
+
+**Voz**: microfone → `SpeechRecognizer` (pt-BR) → o texto entra no **mesmo** `send()` do teclado
+(histórico idêntico). Resposta falada: toggle "Ler respostas em voz alta" na aba Config → ao
+concluir o `done`, reproduz `GET /api/tts?text=<resposta>` (presença `speaking` enquanto toca).
+
+**Decisões**: transporte primário LAN (HTTP+SSE), WAN sobreposto no **mesmo** pipeline de
+eventos; sem duplicação de lógica de IA/permissoões no APK; sem libs de navegação/DataStore
+(nativas); markdown com parser próprio testável (whitelist de inline/block; links só
+http/https); tokens nunca em URL/logs/SSE; TTS só em LAN (relé não transporta áudio).
+
+**Limitações conhecidas**: áudio de entrada depende do STT nativo (off-line na qualidade da
+ROM); sem notificações push/foreground; sem cartões de agente para computador; sem criptografia
+de armazenamento das conversas; TTS pede Core na LAN. Sem chave de IA externa no host, o Core
+responde com o fallback determinístico — o pipeline de chat/SSE é o mesmo.
+
+**Validação**: `:app:testDebugUnitTest` → **32/32 testes JUnit** verdes (`TurnEventTest` 12,
+`VegaPresenceTest` 7, `MarkdownParserTest` 13) nesta fase da conversa; a **Fase 25 (Device
+Control)** soma `MobileCapabilitiesTest` (8) e `MobileCommandExecutorTest` (13) → **53/53**.
+Contrato SSE validado contra o Core real em
+execução (`POST /api/remote/message` → `start…chunk…done`, conteúdo persistido,
+`GET /api/sessions/{id}/messages`, `/api/vega/state`, `/api/tts`). Instalação em aparelho físico
+e fluxo de voz em campo = validação manual desta fase.
+
+**Próxima fase**: validação em campo no Galaxy A15 (chat, histórico, reconexão, voz);
+notificações push/foreground quando o Core proativa; cartões de agente para computador por
+`computer_task`; e ambientar o WAN com WSS real (validação manual pendente).
+
+## VEGA Mobile Control — comandos de dispositivo (Fase 25)
+
+O Core pode **despachar comandos de dispositivo ao móvel** de forma remota (WAN/LAN), com
+validação em **duas camadas** e vocabulário de status único. A DIREÇÃO é aditiva sobre o
+protocolo WAN da Fase 24: Core → móvel `mobile_command`; móvel → Core `command_result`
+(permitido no relé apenas para devices atrelados).
+
+**Modelo de capabilities** (fonte única no Core, `backend/app/remote/mobile_capabilities.py`):
+todas de **risco baixo** — informação (`DEVICE_INFO`, `BATTERY_STATUS`, `NETWORK_STATUS`,
+`MEDIA_STATUS`) e ajustes locais (`OPEN_URL`, `VIBRATE`, `SET_VOLUME`, `OPEN_APP`,
+`SET_BRIGHTNESS`). `ACCESSIBILITY_CONTROL` é **declarada, não executável** nesta fase
+(scaffold do serviço de acessibilidade; resposta `unsupported`). O registry do Core valida
+capability + args (tipos exatos, sem extras) antes de despachar (`validate_command`).
+
+**Executor Android** (`mobile/`): espelho local do registry + `MobileOps` (fronteira de
+sistema, testável) + `MobileCommandExecutor` (lógica pura). Regras locais de segurança:
+
+- `OPEN_APP` só abre pacotes da **allowlist** (`com.android.settings`, `com.android.chrome`,
+  `org.mozilla.firefox`) — fora dela, `denied`;
+- `SET_BRIGHTNESS` exige `WRITE_SETTINGS` concedido — sem ele, `denied`;
+- capability desconhecida ou não executável → `unsupported`;
+- **timeout** por comando (`timeout_ms`, default 15 s) → `timeout`;
+- **idempotente por `command_id`** (reentrante na fila → `cancelled`; histórico limitado).
+
+**Status canônico** (Core e móvel falam o mesmo vocabulário): `pending/running/success/failed/
+denied/unsupported/timeout/cancelled`.
+
+**CoreLink** (`backend/app/remote/link.py`): `dispatch_mobile_command()` idempotente,
+`_pending_commands` limitado a 100, TTL lazy (comandos sem resposta viram `timeout`),
+histórico limitado a 50 e `_on_command_result` correlaciona por `command_id` + device
+atrelado (o relé rotula `device_id` — o Core nunca confia no valor alegado).
+
+**API do Core** (exige WAN conectado; 503 quando o Gateway Link está desligado):
+- `GET /api/remote/mobile-capabilities` — registry canônico (fonte para o Core/Desktop);
+- `POST /api/remote/gateway/command` — corpo `{device_id, capability, args?, timeout_ms?,
+  command_id?}` → 201 `{accepted: true, command}` (400 args inválidos/409 target não
+  vinculado);
+- `GET /api/remote/gateway/command/{command_id}` — status em vôo ou resultado recente.
+
+**UI Android** (`ui/DeviceControlScreen.kt`, 5ª aba "Dispositivo"): estado do serviço de
+acessibilidade (scaffold), allowlist de pacotes, registry de capabilities e os últimos
+comandos executados. `VegaAccessibilityService` usa `canRetrieveWindowContent=false` —
+**nunca lê a árvore**. Nenhuma capability desta fase executa tap/swipe/digitação.
+
+**Validação**: backend **931 passed, 1 skipped** (31 novos da Fase 25 em
+`tests/test_fase25_mobile_commands.py`); Android `:app:testDebugUnitTest` **53/53 verdes**
+(`MobileCapabilitiesTest` 8 + `MobileCommandExecutorTest` 13 + suíte anterior 32) e APK debug
+compila.
+
 ## Download
 
 Distribuições oficiais publicadas como **GitHub Release**:
@@ -1413,21 +1551,36 @@ dedup, TTL) com flush no (re)auth; observabilidade rica do link (`WanLinkState` 
 (`VegaWan.kt` OkHttp + card WAN, validado no CI) como thin clients WAN — sem segundo AI
 Core/Memória/Tools; MANUAL VALIDATION REQUIRED para rota real/CGNAT e WSS via proxy; **56
 testes backend novos — 899 passed, 1 skipped**) ·
-25. V2 — Multi-turn Agentic Context (planejado): memória do turno (agenda de passos e
+25. VEGA Mobile — Cliente de Conversa ✔ (Fase 25 COMPLETA: chat em voz e texto no aparelho com o
+**mesmo** AI Core do PC; `ChatViewModel` orquestra transporte automático **HTTP+SSE (LAN)** /
+**WebSocket WAN** no mesmo pipeline de eventos; história e nova conversa por `/api/sessions`;
+config de URL persistida + `adb reverse` (default `127.0.0.1:8100`); STT nativo pt-BR como
+entrada e TTS `GET /api/tts` como resposta falada; design system de tokens do Web; abas Chat/
+Histórico/Operações/Config/(Dispositivo Fase 25); **32/32 testes JUnit** e contrato SSE validado contra o Core real;
+instalação em aparelho físico = validação manual) ·
+25b. VEGA Mobile Control — Device Command (Fase 25 COMPLETA: Core despacha comandos de
+**dispositivo** ao móvel — `mobile_command`/`command_result` aditivos no relé WAN; registry de
+capabilities de baixo risco no Core (`mobile_capabilities.py`) com validação em duas camadas;
+executor Android puro com allowlist local (`OPEN_APP`), `WRITE_SETTINGS` para brilho, timeout/
+idempotência por `command_id` e vocabulário canônico de status; `ACCESSIBILITY_CONTROL`
+declarada mas `unsupported` nesta fase (scaffold com `canRetrieveWindowContent=false`); API
+`/api/remote/gateway/command`; 5ª aba "Dispositivo"; backend **931 passed, 1 skipped** e Android
+**53/53 testes JUnit**) ·
+26. V2 — Multi-turn Agentic Context (planejado): memória do turno (agenda de passos e
 justificativas) + contexto inter-turno persistente para tarefas longas ·
-26. V3 — Computer Use mais profundo (planejado): gestão de janelas, drag/scroll contínuo,
+27. V3 — Computer Use mais profundo (planejado): gestão de janelas, drag/scroll contínuo,
 uso de atalhos seguros e tolerância a layout (por via segura e confirmada) ·
-27. V4 — Planejamento hierárquico (planejado): tasks decomponíveis com dependências,
+28. V4 — Planejamento hierárquico (planejado): tasks decomponíveis com dependências,
 paralelismo controlado e view de progresso na Central de Operações ·
-28. V5 — Proativo contextual (planejado): silêncio ativo, monitoramento de estados
+29. V5 — Proativo contextual (planejado): silêncio ativo, monitoramento de estados
 (janela/carga/agenda) e sugestões com confirmação explícita ·
-29. V6 — Pesquisa agêntica (planejado): research multi-iteração com síntese em
+30. V6 — Pesquisa agêntica (planejado): research multi-iteração com síntese em
 conhecimento persistente e fontes citáveis ·
-30. V7 — Voz agêntica (planejado): TTS proativo de estados/resultados e comando
+31. V7 — Voz agêntica (planejado): TTS proativo de estados/resultados e comando
 hands-free com confirmação auditiva ·
-31. V8 — Perfil do usuário (planejado): memória de preferências com consentimento,
+32. V8 — Perfil do usuário (planejado): memória de preferências com consentimento,
 estilos de interação e affordances por dispositivo ·
-32. V9 — Autonomia governada (planejado): políticas por tarefa/domínio, revisão de
+33. V9 — Autonomia governada (planejado): políticas por tarefa/domínio, revisão de
 decisões passadas e auditoria de confiança, sempre com supervisão humana.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

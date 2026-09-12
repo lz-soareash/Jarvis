@@ -48,6 +48,9 @@ class VegaWan(
     val hasToken: Boolean
         get() = !prefs.getString("wan_token", null).isNullOrBlank()
 
+    var onTurnFrame: ((type: String, payload: JSONObject, requestId: String) -> Unit)? = null
+    var onMobileCommand: ((payload: JSONObject) -> Unit)? = null
+
     private var ws: WebSocket? = null
     private var heartbeatJob: Job? = null
     private var reconnectJob: Job? = null
@@ -61,8 +64,10 @@ class VegaWan(
     private var heartbeatMs: Long = 30_000
     private var token: String? = null
     private var pairingCode: String? = null
-    private var sessionId: String? = null
-    private var conversationId: String? = null
+    var sessionId: String? = null
+        private set
+    var conversationId: String? = null
+        private set
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -146,7 +151,7 @@ class VegaWan(
                             put("protocol_version", 1)
                             put("client_version", BuildConfig.VERSION_NAME)
                             put("device_type", "mobile")
-                            put("capabilities", org.json.JSONArray(listOf("chat", "tts", "notifications")))
+put("capabilities", deviceCapabilities())
                         },
                     )
                     armHandshakeTimeout(webSocket)
@@ -249,7 +254,16 @@ class VegaWan(
                     }
                 }
             }
-            "message_result", "agent_event" -> Log.i(logTag, "${env.optString("type")} recebido")
+            "message_result", "agent_event" -> {
+                val p = env.optJSONObject("payload")
+                if (p != null) {
+                    onTurnFrame?.invoke(env.optString("type"), p, env.optString("request_id"))
+                }
+            }
+            "mobile_command" -> {
+                val p = env.optJSONObject("payload")
+                if (p != null) onMobileCommand?.invoke(p)
+            }
             "error" -> onErrorFrame(env)
             else -> Log.d(logTag, "tipo não tratado: ${env.optString("type")}")
         }
@@ -278,9 +292,9 @@ class VegaWan(
             payload.put("device_type", "mobile")
             payload.put("platform", "android")
             payload.put("client_version", BuildConfig.VERSION_NAME)
-            payload.put("capabilities", org.json.JSONArray(listOf("chat", "tts", "notifications")))
+            payload.put("capabilities", deviceCapabilities())
             payload.put("transport_meta", transportMeta())
-            sendEnvelope("auth", payload)
+            sendEnvelope("auth", payload, requestId = UUID.randomUUID().toString())
         } else {
             val tok = token.orEmpty()
             if (tok.isEmpty()) {
@@ -291,9 +305,9 @@ class VegaWan(
             lastDeviceId?.let { payload.put("claimed_device_id", it) }
             payload.put("platform", "android")
             payload.put("client_version", BuildConfig.VERSION_NAME)
-            payload.put("capabilities", org.json.JSONArray(listOf("chat", "tts", "notifications")))
+            payload.put("capabilities", deviceCapabilities())
             payload.put("transport_meta", transportMeta())
-            sendEnvelope("auth", payload)
+            sendEnvelope("auth", payload, requestId = UUID.randomUUID().toString())
         }
     }
 
@@ -364,6 +378,13 @@ class VegaWan(
             .put("app", "android")
             .put("transport", if (lastUrl.startsWith("ws://")) "ws" else "wss")
 
+    /** Fase 25 — capabilities declaradas no WAN (unificadas com o executor). */
+    private fun deviceCapabilities(): org.json.JSONArray {
+        val caps = mobileCapabilityNames().toMutableList()
+        caps.addAll(listOf("chat", "tts", "notifications"))
+        return org.json.JSONArray(caps)
+    }
+
     fun sendMessage(content: String, opts: JSONObject = JSONObject()): String {
         if (state != "connected") throw IllegalStateException("sem conexão WAN autenticada")
         val requestId = UUID.randomUUID().toString()
@@ -399,6 +420,31 @@ class VegaWan(
             requestId,
         )
         return requestId
+    }
+
+    /** Fase 25 — emite COMMAND_RESULT do executor ao Core (status canônico). */
+    fun sendCommandResult(
+        commandId: String,
+        status: String,
+        result: JSONObject? = null,
+        error: String? = null,
+        startedAt: String? = null,
+        finishedAt: String? = null,
+    ) {
+        if (state != "connected") {
+            Log.w(logTag, "command_result descartado: sem conexão WAN (command=$commandId)")
+            return
+        }
+        val payload = JSONObject()
+            .put("command_id", commandId)
+            .put("status", status)
+            .apply {
+                if (result != null) put("result", result)
+                if (error != null) put("error", error)
+                if (startedAt != null) put("started_at", startedAt)
+                if (finishedAt != null) put("finished_at", finishedAt)
+            }
+        sendEnvelope("command_result", payload, requestId = commandId)
     }
 
     private fun startHeartbeat() {
@@ -464,5 +510,9 @@ class VegaWan(
                 else -> "wss://$t"
             }
         }
+
+        /** Fase 25 — nomes canônicos de capabilities de dispositivo (Registry). */
+        fun mobileCapabilityNames(): List<String> =
+            app.vega.client.model.MobileCapabilities.ALL.map { it.name }
     }
 }

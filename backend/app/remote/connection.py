@@ -77,11 +77,13 @@ class WebSocketConnection(RemoteConnection):
         *,
         headers: dict[str, str] | None = None,
         timeout: float = 10.0,
+        recv_timeout: float | None = None,
     ) -> None:
         super().__init__()
         self.url = url
         self.headers = headers or {}
         self.timeout = timeout
+        self._recv_timeout = recv_timeout
         self._ws: Any = None
 
     async def connect(self) -> None:
@@ -111,7 +113,8 @@ class WebSocketConnection(RemoteConnection):
         # ConnectionError para o receive loop tratar como desconexão — o
         # supervisor fará a reconexão/backoff (não morre em silêncio).
         try:
-            raw = await asyncio.wait_for(self._ws.recv(), timeout=self.timeout)
+            timeout = self._recv_timeout if self._recv_timeout is not None else self.timeout
+            raw = await asyncio.wait_for(self._ws.recv(), timeout=timeout)
         except asyncio.TimeoutError as exc:
             raise ConnectionError("timeout aguardando mensagem da Gateway") from exc
         return decode_message(raw)

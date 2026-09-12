@@ -53,6 +53,8 @@ _MOBILE_BOUND_ALLOWED = {
     MessageType.MESSAGE_ACK,
     MessageType.COMPUTER_TASK,
     MessageType.APPROVAL_RESPOND,
+    # Fase 25 — resultado de comando de dispositivo móvel → Core.
+    MessageType.COMMAND_RESULT,
     MessageType.HEARTBEAT,
     MessageType.CLOSE,
 }
@@ -65,6 +67,8 @@ _CORE_ROUTED = {
     MessageType.COMPUTER_RESULT,
     MessageType.APPROVAL_RESULT,
     MessageType.COMMAND_RESULT,
+    # Fase 25 — comando de dispositivo móvel enviado pelo Core ao móvel.
+    MessageType.MOBILE_COMMAND,
     # Fase 24 — ACK de heartbeat WAN do Core é ROTEÁVEL ao móvel de destino.
     MessageType.HEARTBEAT_ACK,
 }

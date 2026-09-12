@@ -10,6 +10,7 @@ sensível.
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session as OrmSession
+from uuid import uuid4
 
 from app.ai.providers.base import AIProvider
 from app.api.deps import get_ai_provider
@@ -56,6 +57,9 @@ from app.schemas.remote import (
     Empty,
     HeartbeatIn,
     HeartbeatOut,
+    MobileCommandIn,
+    MobileCommandOut,
+    CommandDispatchOut,
     PairingCreateOut,
     PairingOut,
     PairingSubmitIn,
@@ -190,6 +194,82 @@ async def remote_gateway_disconnect() -> RemoteGatewayOut:
 
     await stop_remote_link()
     return RemoteGatewayOut(**await get_remote_link_status())
+
+
+# ---------------------------------------------------------------------------
+# Fase 25 — VEGA Mobile Control: comandos de dispositivo (Core → móvel).
+# Enviam MOBILE_COMMAND pelo Core Link WAN; resultados correlacionam por
+# command_id (idempotente). Nunca expõe payloads/args sensíveis.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/remote/mobile-capabilities", response_model=list[dict])
+def remote_mobile_capabilities() -> list[dict]:
+    """Lista declarativa das capabilities conhecidas pelo Core (Fase 25)."""
+    from app.remote.mobile_capabilities import list_capabilities
+
+    return list_capabilities()
+
+
+def _command_out_from_summary(summary: dict) -> MobileCommandOut:
+    """Converte o resumo interno do CoreLink no schema público (sanitizado)."""
+    return MobileCommandOut(**summary)
+
+
+@router.post("/remote/gateway/command", response_model=CommandDispatchOut)
+async def remote_gateway_command(body: MobileCommandIn) -> CommandDispatchOut:
+    """Dispara um comando de dispositivo ao móvel (MOBILE_COMMAND via WAN).
+
+    - 503 quando o Core Link WAN está desabilitado (paridade dos demais
+      endpoints remotos);
+    - 400 quando capability/args são inválidos para o registry (fail-fast no
+      Core; o dispositivo ainda aplica allowlist local + permissões do SO);
+    - `command_id` é idempotente: reusar o mesmo id devolve o estado atual em
+      vez de re-despachar (evita envio duplicado em retry do cliente).
+    :raises HTTPException: 503/400 conforme os casos acima.
+    """
+    if not settings.remote_gateway_enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="Core Link WAN desabilitado (REMOTE_GATEWAY_ENABLED=false)",
+        )
+    from app.remote.link_runtime import get_remote_link
+    from app.remote.link import LinkStateError
+    from app.remote.mobile_capabilities import MobileCommandError
+
+    link = get_remote_link()
+    if link is None:
+        raise HTTPException(status_code=503, detail="Core Link WAN não iniciado")
+    command_id = body.command_id or str(uuid4())
+    try:
+        summary = await link.dispatch_mobile_command(
+            command_id=command_id,
+            device_id=body.device_id,
+            capability=body.capability,
+            args=body.args,
+            timeout_ms=body.timeout_ms,
+        )
+    except (MobileCommandError, KeyError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LinkStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return CommandDispatchOut(command=_command_out_from_summary(summary))
+
+
+@router.get("/remote/gateway/command/{command_id}", response_model=MobileCommandOut)
+async def remote_gateway_command_status(command_id: str) -> MobileCommandOut:
+    """Consultas o estado de um comando de dispositivo (idempotente/offline-safe)."""
+    from app.remote.link_runtime import get_remote_link
+    from app.remote.link import LinkStateError
+
+    link = get_remote_link()
+    if link is None:
+        raise HTTPException(status_code=503, detail="Core Link WAN não iniciado")
+    try:
+        summary = link.pending_command_summary(command_id)
+    except LinkStateError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _command_out_from_summary(summary)
 
 
 @router.post("/remote/pairings", response_model=PairingCreateOut, status_code=201)

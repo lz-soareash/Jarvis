@@ -241,3 +241,49 @@ class RemoteGatewayOut(APIModel):
     latency: dict[str, Any] | None = None
     queued_proactive: int = 0
     counters: dict[str, int] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Fase 25 — VEGA Mobile Control: comandos de dispositivo (Core → móvel).
+# Nunca expõe payloads/args sensíveis; apenas estado correlacional sanitizado.
+# ---------------------------------------------------------------------------
+
+
+class MobileCommandIn(APIModel):
+    """Disparo de um comando de dispositivo ao móvel (Core → móvel).
+
+    `device_id` é o alvo (deve estar VINCULADO ao Core Link WAN); `capability`
+    é validada contra o registry; `args` seguem o schema da capability no Core
+    (fail-fast) e a allowlist/permissões do SO no dispositivo. `command_id`
+    idempotência: reuso do mesmo id devolve o estado atual em vez de re-despachar.
+    """
+
+    device_id: str
+    capability: str
+    args: dict[str, Any] | None = None
+    timeout_ms: int | None = None
+    command_id: str | None = None
+
+
+class MobileCommandOut(APIModel):
+    """Status de um comando de dispositivo (piada/painel; nunca payloads brutos)."""
+
+    command_id: str
+    status: str  # pending | success | failed | denied | unsupported | timeout | cancelled
+    device_id: str | None = None
+    capability: str | None = None
+    timeout_ms: int | None = None
+    dispatched_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    # `result` é o resultado sanitizado do dispositivo (senão None); `error`
+    # é a mensagem sanitizada de falha (senão None). Nunca secretos.
+    result: dict[str, Any] | None = None
+    error: str | None = None
+
+
+class CommandDispatchOut(APIModel):
+    """Resposta do disparo: o comando foi enfileirado ao móvel (PENDING)."""
+
+    accepted: bool = True
+    command: MobileCommandOut

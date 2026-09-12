@@ -116,6 +116,8 @@ def test_message_type_vocabulary_matches_spec():
         "approval_respond",
         "approval_result",
         "close",
+        # Fase 25 — VEGA Mobile Control (comando de dispositivo Core → móvel).
+        "mobile_command",
     }
 
 
