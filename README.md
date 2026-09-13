@@ -464,6 +464,8 @@ Core como nova capacidade `kind="research"` e exposta por tools `web_search`/`we
 | `GET /api/remote/mobile-capabilities` | registry canônico de capabilities de dispositivo (Fase 25) |
 | `POST /api/remote/gateway/command` | despacha um comando de dispositivo ao móvel (idempotente por `command_id`) — Fase 25 |
 | `GET /api/remote/gateway/command/{command_id}` | status de um comando em vôo/resultado recente — Fase 25 |
+| `POST /api/remote/devices/{id}/commands/poll` | busca comandos de dispositivo pendentes para este device (box LAN, device_type mobile/tablet) — Fase 26 |
+| `POST /api/remote/devices/{id}/commands/result` | publica o resultado canônico de um comando executado (box LAN; idempotente) — Fase 26 |
 | `GET /health` | saúde da API + banco (SQLite) e device detectado pelo User-Agent |
 | `GET /docs` | OpenAPI (Swagger UI) |
 
@@ -518,6 +520,10 @@ tunáveis do runtime, schema/API e 2 E2E em processo com banco real) → backend
 `tests/test_fase25_mobile_commands.py` (registry/validação de capabilities, dispatch/idempotência/
 timeout/histórico do CoreLink, roteamento `mobile_command`/`command_result` pelo relé, schemas e
 API) e registra `MessageType.MOBILE_COMMAND` (aditivo) → backend **931 passed, 1 skipped**.
+A **Fase 26** (VEGA Mobile Agent Orchestration) adiciona **33 testes herméticos** em
+`tests/test_fase26_mobile_agent.py` (tools `mobile_*` registradas, inbox LAN idempotente e
+limitado, resolução de alvo/transporte e dispatch do `mobile_agent`, padrões de intenção
+pt-BR, API LAN `commands/poll|result` com 503) → backend **966 passed, 1 skipped**.
 O Desktop valida `npm test` em `desktop/` (**28 testes Node**:
 bridge 6 + version 3 + updates 6 + config 5 + wan 8). Os
 `dev_*` usam `asyncio.run` (compatíveis com o
@@ -1348,6 +1354,49 @@ comandos executados. `VegaAccessibilityService` usa `canRetrieveWindowContent=fa
 (`MobileCapabilitiesTest` 8 + `MobileCommandExecutorTest` 13 + suíte anterior 32) e APK debug
 compila.
 
+## VEGA Mobile Agent Orchestration & UX (Fase 26)
+
+O AI Core/Agent passa a **consumir as capabilities móveis por tool calls estruturadas**:
+`Agent → mobile_{tool} → mobile_command → WAN/LAN → executor Android → command_result → resposta
+natural`. O móvel continua **cliente fino** (sem AI Core/segunda memória): é executor de
+comandos e sensores; o Core decide. Sem chave de IA no APK, sem root/ADB, sem contornos.
+
+**Tools `mobile_*`** (`backend/app/tools/mobile.py`): 9 tools registradas (`mobile_device_info`,
+`mobile_battery_status`, `mobile_network_status`, `mobile_media_status` → leitura; `mobile_open_url`,
+`mobile_vibrate`, `mobile_set_volume`, `mobile_set_brightness`, `mobile_open_app` → ajustes),
+nível L0/L1, risco **low**, sem approval explícito. O agente recebe apenas o **nome amigável** do
+dispositivo (parâmetro `device`); `device_id`/tokens são resolvidos no Core.
+
+**`mobile_agent.py`** seleciona o dispositivo com segurança: hint exato → busca borrada →
+desambiguação (o agente pergunta quando ambíguo); sem hint usa o único device entregável ou o
+da sessão ativa. Transporte: **WAN preferido** (device atrelado) ou **LAN** (inbox do Core).
+Despacho com `timeout_ms` (default 15 s), `_wait_terminal` e eventos `mobile.command.*`
+sanitizados. `ok=True` **só** em `success` — denied/timeout/unsupported/failed sempre `ok=False`
+(nunca se finge sucesso).
+
+**Inbox LAN** (`mobile_inbox.py`): fila em memória por device (bounded, 20 pendentes / 50
+resultados), **idempotente por `command_id`**, status canônico validado, `reset()` para testes.
+
+**Intentos pt-BR** (`app/ai/intent.py`): 9 padrões conservadores de "modo assistente pessoal"
+(requerem "celular/telefone/aparelho") → confiança 0.96, vencendo desempates contra
+padrões de computador ("abra o chrome no meu celular").
+
+**Android** (canais WAN + LAN):
+- `VegaWan` (WAN): ingestão `mobile_command` → `ChatViewModel.handleMobileCommand` → executor →
+  `sendCommandResult` (Fase 25);
+- `VegaBridge` (LAN): polling `POST /api/remote/devices/{id}/commands/poll` a cada ~2,5 s
+  enquanto conectado + `reportCommandResult`; executor compartilhado com deduplicação
+  (`historical` terminal → re-poll sem re-executar efeitos);
+- **Cards estruturados no chat**: `TurnEvent.ToolDone` parseia `output`/`detail` como JSON
+  (`mobile_command_result`) → `MobileCommandCard` renderizado na bolha do assistente
+  (status/device/transporte/resultado), com `contentDescription` acessível;
+- **Ações rápidas** no chat vazio ("Bateria", "Dispositivo", "Rede") e tokens `VegaSpacing`.
+
+**Validação**: backend **966 passed, 1 skipped** (33 novos da Fase 26 em
+`tests/test_fase26_mobile_agent.py`); Android `:app:testDebugUnitTest` **61/61 verdes**
+(`MobileCommandCardTest` 5, `TurnEventTest` 14, `MobileCommandExecutorTest` 14 + suíte anterior)
+e APK debug compila. Validação física (Galaxy A15) e WAN/WSS real = validação manual pendente.
+
 ## Download
 
 Distribuições oficiais publicadas como **GitHub Release**:
@@ -1566,21 +1615,28 @@ idempotência por `command_id` e vocabulário canônico de status; `ACCESSIBILIT
 declarada mas `unsupported` nesta fase (scaffold com `canRetrieveWindowContent=false`); API
 `/api/remote/gateway/command`; 5ª aba "Dispositivo"; backend **931 passed, 1 skipped** e Android
 **53/53 testes JUnit**) ·
-26. V2 — Multi-turn Agentic Context (planejado): memória do turno (agenda de passos e
+26. VEGA Mobile Agent Orchestration & UX ✔ (Fase 26 COMPLETA: o Agent consome as capabilities
+móveis por **tools `mobile_*`** estruturadas (`Agent → mobile_command → WAN/LAN → executor →
+`command_result`); `mobile_agent` resolve dispositivo/transporte com desambiguação segura;
+inbox LAN no Core (`commands/poll|result`) + polling no `VegaBridge`; intentos pt-BR de
+assistente pessoal; **cards `MobileCommandCard`** no chat (output JSON estruturado) com
+acessibilidade e **ações rápidas**; backend **966 passed, 1 skipped** e Android **61/61 testes
+JUnit**; validação em campo no Galaxy A15 pendente) ·
+27. V2 — Multi-turn Agentic Context (planejado): memória do turno (agenda de passos e
 justificativas) + contexto inter-turno persistente para tarefas longas ·
-27. V3 — Computer Use mais profundo (planejado): gestão de janelas, drag/scroll contínuo,
+28. V3 — Computer Use mais profundo (planejado): gestão de janelas, drag/scroll contínuo,
 uso de atalhos seguros e tolerância a layout (por via segura e confirmada) ·
-28. V4 — Planejamento hierárquico (planejado): tasks decomponíveis com dependências,
+29. V4 — Planejamento hierárquico (planejado): tasks decomponíveis com dependências,
 paralelismo controlado e view de progresso na Central de Operações ·
-29. V5 — Proativo contextual (planejado): silêncio ativo, monitoramento de estados
+30. V5 — Proativo contextual (planejado): silêncio ativo, monitoramento de estados
 (janela/carga/agenda) e sugestões com confirmação explícita ·
-30. V6 — Pesquisa agêntica (planejado): research multi-iteração com síntese em
+31. V6 — Pesquisa agêntica (planejado): research multi-iteração com síntese em
 conhecimento persistente e fontes citáveis ·
-31. V7 — Voz agêntica (planejado): TTS proativo de estados/resultados e comando
+32. V7 — Voz agêntica (planejado): TTS proativo de estados/resultados e comando
 hands-free com confirmação auditiva ·
-32. V8 — Perfil do usuário (planejado): memória de preferências com consentimento,
+33. V8 — Perfil do usuário (planejado): memória de preferências com consentimento,
 estilos de interação e affordances por dispositivo ·
-33. V9 — Autonomia governada (planejado): políticas por tarefa/domínio, revisão de
+34. V9 — Autonomia governada (planejado): políticas por tarefa/domínio, revisão de
 decisões passadas e auditoria de confiança, sempre com supervisão humana.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

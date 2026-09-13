@@ -1072,6 +1072,16 @@ class CoreLink:
             return None
         return self._bindings.get(device_id)
 
+    # -- Fase 26 — VEGA Mobile Agent Orchestration: visão de vínculo (WAN).
+
+    def is_device_bound(self, device_id: str | None) -> bool:
+        """True quando o device está atrelado ao CoreLink WAN (alvo roteável)."""
+        return self._bound(device_id) is not None
+
+    def bound_device_ids(self) -> list[str]:
+        """IDs dos devices atualmente vinculados ao CoreLink WAN (sanitizado)."""
+        return list(self._bindings)
+
     def _load_bound(self, db, bound: dict[str, str]):
         device = db.get(Device, bound["device_id"])
         credential = db.get(Credential, bound["credential_id"])

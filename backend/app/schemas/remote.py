@@ -287,3 +287,54 @@ class CommandDispatchOut(APIModel):
 
     accepted: bool = True
     command: MobileCommandOut
+
+
+# ---------------------------------------------------------------------------
+# Fase 26 — VEGA Mobile Agent Orchestration: canal LAN (POLL + resultado).
+# O móvel faz POLL dos comandos pendentes deste device e POST do resultado.
+# Nunca expõe secrets: args são os já validados no Core; o Bearer autentica.
+# ---------------------------------------------------------------------------
+
+
+class LanCommandPollIn(APIModel):
+    """Corpo do POLL de comandos pendentes (token no body, como o /auth)."""
+
+    token: str
+    claimed_device_id: str | None = None
+    transport_meta: dict[str, Any] | None = None
+
+
+class LanCommandOut(APIModel):
+    """Um comando pendente para o móvel executar (canonical, já validado)."""
+
+    command_id: str
+    capability: str
+    args: dict[str, Any] | None = None
+    timeout_ms: int | None = None
+
+
+class LanCommandPollOut(APIModel):
+    """Lista de comandos pendentes (vazia quando nada há para executar)."""
+
+    ok: bool = True
+    commands: list[LanCommandOut] = Field(default_factory=list)
+
+
+class LanCommandResultIn(APIModel):
+    """Resultado de um comando pollado (idempotente por command_id/device)."""
+
+    token: str
+    claimed_device_id: str | None = None
+    command_id: str
+    status: str  # Vocabulário canônico MOBILE_COMMAND_STATUSES.
+    result: dict[str, Any] | None = None
+    error: str | None = None
+    transport_meta: dict[str, Any] | None = None
+
+
+class LanCommandResultOut(APIModel):
+    """ACK do resultado; `dropped` marca resultado desconhecido (descartado)."""
+
+    ok: bool = True
+    dropped: bool = False
+    status: str | None = None

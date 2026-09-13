@@ -57,6 +57,11 @@ from app.schemas.remote import (
     Empty,
     HeartbeatIn,
     HeartbeatOut,
+    LanCommandOut,
+    LanCommandPollIn,
+    LanCommandPollOut,
+    LanCommandResultIn,
+    LanCommandResultOut,
     MobileCommandIn,
     MobileCommandOut,
     CommandDispatchOut,
@@ -702,6 +707,113 @@ async def remote_message(
             outcome["generator"], media_type="text/event-stream", headers=headers
         )
     return outcome["body"]
+
+
+@router.post(
+    "/remote/devices/{device_id}/commands/poll", response_model=LanCommandPollOut
+)
+def remote_device_commands_poll(
+    device_id: str,
+    body: LanCommandPollIn,
+    db: OrmSession = Depends(get_db),
+):
+    """Fase 26 — POLL de comandos de dispositivo pendentes (canal LAN).
+
+    Autentica com o MESMO Bearer do `/auth`/`/heartbeat` (o `claimed_device_id`
+    casa o token com o device). O Core NUNCA confia no `device_id` da URL: o
+    resultado vem do device autenticado, e só comandos expedidos para ele são
+    devolvidos. Nada de secrets: args já validados no Core.
+    """
+    _require_remote()
+    from app.remote import mobile_inbox
+
+    try:
+        authed = authenticate_bearer(
+            db,
+            body.token,
+            transport_meta=body.transport_meta or {"http": True, "lan_poll": True},
+            claimed_device_id=body.claimed_device_id,
+        )
+    except (RemoteAuthError, CredentialLimitError) as exc:
+        raise RemoteError(
+            RemoteErrorCode.UNAUTHORIZED, "autenticação necessária", detail="auth failed"
+        ) from exc
+
+    if authed.device.id != device_id or authed.device.device_type not in (
+        "mobile",
+        "tablet",
+    ):
+        raise HTTPException(status_code=404, detail="roteamento de comandos indisponível")
+
+    commands = mobile_inbox.get_mobile_inbox().pending_for(device_id)
+    return LanCommandPollOut(
+        commands=[
+            LanCommandOut(
+                command_id=c["command_id"],
+                capability=c["capability"],
+                args=c.get("args"),
+                timeout_ms=c.get("timeout_ms"),
+            )
+            for c in commands
+        ]
+    )
+
+
+@router.post(
+    "/remote/devices/{device_id}/commands/result", response_model=LanCommandResultOut
+)
+def remote_device_commands_result(
+    device_id: str,
+    body: LanCommandResultIn,
+    db: OrmSession = Depends(get_db),
+):
+    """Fase 26 — POST do resultado de um comando pollado (canal LAN).
+
+    Idempotente por `command_id`/device no inbox. Resultados de comandos que
+    nunca foram expedidos a este device são descartados (`dropped=true`) — o
+    Core nunca aceita estado alheio.
+    """
+    _require_remote()
+    from app.remote import mobile_inbox
+    from app.remote.mobile_capabilities import MOBILE_COMMAND_STATUSES
+
+    try:
+        authed = authenticate_bearer(
+            db,
+            body.token,
+            transport_meta=body.transport_meta or {"http": True, "lan_result": True},
+            claimed_device_id=body.claimed_device_id,
+        )
+    except (RemoteAuthError, CredentialLimitError) as exc:
+        raise RemoteError(
+            RemoteErrorCode.UNAUTHORIZED, "autenticação necessária", detail="auth failed"
+        ) from exc
+
+    if authed.device.id != device_id or authed.device.device_type not in (
+        "mobile",
+        "tablet",
+    ):
+        raise HTTPException(status_code=404, detail="roteamento de comandos indisponível")
+
+    if body.status not in MOBILE_COMMAND_STATUSES:
+        raise RemoteError(
+            RemoteErrorCode.INVALID_REQUEST,
+            "status de comando inválido",
+            detail="status desconhecido",
+        )
+
+    summary = mobile_inbox.get_mobile_inbox().submit_result(
+        device_id=device_id,
+        command_id=body.command_id,
+        status=body.status,
+        result=body.result,
+        error=body.error,
+    )
+    return LanCommandResultOut(
+        ok=summary.get("ok", True),
+        dropped=bool(summary.get("dropped")),
+        status=summary.get("status"),
+    )
 
 
 def device_out(device) -> dict:

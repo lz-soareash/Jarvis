@@ -8,6 +8,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 object VegaColors {
@@ -33,6 +34,14 @@ object VegaColors {
     val BrandStart = Color(0xFF7CE8FF)
     val BrandMid = Color(0xFF3AA8FF)
     val BrandEnd = Color(0xFF2F6BFF)
+}
+
+object VegaSpacing {
+    val xs = 4.dp
+    val sm = 8.dp
+    val md = 12.dp
+    val lg = 16.dp
+    val xl = 24.dp
 }
 
 object VegaPresenceColors {

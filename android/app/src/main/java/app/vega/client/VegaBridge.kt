@@ -51,6 +51,10 @@ class VegaBridge(
     var conversationId: String? = null
         private set
 
+    var onLanCommands: ((command: JSONObject) -> Unit)? = null
+
+    private var commandPollJob: Job? = null
+
     private fun setState(newState: String, newDetail: String = "") {
         state = newState
         detail = newDetail
@@ -187,6 +191,50 @@ class VegaBridge(
         return out?.optBoolean("authenticated", false) == true
     }
 
+    /** Fase 26 — busca comandos enfileirados no Core para este dispositivo (LAN). */
+    suspend fun pollCommands(): List<JSONObject> {
+        if (state != "connected") return emptyList()
+        val id = deviceId ?: return emptyList()
+        val tok = prefs.getString("token", null) ?: return emptyList()
+        val out = httpJSON(
+            "POST", "/api/remote/devices/$id/commands/poll",
+            JSONObject().apply {
+                put("token", tok)
+                put("claimed_device_id", id)
+            },
+        ) ?: return emptyList()
+        val arr = out.optJSONArray("commands") ?: org.json.JSONArray()
+        val cmds = mutableListOf<JSONObject>()
+        for (i in 0 until arr.length()) arr.optJSONObject(i)?.let { cmds.add(it) }
+        return cmds
+    }
+
+    /** Fase 26 — publica o resultado canônico de um comando no Core (LAN). */
+    suspend fun reportCommandResult(
+        commandId: String,
+        status: String,
+        result: JSONObject? = null,
+        error: String? = null,
+        startedAt: String? = null,
+        finishedAt: String? = null,
+    ) {
+        val id = deviceId ?: return
+        val tok = prefs.getString("token", null) ?: return
+        httpJSON(
+            "POST", "/api/remote/devices/$id/commands/result",
+            JSONObject().apply {
+                put("token", tok)
+                put("claimed_device_id", id)
+                put("command_id", commandId)
+                put("status", status)
+                if (result != null) put("result", result)
+                if (error != null) put("error", error)
+                if (startedAt != null) put("started_at", startedAt)
+                if (finishedAt != null) put("finished_at", finishedAt)
+            },
+        )
+    }
+
     private fun startLoop() {
         heartbeatJob = CoroutineScope(Dispatchers.IO).launch {
             var failures = 0
@@ -220,11 +268,26 @@ class VegaBridge(
                 if (failures > 0 && prefs.getString("token", null).isNullOrBlank()) break
             }
         }
+        commandPollJob = CoroutineScope(Dispatchers.IO).launch {
+            while (true) {
+                delay(2500)
+                if (state != "connected") continue
+                try {
+                    for (c in pollCommands()) {
+                        if (c.optString("command_id").isNotBlank()) onLanCommands?.invoke(c)
+                    }
+                } catch (_: Exception) {
+                    // best-effort: o executor deduplica command_id em re-poll
+                }
+            }
+        }
     }
 
     suspend fun leave() {
         heartbeatJob?.cancel()
         heartbeatJob = null
+        commandPollJob?.cancel()
+        commandPollJob = null
         val token = prefs.getString("token", null)
         if (!token.isNullOrBlank()) {
             try {

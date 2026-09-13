@@ -23,6 +23,22 @@ class IntentMatch:
 # Padrões de intenção — (regex, tool_name, argument_factory, confidence)
 # ---------------------------------------------------------------------------
 
+# Fase 26 — mobile_*: CAMADA ANTES das de computador. Sempre exigem a menção
+# explícita ao dispositivo ("celular/telefone/aparelho"), para nunca roubar
+# intenções de PC. Confidence 0.96 > PC (0.90-0.95) para desempate ("abra o
+# chrome no meu celular" → mobile_open_app, e não open_application).
+_MOBILE_PATTERNS: list[tuple[re.Pattern, str, callable, float]] = [
+    (re.compile(r"\b(?:bateria\s+do\s+(?:meu\s+)?(?:celular|telefone|aparelho)|quanto\s+est[áa]\s+(?:a\s+)?bateria\s+do\s+(?:meu\s+)?(?:celular|telefone))\b", re.IGNORECASE), "mobile_battery_status", lambda m: {}, 0.96),
+    (re.compile(r"\b(?:informa[çc][õo]es\s+do\s+(?:meu\s+)?(?:celular|telefone|aparelho)|status\s+do\s+(?:meu\s+)?(?:celular|telefone|dispositivo)|como\s+est[áa]\s+o\s+(?:meu\s+)?celular)\b", re.IGNORECASE), "mobile_device_info", lambda m: {}, 0.96),
+    (re.compile(r"\b(?:(?:como\s+est[áa]\s+(?:a\s+)?)?rede\s+do\s+(?:meu\s+)?(?:celular|telefone)|wifi\s+do\s+(?:meu\s+)?(?:celular|telefone))\b", re.IGNORECASE), "mobile_network_status", lambda m: {}, 0.96),
+    (re.compile(r"\b(?:o\s+que\s+est[áa]\s+tocando\s+no\s+(?:meu\s+)?(?:celular|telefone|aparelho)|m[ií]dia\s+no\s+(?:meu\s+)?(?:celular|telefone))\b", re.IGNORECASE), "mobile_media_status", lambda m: {}, 0.96),
+    (re.compile(r"\b(?:abra|abrir|abre)\s+(?:o\s+)?(youtube|google|github|gmail)\s+no\s+(?:meu\s+)?(?:celular|telefone|aparelho)\b", re.IGNORECASE), "mobile_open_url", lambda m: {"url": f"https://{m.group(1)}.com"}, 0.96),
+    (re.compile(r"\b(?:abra|abrir|abre)\s+(?:o\s+)?(chrome|firefox)\s+no\s+(?:meu\s+)?(?:celular|telefone|aparelho)\b", re.IGNORECASE), "mobile_open_app", lambda m: {"package_name": "com.android.chrome" if m.group(1) == "chrome" else "org.mozilla.firefox"}, 0.96),
+    (re.compile(r"\b(?:fa[çc]a\s+(?:o\s+)?(?:meu\s+)?(?:celular|telefone|aparelho)\s+vibrar|vibre?\s+o\s+(?:meu\s+)?(?:celular|telefone|aparelho))\b", re.IGNORECASE), "mobile_vibrate", lambda m: {"duration_ms": 500}, 0.95),
+    (re.compile(r"\b(?:aumente?|diminua?|abaixe?|baixe?)\s+(?:o\s+)?volume\s+do\s+(?:meu\s+)?(?:celular|telefone|aparelho)\b", re.IGNORECASE), "mobile_set_volume", lambda m: {"stream": "music", "level": 65 if "aument" in m.group(0) else 35}, 0.92),
+    (re.compile(r"\b(?:aumente?|diminua?|abaixe?)\s+(?:a\s+)?(?:luz|brilho)\s+do\s+(?:meu\s+)?(?:celular|telefone|aparelho)\b", re.IGNORECASE), "mobile_set_brightness", lambda m: {"level": 80 if "aument" in m.group(0) else 40}, 0.9),
+]
+
 # Abertura de aplicativos por alias
 _APP_PATTERNS: list[tuple[re.Pattern, str, callable, float]] = [
     # VS Code
@@ -111,7 +127,8 @@ def detect_intent(user_text: str) -> IntentMatch | None:
 
     text = user_text.strip()
     all_patterns = (
-        _APP_PATTERNS
+        _MOBILE_PATTERNS
+        + _APP_PATTERNS
         + _URL_PATTERNS
         + _MEDIA_PATTERNS
         + _VOLUME_PATTERNS

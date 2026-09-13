@@ -20,6 +20,7 @@ os.environ["AI_LOCAL_LLM_ENABLED"] = "false"
 # Fase 12 (remote) — desabilitada por padrão nos testes (sem rede, sem worker).
 os.environ["REMOTE_ENABLED"] = "false"
 os.environ["REMOTE_GATEWAY_URL"] = ""
+os.environ["REMOTE_GATEWAY_ENABLED"] = "false"
 os.environ["REMOTE_DEVICE_ID"] = ""
 os.environ["REMOTE_DEVICE_TOKEN"] = ""
 
@@ -181,12 +182,14 @@ def _reset_remote_gate():
 
 @pytest.fixture(autouse=True)
 def _reset_remote_limits():
-    """Hermeticidade dos rate limits da camada remota (Fase 16) entre testes."""
+    """Hermeticidade dos rate limits e do inbox LAN de comandos (Fase 26)."""
     from app.remote.events import reset_events
     from app.remote.limits import reset_limits
+    from app.remote.mobile_inbox import reset_mobile_inbox
 
     reset_limits()
     reset_events()
+    reset_mobile_inbox()
 
 
 @pytest.fixture(autouse=True)

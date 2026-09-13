@@ -65,6 +65,7 @@ data class ChatMessage(
     val content: String,
     var status: MessageStatus,
     var tools: List<ToolItem> = emptyList(),
+    var mobileCard: MobileCommandCard? = null,
     var error: String? = null,
     var createdAt: Long = System.currentTimeMillis(),
 )
@@ -93,11 +94,69 @@ data class MobileResultUi(
     val timestamp: Long = System.currentTimeMillis(),
 )
 
+object MobileCardLabels {
+    private val MAP = mapOf(
+        "DEVICE_INFO" to "Dispositivo",
+        "BATTERY_STATUS" to "Bateria",
+        "NETWORK_STATUS" to "Rede",
+        "MEDIA_STATUS" to "Mídia",
+        "OPEN_URL" to "Abrir URL",
+        "VIBRATE" to "Vibração",
+        "SET_VOLUME" to "Volume",
+        "SET_BRIGHTNESS" to "Brilho",
+        "OPEN_APP" to "Abrir app",
+    )
+
+    fun title(capability: String): String = MAP[capability] ?: capability
+}
+
+data class MobileCommandCard(
+    val capability: String,
+    val status: String,
+    val device: String?,
+    val transport: String?,
+    val result: JSONObject?,
+    val error: String?,
+    val summary: String?,
+    val ok: Boolean,
+) {
+    val title: String get() = MobileCardLabels.title(capability)
+
+    fun a11yDescription(): String = buildString {
+        append(title).append(", ").append(status)
+        if (summary?.isNotBlank() == true) {
+            append(", ").append(summary)
+        } else if (result != null) {
+            val keys = result.keys().asSequence().toList().take(3)
+            if (keys.isNotEmpty()) {
+                append(": ").append(keys.joinToString(", ") { "$it ${result.optString(it)}" })
+            }
+        }
+    }
+
+    companion object {
+        fun fromJson(obj: JSONObject?): MobileCommandCard? {
+            if (obj == null || obj.optString("type") != "mobile_command_result") return null
+            val status = obj.optString("status").ifBlank { return null }
+            return MobileCommandCard(
+                capability = obj.optString("capability").ifBlank { "DESCONHECIDA" },
+                status = status,
+                device = obj.optString("device").ifBlank { null },
+                transport = obj.optString("transport").ifBlank { null },
+                result = obj.optJSONObject("result"),
+                error = obj.optString("error").ifBlank { null },
+                summary = obj.optString("summary").ifBlank { null },
+                ok = status == "success",
+            )
+        }
+    }
+}
+
 sealed interface TurnEvent {
     data class Start(val requestId: String? = null, val sessionId: String? = null) : TurnEvent
     data class Chunk(val text: String, val sessionId: String? = null) : TurnEvent
     data class ToolStart(val round: Int, val names: List<String>) : TurnEvent
-    data class ToolDone(val name: String, val ok: Boolean, val output: String?) : TurnEvent
+    data class ToolDone(val name: String, val ok: Boolean, val output: String?, val structured: JSONObject? = null) : TurnEvent
     data class ApprovalRequest(val approval: ApprovalInfo) : TurnEvent
     data class AgentEvent(val payload: JSONObject) : TurnEvent
     data class Done(val content: String, val sessionId: String? = null) : TurnEvent
@@ -116,7 +175,17 @@ sealed interface TurnEvent {
                     if (arr != null) for (i in 0 until arr.length()) names.add(arr.optString(i))
                     ToolStart(obj.optInt("round"), names)
                 }
-                "tool_done" -> ToolDone(obj.optString("name"), obj.optBoolean("ok"), obj.optString("output").ifBlank { obj.optString("detail").ifBlank { null } })
+                "tool_done" -> {
+                    val raw = obj.optString("output").ifBlank { obj.optString("detail").ifBlank { null } }
+                    val structured = raw?.let { text ->
+                        try {
+                            JSONObject(text)
+                        } catch (_: Exception) {
+                            null
+                        }
+                    }
+                    ToolDone(obj.optString("name"), obj.optBoolean("ok"), raw, structured)
+                }
                 "approval_request" -> {
                     val a = obj.optJSONObject("approval")
                     if (a == null) null else ApprovalRequest(

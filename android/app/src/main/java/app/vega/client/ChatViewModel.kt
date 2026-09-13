@@ -7,14 +7,16 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.vega.client.model.ApprovalInfo
 import app.vega.client.model.ChatMessage
+import app.vega.client.model.CommandResult
 import app.vega.client.model.ConnectionState
 import app.vega.client.model.MessageStatus
+import app.vega.client.model.MobileCommand
+import app.vega.client.model.MobileCommandCard
 import app.vega.client.model.Role
 import app.vega.client.model.SessionInfo
 import app.vega.client.model.ToolItem
 import app.vega.client.model.TurnEvent
 import app.vega.client.model.VegaPresence
-import app.vega.client.model.MobileCommand
 import app.vega.client.model.MobileCapabilities
 import app.vega.client.model.MobileResultUi
 import app.vega.client.mobile.AndroidMobileOps
@@ -115,6 +117,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     init {
         wan.onTurnFrame = { type, payload, requestId -> handleWanFrame(type, payload, requestId) }
         wan.onMobileCommand = { payload -> handleMobileCommand(payload) }
+        bridge.onLanCommands = { payload -> handleLanCommand(payload) }
         tts.onState = { s ->
             when (s) {
                 "playing" -> setLocalPresence("speaking")
@@ -197,24 +200,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun handleMobileCommand(payload: JSONObject) {
         val commandId = payload.optString("command_id").ifBlank { return }
-        val args = payload.optJSONObject("args") ?: JSONObject()
-        val timeoutMs = payload.optInt("timeout_ms", 15_000)
         val command = MobileCommand(
             commandId = commandId,
             targetDeviceId = wan.deviceId,
             capability = payload.optString("capability"),
-            args = args,
-            timeoutMs = timeoutMs,
+            args = payload.optJSONObject("args") ?: JSONObject(),
+            timeoutMs = payload.optInt("timeout_ms", 15_000),
         )
         viewModelScope.launch {
-            val result = mobileExecutor.execute(command)
-            _mobileResults.update {
-                (listOf(
-                    MobileResultUi(command.capability, commandId, result.status, result.error)
-                ) + it).take(10)
-            }
-            if (isWanOnline()) withContext(Dispatchers.IO) {
-                try {
+            executeDeviceCommand(command) { result ->
+                if (isWanOnline()) withContext(Dispatchers.IO) {
                     wan.sendCommandResult(
                         commandId = result.commandId,
                         status = result.status,
@@ -223,10 +218,47 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         startedAt = result.startedAt,
                         finishedAt = result.finishedAt,
                     )
-                } catch (e: Exception) {
-                    Log.w("vega-chat", "falha ao enviar command_result: ${e.message}")
                 }
             }
+        }
+    }
+
+    private fun handleLanCommand(payload: JSONObject) {
+        val commandId = payload.optString("command_id").ifBlank { return }
+        val command = MobileCommand(
+            commandId = commandId,
+            targetDeviceId = bridge.deviceId,
+            capability = payload.optString("capability"),
+            args = payload.optJSONObject("args") ?: JSONObject(),
+            timeoutMs = payload.optInt("timeout_ms", 15_000),
+        )
+        viewModelScope.launch {
+            executeDeviceCommand(command) { result ->
+                withContext(Dispatchers.IO) {
+                    bridge.reportCommandResult(
+                        commandId = result.commandId,
+                        status = result.status,
+                        result = result.result,
+                        error = result.error,
+                        startedAt = result.startedAt,
+                        finishedAt = result.finishedAt,
+                    )
+                }
+            }
+        }
+    }
+
+    private suspend fun executeDeviceCommand(command: MobileCommand, report: suspend (CommandResult) -> Unit) {
+        val result = mobileExecutor.execute(command)
+        _mobileResults.update {
+            (listOf(
+                MobileResultUi(command.capability, result.commandId, result.status, result.error)
+            ) + it).take(10)
+        }
+        try {
+            report(result)
+        } catch (e: Exception) {
+            Log.w("vega-chat", "falha ao enviar command_result (${command.capability}): ${e.message}")
         }
     }
 
@@ -340,10 +372,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
             is TurnEvent.ToolDone -> {
                 updateMessage(assistantId) { msg ->
+                    val card = ev.structured?.let { MobileCommandCard.fromJson(it) }
                     msg.copy(
                         tools = msg.tools.map { t ->
                             if (t.name == ev.name) t.copy(ok = ev.ok, running = false) else t
                         },
+                        mobileCard = card ?: msg.mobileCard,
                     )
                 }
                 setLocalPresence("thinking")

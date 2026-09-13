@@ -19,10 +19,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -34,15 +36,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.vega.client.model.ApprovalInfo
+import app.vega.client.model.MobileCommandCard
 import app.vega.client.model.ToolItem
 import app.vega.client.ui.theme.VegaColors
 import app.vega.client.ui.theme.VegaPresenceColors
+import app.vega.client.ui.theme.VegaSpacing
 
 @Composable
 fun MiniOrb(presence: String, size: Dp, modifier: Modifier = Modifier) {
@@ -235,5 +241,72 @@ fun ErrorBanner(
             fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
         )
+    }
+}
+
+@Composable
+fun MobileCommandCard(card: MobileCommandCard, modifier: Modifier = Modifier) {
+    val statusColor = when (card.status) {
+        "success" -> VegaColors.Success
+        "failed", "unsupported" -> VegaColors.Error
+        "denied", "timeout", "cancelled" -> VegaColors.Warning
+        else -> VegaColors.TextMuted
+    }
+    val meta = buildList {
+        card.device?.takeIf { it.isNotBlank() }?.let { add(it) }
+        card.transport?.takeIf { it.isNotBlank() }?.let { add(it) }
+    }.joinToString(" · ")
+    val detail = (card.summary?.takeIf { it.isNotBlank() } ?: card.error)?.let { it }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(VegaSpacing.md))
+            .background(VegaColors.Surface2)
+            .border(1.dp, VegaColors.Border, RoundedCornerShape(VegaSpacing.md))
+            .padding(VegaSpacing.md)
+            .semantics { contentDescription = card.a11yDescription() },
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                card.title,
+                color = VegaColors.TextPrimary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(VegaSpacing.sm))
+            Text(
+                card.status.uppercase(),
+                color = statusColor,
+                fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        if (meta.isNotEmpty()) {
+            Spacer(Modifier.height(VegaSpacing.xs))
+            Text(meta, color = VegaColors.TextMuted, fontSize = 11.sp)
+        }
+        if (detail != null) {
+            Spacer(Modifier.height(VegaSpacing.sm))
+            Text(detail, color = if (card.ok) VegaColors.TextSecondary else statusColor, fontSize = 12.sp)
+        }
+        if (card.result != null) {
+            val keys = card.result.keys().asSequence().toList().take(3)
+            if (keys.isNotEmpty()) {
+                Spacer(Modifier.height(VegaSpacing.sm))
+                Column(verticalArrangement = Arrangement.spacedBy(VegaSpacing.xs)) {
+                    for (k in keys) {
+                        Text(
+                            "$k: ${card.result.optString(k)}",
+                            color = VegaColors.TextMuted,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
+                }
+            }
+        }
     }
 }

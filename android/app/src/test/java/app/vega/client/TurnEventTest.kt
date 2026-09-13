@@ -110,4 +110,27 @@ class TurnEventTest {
     fun approvalFromNullReturnsEmpty() {
         assertTrue(TurnEvent.approvalFromJsonArray(null).isEmpty())
     }
+
+    @Test
+    fun parseToolDoneParsesStructuredJsonOutput() {
+        val ev = TurnEvent.parse(
+            JSONObject(
+                """{"type":"tool_done","name":"mobile_battery_status","ok":true,"output":"{\"type\":\"mobile_command_result\",\"capability\":\"BATTERY_STATUS\",\"status\":\"success\",\"result\":{\"level_percent\":80}}"}"""
+            )
+        )
+        assertTrue(ev is TurnEvent.ToolDone)
+        val td = ev as TurnEvent.ToolDone
+        assertNotNull(td.structured)
+        assertEquals("BATTERY_STATUS", td.structured!!.optString("capability"))
+        assertEquals(80, td.structured!!.optJSONObject("result").optInt("level_percent"))
+    }
+
+    @Test
+    fun parseToolDonePlainDetailHasNoStructured() {
+        val ev = TurnEvent.parse(JSONObject("""{"type":"tool_done","name":"memoria.ler","ok":true,"detail":"42 registros"}"""))
+        assertTrue(ev is TurnEvent.ToolDone)
+        val td = ev as TurnEvent.ToolDone
+        assertEquals("42 registros", td.output)
+        assertNull(td.structured)
+    }
 }

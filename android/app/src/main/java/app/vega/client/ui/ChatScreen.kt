@@ -54,6 +54,7 @@ import app.vega.client.model.ConnectionState
 import app.vega.client.model.MessageStatus
 import app.vega.client.model.Role
 import app.vega.client.ui.theme.VegaColors
+import app.vega.client.ui.theme.VegaSpacing
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -130,6 +131,7 @@ fun ChatScreen(vm: ChatViewModel) {
             EmptyChat(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 offline = connection == ConnectionState.OFFLINE || connection == ConnectionState.ERROR,
+                onQuickAction = { vm.send(it) },
             )
             Spacer(Modifier.height(8.dp))
         } else {
@@ -289,6 +291,10 @@ private fun MessageBubble(msg: ChatMessage) {
                     }
                 }
             }
+            if (msg.mobileCard != null) {
+                Spacer(Modifier.height(VegaSpacing.sm))
+                MobileCommandCard(msg.mobileCard!!)
+            }
         }
     }
 }
@@ -297,7 +303,13 @@ private fun MessageBubble(msg: ChatMessage) {
 private fun EmptyChat(
     modifier: Modifier,
     offline: Boolean,
+    onQuickAction: (String) -> Unit,
 ) {
+    val quickActions = listOf(
+        "Bateria" to "Quanto está a bateria do meu celular?",
+        "Dispositivo" to "Quais as informações do meu celular?",
+        "Rede" to "Como está a rede do meu celular?",
+    )
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.Center,
@@ -318,6 +330,25 @@ private fun EmptyChat(
             fontSize = 12.sp,
             textAlign = TextAlign.Center,
         )
+        if (!offline) {
+            Spacer(Modifier.height(VegaSpacing.lg))
+            Row(horizontalArrangement = Arrangement.spacedBy(VegaSpacing.sm)) {
+                for ((label, prompt) in quickActions) {
+                    Text(
+                        label,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(VegaColors.Surface2)
+                            .border(1.dp, VegaColors.BorderStrong, RoundedCornerShape(50))
+                            .clickable { onQuickAction(prompt) }
+                            .padding(horizontal = VegaSpacing.md, vertical = VegaSpacing.sm),
+                        color = VegaColors.Primary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+        }
     }
 }
 

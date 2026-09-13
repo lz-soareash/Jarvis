@@ -70,6 +70,17 @@ def build_default_registry() -> ToolRegistry:
     )
     from .developer import DevDiagnostics, DevGetConfig, DevGetToolSchema, DevListTools
     from .filesystem import DeletePath, ListDir, MakeDir, ReadFile, WriteFile
+    from .mobile import (
+        MobileBatteryStatus,
+        MobileDeviceInfo,
+        MobileMediaStatus,
+        MobileNetworkStatus,
+        MobileOpenApp,
+        MobileOpenUrl,
+        MobileSetBrightness,
+        MobileSetVolume,
+        MobileVibrate,
+    )
     from .web import WebFetch, WebSearch
     from .wol import WakeOnLan
     from app.perception.tool import ObserveComputer
@@ -130,6 +141,17 @@ def build_default_registry() -> ToolRegistry:
     # Web Research (Fase 14)
     registry.register(WebSearch())  # LEVEL_0 — busca
     registry.register(WebFetch())  # LEVEL_1 — fetch (confirmação)
+    # VEGA Mobile Agent Orchestration (Fase 26) — leituras LEVEL_0
+    registry.register(MobileDeviceInfo())
+    registry.register(MobileBatteryStatus())
+    registry.register(MobileNetworkStatus())
+    registry.register(MobileMediaStatus())
+    # VEGA Mobile Agent Orchestration (Fase 26) — ajustes LEVEL_1 (risco LOW)
+    registry.register(MobileOpenUrl())
+    registry.register(MobileVibrate())
+    registry.register(MobileSetVolume())
+    registry.register(MobileSetBrightness())
+    registry.register(MobileOpenApp())
     return registry
 
 

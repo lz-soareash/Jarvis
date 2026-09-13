@@ -37,6 +37,7 @@ class MobileCommandExecutor(
     private val maxHistory = 50
 
     suspend fun execute(command: MobileCommand): CommandResult {
+        historical[command.commandId]?.let { return it }
         val started = nowIso()
         if (running.putIfAbsent(command.commandId, System.currentTimeMillis()) != null) {
             return CommandResult(command.commandId, CommandStatus.CANCELLED.value, null, "comando reentrante ignorado", started, nowIso())

@@ -173,4 +173,16 @@ class MobileCommandExecutorTest {
         assertEquals("success", r1.status)
         assertEquals("success", r2.status)
     }
+
+    @Test
+    fun repollAfterCompletionReturnsStoredResultWithoutReExecution() = runBlocking {
+        val out = FakeMobileOps()
+        val ex = MobileCommandExecutor(out)
+        val r1 = ex.execute(cmd("DEVICE_INFO"))
+        assertEquals("success", r1.status)
+        assertEquals(1, out.deviceInfoCalls)
+        val r2 = ex.execute(cmd("DEVICE_INFO"))
+        assertEquals("success", r2.status)
+        assertEquals(1, out.deviceInfoCalls)
+    }
 }
