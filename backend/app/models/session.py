@@ -34,6 +34,11 @@ class Session(Base):
     title: Mapped[str] = mapped_column(String(200), default="Nova sessão")
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     summarized_count: Mapped[int] = mapped_column(Integer, default=0)
+    # Fase 27 — contexto multi-turn determinístico da sessão (JSON): guarda o
+    # `device` em uso (nome/capability/status/última ação) para o Core resolver
+    # continuidade ("agora pesquisa FIAP") sem depender do LLM. NUNCA contém
+    # tokens/segredos/IDs de hardware; o name amigável é a única parte injetada.
+    context_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow

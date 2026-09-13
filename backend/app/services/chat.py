@@ -260,6 +260,13 @@ async def build_system_prompt(
         )
         parts.append(f"[Conhecimento validado]\n{klines}")
 
+    # Fase 27 — contexto multi-turn do Core (dispositivo ativo + tarefa ativa).
+    # Determinístico, sanitizado, derivado de dados REAIS da sessão; NUNCA eleva
+    # permissões nem inventa dispositivos ausentes.
+    from app.ai import turn_context as turn_ctx
+
+    parts.extend(turn_ctx.system_context_block(db, session_id))
+
     return "\n\n".join(parts)
 
 

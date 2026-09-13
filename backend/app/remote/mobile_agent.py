@@ -51,6 +51,11 @@ _HUMAN_LABEL: dict[str, str] = {
     "SET_BRIGHTNESS": "brilho",
 }
 
+
+def human_label(capability: str) -> str:
+    """Nome legível de uma capability (Fase 27) — uso em contextos/prompt."""
+    return _HUMAN_LABEL.get(capability, capability)
+
 # Dispositivos móveis/tablets reconhecidos pelo Agent Orchestration.
 _MOBILE_DEVICE_TYPES = ("mobile", "tablet")
 

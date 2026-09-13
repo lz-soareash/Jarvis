@@ -67,6 +67,7 @@ fun ChatScreen(vm: ChatViewModel) {
     val pendingApproval by vm.pendingApproval.collectAsState()
     val banner by vm.banner.collectAsState()
     val voiceState by vm.voiceState.collectAsState()
+    val continuity by vm.continuity.collectAsState()
 
     var draft by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -113,10 +114,20 @@ fun ChatScreen(vm: ChatViewModel) {
                         fontWeight = FontWeight.ExtraBold,
                         color = VegaColors.Arc,
                     )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "Personal Assistant",
+                        color = VegaColors.TextMuted,
+                        fontSize = 12.sp,
+                    )
                 }
                 Text(wsDetail, color = VegaColors.TextMuted, fontSize = 11.sp)
             }
             PresenceChip(presence)
+        }
+        continuity?.let { hint ->
+            Spacer(Modifier.height(6.dp))
+            ContinuityChip(hint)
         }
         Spacer(Modifier.height(10.dp))
 
@@ -182,7 +193,7 @@ fun ChatScreen(vm: ChatViewModel) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TypingDots(active = true)
                     Spacer(Modifier.width(8.dp))
-                    Text("JARVIS está ${presenceLabel(presence)}…", color = VegaColors.TextMuted, fontSize = 12.sp)
+                    Text("VEGA está ${presenceLabel(presence)}…", color = VegaColors.TextMuted, fontSize = 12.sp)
                 }
                 Spacer(Modifier.height(4.dp))
             }
@@ -204,7 +215,7 @@ fun ChatScreen(vm: ChatViewModel) {
                 value = draft,
                 onValueChange = { draft = it },
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("Fale com a JARVIS…", color = VegaColors.TextMuted, fontSize = 14.sp) },
+                placeholder = { Text("Fale com a VEGA…", color = VegaColors.TextMuted, fontSize = 14.sp) },
                 maxLines = 4,
                 textStyle = androidx.compose.ui.text.TextStyle(color = VegaColors.TextPrimary, fontSize = 14.sp),
                 shape = RoundedCornerShape(14.dp),
@@ -309,6 +320,7 @@ private fun EmptyChat(
         "Bateria" to "Quanto está a bateria do meu celular?",
         "Dispositivo" to "Quais as informações do meu celular?",
         "Rede" to "Como está a rede do meu celular?",
+        "Abrir Chrome" to "Abre o chrome no meu celular",
     )
     Column(
         modifier = modifier,
@@ -318,14 +330,22 @@ private fun EmptyChat(
         MiniOrb(presence = "idle", size = 46.dp)
         Spacer(Modifier.height(12.dp))
         Text(
-            if (offline) "Você ainda não está conectado ao Core" else "Pergunte algo para a JARVIS",
+            "VEGA Personal Assistant",
+            color = if (offline) VegaColors.TextSecondary else VegaColors.TextPrimary,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.ExtraBold,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            if (offline) "Você ainda não está conectado ao Core" else "Seu assistente pessoal no celular",
             color = VegaColors.TextSecondary,
             fontSize = 14.sp,
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(4.dp))
         Text(
-            if (offline) "Abra Configurações e conecte o Core (LAN) ou o WAN." else "Ex.: \"qual é o status da memória?\"",
+            if (offline) "Abra Config e conecte o Core (LAN) ou o WAN." else "Ex.: \"qual é o status da memória?\"",
             color = VegaColors.TextMuted,
             fontSize = 12.sp,
             textAlign = TextAlign.Center,

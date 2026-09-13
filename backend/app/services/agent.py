@@ -354,10 +354,18 @@ async def run_agent(
     # Tool Registry -> Permission Engine -> execução (SEM bypass de Registry/
     # Permission/Audit). Só deixa o LLM gerar a resposta final em seguida. Isso
     # também reduz latência (#6) ao não fazer geração LLM desnecessária primeiro.
-    from app.ai.intent import detect_intent
+    # Fase 27 — continuidade multi-turn determinística ANTES da intenção: com
+    # contexto de dispositivo fresco, "Agora pesquisa FIAP" vira mobile_open_url
+    # no mesmo dispositivo da sessão; sem contexto, segue o fluxo normal (e a
+    # ambiguidade é resolvida por "explícito > sessão > único online > perguntar").
+    from app.ai.intent import detect_continuation, detect_intent
+    from app.ai.turn_context import load_turn_context
     from app.core.config import settings as _settings
 
-    _primary_intent = detect_intent(user_text) if _settings.local_first else None
+    _primary_intent = None
+    if _settings.local_first:
+        _turn_ctx = load_turn_context(db, session_id)
+        _primary_intent = detect_continuation(user_text, _turn_ctx) or detect_intent(user_text)
     try:
         if _primary_intent is not None and _primary_intent.tool_call.name in [
             t.name for t in tool_registry.get_tool_registry().all()

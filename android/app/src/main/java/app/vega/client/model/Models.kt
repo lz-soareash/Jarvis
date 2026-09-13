@@ -110,6 +110,55 @@ object MobileCardLabels {
     fun title(capability: String): String = MAP[capability] ?: capability
 }
 
+object MobileStatusLabels {
+    private val LABELS = mapOf(
+        "pending" to "pendente",
+        "running" to "executando",
+        "success" to "sucesso",
+        "failed" to "falhou",
+        "denied" to "negado",
+        "unsupported" to "não suportado",
+        "timeout" to "tempo esgotado",
+        "cancelled" to "cancelado",
+    )
+
+    private val GLYPHS = mapOf(
+        "success" to "\u2713",
+        "failed" to "\u2717",
+        "unsupported" to "\u2717",
+        "denied" to "\u2715",
+        "cancelled" to "\u2715",
+        "timeout" to "\u25D2",
+        "pending" to "\u2026",
+        "running" to "\u25CF",
+    )
+
+    fun label(status: String): String = LABELS[status] ?: status
+
+    fun glyph(status: String): String = GLYPHS[status] ?: "\u00B7"
+}
+
+/**
+ * Continuidade multi-turn no cliente: o último cartão de dispositivo com
+ * status "success" na conversa indica o dispositivo em que o Core seguirá
+ * uma intenção de continuidade ("Agora pesquisa…"). É informação real do
+ * próprio histórico local — nunca fabricada.
+ */
+data class ContinuityHint(
+    val device: String,
+    val capability: String,
+)
+
+fun continuityFrom(messages: List<ChatMessage>?): ContinuityHint? {
+    if (messages == null) return null
+    for (m in messages.asReversed()) {
+        val card = m.mobileCard ?: continue
+        val device = card.device?.takeIf { it.isNotBlank() } ?: continue
+        if (card.status == "success") return ContinuityHint(device, card.capability)
+    }
+    return null
+}
+
 data class MobileCommandCard(
     val capability: String,
     val status: String,
@@ -121,6 +170,8 @@ data class MobileCommandCard(
     val ok: Boolean,
 ) {
     val title: String get() = MobileCardLabels.title(capability)
+    val statusGlyph: String get() = MobileStatusLabels.glyph(status)
+    val statusLabel: String get() = MobileStatusLabels.label(status)
 
     fun a11yDescription(): String = buildString {
         append(title).append(", ").append(status)

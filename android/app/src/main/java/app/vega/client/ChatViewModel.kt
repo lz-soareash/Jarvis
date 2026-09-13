@@ -9,6 +9,7 @@ import app.vega.client.model.ApprovalInfo
 import app.vega.client.model.ChatMessage
 import app.vega.client.model.CommandResult
 import app.vega.client.model.ConnectionState
+import app.vega.client.model.ContinuityHint
 import app.vega.client.model.MessageStatus
 import app.vega.client.model.MobileCommand
 import app.vega.client.model.MobileCommandCard
@@ -19,6 +20,7 @@ import app.vega.client.model.TurnEvent
 import app.vega.client.model.VegaPresence
 import app.vega.client.model.MobileCapabilities
 import app.vega.client.model.MobileResultUi
+import app.vega.client.model.continuityFrom
 import app.vega.client.mobile.AndroidMobileOps
 import app.vega.client.mobile.MobileCommandExecutor
 import app.vega.client.net.ApiException
@@ -80,6 +82,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val messages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
+
+    private val _continuity = MutableStateFlow<ContinuityHint?>(null)
+    val continuity: StateFlow<ContinuityHint?> = _continuity.asStateFlow()
 
     private val _conversationId = MutableStateFlow<String?>(null)
     val conversationId: StateFlow<String?> = _conversationId.asStateFlow()
@@ -445,6 +450,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 idCounterAndIncrement(), Role.ASSISTANT, ev.content, MessageStatus.DONE,
             )
         }
+        recomputeContinuity()
     }
 
     private fun speakLatest(assistantId: Long) {
@@ -501,6 +507,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _conversationId.value = s.id
                 _sessionTitle.value = s.title
                 _messages.value = emptyList()
+                recomputeContinuity()
                 loadSessions()
             } catch (e: Exception) {
                 _banner.value = "não foi possível criar a conversa: ${friendlyError(e)}"
@@ -524,6 +531,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val history = withContext(Dispatchers.IO) { http.fetchHistory(_coreUrl.value, id) }
                 _conversationId.value = id
                 _messages.value = history
+                recomputeContinuity()
                 _sessionTitle.value = _sessions.value.find { it.id == id }?.title.orEmpty()
             } catch (e: Exception) {
                 _banner.value = "não foi possível abrir a conversa: ${friendlyError(e)}"
@@ -556,6 +564,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun updateMessage(id: Long, fn: (ChatMessage) -> ChatMessage) {
         _messages.update { list -> list.map { if (it.id == id) fn(it) else it } }
+        recomputeContinuity()
+    }
+
+    private fun recomputeContinuity() {
+        _continuity.value = continuityFrom(_messages.value)
     }
 
     private fun failMessage(id: Long, error: String) {

@@ -76,6 +76,27 @@ class _MobileTool(Tool):
         except Exception as exc:  # noqa: BLE001 — bug interno vira resultado p/ o modelo
             return _fail(f"{type(exc).__name__}: {exc}")
 
+        # Fase 27 — propaga o resultado REAL ao contexto multi-turn da sessão,
+        # permitindo continuidade determinística ("Agora pesquisa FIAP"). O id
+        # fica no contexto p/ auditoria; só o nome vai ao prompt. Best-effort:
+        # registrar o contexto nunca quebra a execução da tool.
+        try:
+            from app.ai import turn_context as turn_ctx
+
+            if context.session_id and outcome.device_name:
+                turn_ctx.record_device_outcome(
+                    context.db,
+                    context.session_id,
+                    device_id=outcome.device_id or "",
+                    device_name=outcome.device_name,
+                    capability=outcome.capability,
+                    status=outcome.status,
+                    transport=outcome.transport,
+                    summary=outcome.summary,
+                )
+        except Exception:  # noqa: BLE001
+            pass
+
         payload: dict[str, Any] = {
             "type": "mobile_command_result",
             "capability": outcome.capability,

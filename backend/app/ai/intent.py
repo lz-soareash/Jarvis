@@ -7,6 +7,7 @@ ferramenta apropriada. Conservadora — nunca executa comandos arbitrários.
 
 import re
 from dataclasses import dataclass
+from urllib.parse import quote
 
 from app.schemas.ai import ToolCall
 
@@ -152,3 +153,87 @@ def detect_intent(user_text: str) -> IntentMatch | None:
                 )
 
     return best_match
+
+
+# ---------------------------------------------------------------------------
+# Fase 27 — Continuidade multi-turn determinística ("Agora pesquisa FIAP")
+# ---------------------------------------------------------------------------
+
+# Marcadores de continuidade explícita (só ativados com contexto de dispositivo).
+_CONTINUATION_SEARCH_RE = re.compile(
+    r"\b(?P<now>agora\s+)?"
+    r"(?:pesquis(?:a|e|ar)|busc(?:a|e|ar)|procur(?:a|e|ar))"
+    r"(?:\s+(?:por|o|a))?\s+(?P<query>.+)",
+    re.IGNORECASE,
+)
+# "Agora abre o youtube" (pós-ação de navegação no mesmo dispositivo).
+_CONTINUATION_SITE_RE = re.compile(
+    r"\b(?P<now>agora\s+)?abre\s+(?:o\s+)?(?P<site>youtube|google|github|gmail)\b",
+    re.IGNORECASE,
+)
+# Sufixo opcional de dispositivo na consulta ("no meu celular") a remover.
+_DEVICE_TAIL_RE = re.compile(
+    r"\s+(?:no|na)\s+(?:meu\s+)?(?:celular|telefone|aparelho)\s*$", re.IGNORECASE
+)
+# Ações de navegação/web antecessoras que tornam "pesquisa X" continuidade segura.
+_BROWSER_CAPABILITIES = frozenset({"OPEN_APP", "OPEN_URL"})
+
+# Confidence abaixo dos padrões explícitos (0.90-0.96) — a continuidade nunca
+# compete com uma menção explícita ao dispositivo.
+_CONTINUATION_CONFIDENCE = 0.8
+
+
+def _strip_device_tail(query: str) -> str:
+    return _DEVICE_TAIL_RE.sub("", query).strip(" ,;:-")
+
+
+def detect_continuation(user_text: str, ctx=None) -> IntentMatch | None:
+    """Resolve continuidade SÓ quando há contexto de dispositivo fresco.
+
+    Regras conservadoras (Fase 27):
+    - Nunca dispara sem `DeviceContext` fresco (≤ TTL) ou nome de dispositivo;
+    - "agora pesquisa/busca/procura X" → `mobile_open_url` (Google Search) no
+      mesmo dispositivo da sessão;
+    - "pesquisa X" sem "agora" só continua quando a thread anterior era de
+      navegação (OPEN_APP/OPEN_URL) no dispositivo ativo;
+    - "agora abre o <youtube|google|github|gmail>" → `mobile_open_url` no
+      dispositivo ativo;
+    - sem contexto fresco, devolve None (fluxo normal, nunca rouba intenções
+      de PC; ambiguidade é resolvida pelo fluxo "explícito > sessão > único").
+    """
+    device = getattr(ctx, "device", None)
+    if device is None or not getattr(device, "fresh", False) or not getattr(device, "name", ""):
+        return None
+
+    text = (user_text or "").strip()
+    if not text:
+        return None
+    hint = device.name
+
+    m = _CONTINUATION_SEARCH_RE.search(text)
+    if m and m.group("query"):
+        is_agora = bool(m.group("now"))
+        browser_thread = getattr(device, "capability", "") in _BROWSER_CAPABILITIES
+        if is_agora or browser_thread:
+            query = _strip_device_tail(m.group("query"))
+            if query:
+                url = "https://www.google.com/search?q=" + quote(query)
+                return IntentMatch(
+                    tool_call=ToolCall(
+                        name="mobile_open_url", arguments={"url": url, "device": hint}
+                    ),
+                    confidence=_CONTINUATION_CONFIDENCE,
+                )
+
+    site = _CONTINUATION_SITE_RE.search(text)
+    if site and site.group("now"):
+        s = site.group("site").lower()
+        url = f"https://{s}.com"
+        return IntentMatch(
+            tool_call=ToolCall(
+                name="mobile_open_url", arguments={"url": url, "device": hint}
+            ),
+            confidence=_CONTINUATION_CONFIDENCE,
+        )
+
+    return None

@@ -1235,7 +1235,7 @@ quando fora da LAN.
 
 | Camada | Arquivo | Papel |
 |---|---|---|
-| Root UI | `MainActivity.kt` | 5 abas: Chat, Histórico, Operações, Dispositivo, Config |
+| Root UI | `MainActivity.kt` | 4 abas: Assistente, Central, Dispositivo, Config (Fase 27) |
 | Orquestração | `ChatViewModel.kt` | estado global, transporte, presença, turnos, voz |
 | Identidade LAN | `VegaBridge.kt` | register → pair → validate → heartbeat (+token/conversation_id expostos) |
 | WAN | `VegaWan.kt` | WebSocket (OkHttp); `onTurnFrame` roteia `agent_event`/`message_result` |
@@ -1396,6 +1396,46 @@ padrões de computador ("abra o chrome no meu celular").
 `tests/test_fase26_mobile_agent.py`); Android `:app:testDebugUnitTest` **61/61 verdes**
 (`MobileCommandCardTest` 5, `TurnEventTest` 14, `MobileCommandExecutorTest` 14 + suíte anterior)
 e APK debug compila. Validação física (Galaxy A15) e WAN/WSS real = validação manual pendente.
+
+## Multi-turn Agentic Context & Mobile Redesign (Fase 27)
+
+A VEGA ganha **memória de contexto multi-turn real no Core** — sem segundo AI Core, sem LLM
+no celular, sem mudança de arquitetura. O contexto é **informação para o prompt**, nunca
+autorização: nada eleva permissões nem bypass do Permission/Safety.
+
+**Camada de contexto determinística** (`backend/app/ai/turn_context.py`):
+
+- `Session.context_json` (coluna aditiva + migração idempotente `_ensure_session_context_schema`).
+- `DeviceContext`: o **último resultado móvel bem-sucedido** da sessão (nome amigável do
+  dispositivo, capability, status, transporte). Persiste com TTL de **10 min** (`fresh`).
+  Gravado de forma best-effort pelo tool runner `mobile` após cada outcome.
+- `ActiveTaskContext`: derive do modelo `AgentTask` (`planned/running`) — objetivo, passos
+  concluídos, próximo passo, última ferramenta. Tarefas terminais nunca voltam ao contexto.
+- Renderização **sanitizada**: `build_system_prompt` injeta `[Continuidade de dispositivo]`
+  (só o NOME — `device_id`/transporte/credenciais **nunca** vão ao LLM) e `[Tarefa ativa]`.
+
+**Continuidade determinística** (`app/ai/intent.py` → `detect_continuation`): com contexto de
+dispositivo fresco, *"Agora pesquisa FIAP"* resolve direto para `mobile_open_url` no **mesmo**
+dispositivo da sessão (Google Search); *"Agora abre o youtube"* → `https://youtube.com`.
+Sem contexto fresco, a ambiguidade segue o fluxo normal (explícito > sessão > único online >
+perguntar). Wiring em `run_agent` (mantém `local_first`).
+
+**Mobile "Personal Assistant"** (`android/`):
+
+- Navegação 5 → 4 abas: **Assistente** (home/chat), **Central** (conversas + operações),
+  **Dispositivo**, **Config** (`model/NavTabs.kt`).
+- Home com identidade **VEGA Personal Assistant**, chip de **continuidade** — último
+  dispositivo bem-sucedido do histórico local (real, nunca fabricado) — e ações rápidas.
+- `MobileCommandCard` evoluído: **glyph de status + rótulo humanizado** em pt-BR
+  (`MobileStatusLabels`) acima do resumo/resultado.
+- Marca única: "Fale com a VEGA…"; Desktop continua o Command Center.
+
+**Validação**: backend **992 passed, 1 skipped** (26 novos da Fase 27 em
+`tests/test_fase27_multi_turn_context.py` — contexto/TTL/task/continuidade/integração e E2E
+hermético turno 1→2: "abra o chrome no meu celular" → "agora pesquisa fiap"); Android
+`:app:testDebugUnitTest` **70/70 verdes** (`NavTabsTest` 4 + `MobileContinuityTest` 5 + suíte),
+`assembleDebug`/`assembleRelease` BUILD SUCCESSFUL. Validação física (Galaxy A15) e WAN/WSS
+real = validação manual pendente.
 
 ## Download
 

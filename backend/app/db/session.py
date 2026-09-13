@@ -75,6 +75,7 @@ def _ensure_schema() -> None:
     _ensure_memories_schema()
     _ensure_remote_commands_schema()
     _ensure_device_bridge_schema()
+    _ensure_session_context_schema()
 
 
 def _ensure_memories_schema() -> None:
@@ -151,6 +152,25 @@ def _ensure_device_bridge_schema() -> None:
                         text(f"ALTER TABLE remote_devices ADD COLUMN {name} {ddl}")
                     )
             conn.commit()
+    except Exception:  # pragma: no cover — estados sem suporte não bloqueiam
+        pass
+
+
+def _ensure_session_context_schema() -> None:
+    """Fase 27 — coluna aditiva `sessions.context_json` para bancos legados.
+
+    `create_all` não altera tabelas já existentes; entra via ALTER idempotente
+    (PRAGMA + ADD COLUMN). Nada é destrutivo; falhas não bloqueiam o boot.
+    """
+    try:
+        with engine.connect() as conn:
+            cols = {
+                row[1]
+                for row in conn.execute(text("PRAGMA table_info(sessions)")).fetchall()
+            }
+            if "context_json" not in cols:
+                conn.execute(text("ALTER TABLE sessions ADD COLUMN context_json TEXT"))
+                conn.commit()
     except Exception:  # pragma: no cover — estados sem suporte não bloqueiam
         pass
 

@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.vega.client.model.ApprovalInfo
+import app.vega.client.model.ContinuityHint
 import app.vega.client.model.MobileCommandCard
 import app.vega.client.model.ToolItem
 import app.vega.client.ui.theme.VegaColors
@@ -112,6 +113,28 @@ fun PresenceChip(presence: String, modifier: Modifier = Modifier) {
             color = color,
             fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+@Composable
+fun ContinuityChip(hint: ContinuityHint, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(50))
+            .background(VegaColors.Primary.copy(alpha = 0.08f))
+            .border(1.dp, VegaColors.Primary.copy(alpha = 0.35f), RoundedCornerShape(50))
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("➤", color = VegaColors.Primary, fontSize = 10.sp)
+        Text(
+            "Continuidade: ${hint.device}",
+            color = VegaColors.Primary,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
         )
     }
 }
@@ -268,6 +291,8 @@ fun MobileCommandCard(card: MobileCommandCard, modifier: Modifier = Modifier) {
             .semantics { contentDescription = card.a11yDescription() },
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(card.statusGlyph, color = statusColor, fontSize = 14.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.width(VegaSpacing.sm))
             Text(
                 card.title,
                 color = VegaColors.TextPrimary,
@@ -277,7 +302,7 @@ fun MobileCommandCard(card: MobileCommandCard, modifier: Modifier = Modifier) {
             )
             Spacer(Modifier.width(VegaSpacing.sm))
             Text(
-                card.status.uppercase(),
+                card.statusLabel.uppercase(),
                 color = statusColor,
                 fontSize = 10.sp,
                 fontFamily = FontFamily.Monospace,
