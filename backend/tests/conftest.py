@@ -136,6 +136,7 @@ def _clean_db():
         ProactiveInboxEvent,
         ProactiveSchedule,
         RemoteCommand,
+        RemoteOperation,
         RemoteOutbox,
         RemoteSession,
         ResearchRun,
@@ -153,6 +154,7 @@ def _clean_db():
         db.query(RemoteCommand).delete()
         db.query(RemoteOutbox).delete()
         db.query(RemoteSession).delete()
+        db.query(RemoteOperation).delete()
         db.query(Credential).delete()
         db.query(PairingRequest).delete()
         db.query(Device).delete()

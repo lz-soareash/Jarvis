@@ -66,6 +66,7 @@ data class ChatMessage(
     var status: MessageStatus,
     var tools: List<ToolItem> = emptyList(),
     var mobileCard: MobileCommandCard? = null,
+    var operationCard: RemoteOperationCard? = null,
     var error: String? = null,
     var createdAt: Long = System.currentTimeMillis(),
 )
@@ -202,6 +203,74 @@ data class MobileCommandCard(
         }
     }
 }
+
+/**
+ * Fase 28 — Remote Operation: cartão de operação coordenada entre dispositivos.
+ * Espelha o payload estruturado do Core (`{"type":"remote.operation.result", ...}`
+ * com o objeto `operation` contendo id/status/requested_action/steps). A operação
+ * NÃO expõe tokens/segredos — apenas rótulo, status agregado e passos resumidos.
+ */
+data class RemoteOperationCard(
+    val operationId: String,
+    val status: String,
+    val requestedAction: String?,
+    val succeededSteps: Int,
+    val failedSteps: Int,
+    val error: String?,
+    val steps: List<RemoteOperationStep>,
+    val requiresConfirmation: Boolean,
+) {
+    val statusGlyph: String get() = MobileStatusLabels.glyph(status)
+    val statusLabel: String get() = MobileStatusLabels.label(status)
+    val title: String get() = requestedAction?.ifBlank { null } ?: "Operação remota"
+
+    fun a11yDescription(): String = buildString {
+        append(title).append(", ").append(statusLabel)
+        append(", passos: ").append(succeededSteps).append(" ok, ").append(failedSteps).append(" falho(s)")
+    }
+
+    companion object {
+        fun fromJson(obj: JSONObject?): RemoteOperationCard? {
+            if (obj == null || obj.optString("type") != "remote.operation.result") return null
+            val operation = obj.optJSONObject("operation")
+            val status = (operation ?: obj).optString("status").ifBlank { return null }
+            val steps = mutableListOf<RemoteOperationStep>()
+            val arr = operation?.optJSONArray("steps")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val s = arr.optJSONObject(i) ?: continue
+                    steps.add(
+                        RemoteOperationStep(
+                            action = s.optString("action").ifBlank { "?" },
+                            target = s.optString("target").ifBlank { null },
+                            status = s.optString("status").ifBlank { "pending" },
+                            message = s.optString("message").ifBlank { null },
+                            device = s.optString("device").ifBlank { null },
+                        )
+                    )
+                }
+            }
+            return RemoteOperationCard(
+                operationId = obj.optString("operation_id").ifBlank { operation?.optString("id").orEmpty() },
+                status = status,
+                requestedAction = operation?.optString("requested_action")?.ifBlank { null },
+                succeededSteps = obj.optInt("succeeded_steps", 0),
+                failedSteps = obj.optInt("failed_steps", 0),
+                error = obj.optString("error").ifBlank { null },
+                steps = steps,
+                requiresConfirmation = obj.optBoolean("requires_confirmation", false),
+            )
+        }
+    }
+}
+
+data class RemoteOperationStep(
+    val action: String,
+    val target: String?,
+    val status: String,
+    val message: String?,
+    val device: String?,
+)
 
 sealed interface TurnEvent {
     data class Start(val requestId: String? = null, val sessionId: String? = null) : TurnEvent

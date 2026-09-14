@@ -9,6 +9,7 @@ from .device import router as device_router
 from .health import router as health_router
 from .memory import router as memory_router
 from .ops import router as ops_router
+from .operations import router as operations_router
 from .permissions import router as permissions_router
 from app.proactive.api import router as proactive_router
 from .remote import router as remote_router
@@ -32,6 +33,7 @@ api_router.include_router(atlas_router)
 api_router.include_router(ops_router)
 api_router.include_router(proactive_router)
 api_router.include_router(remote_router)
+api_router.include_router(operations_router)
 api_router.include_router(workspace_router)
 api_router.include_router(research_router)
 api_router.include_router(computer_router)

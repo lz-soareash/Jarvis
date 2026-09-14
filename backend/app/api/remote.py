@@ -69,6 +69,7 @@ from app.schemas.remote import (
     PairingOut,
     PairingSubmitIn,
     PairingSubmitOut,
+    RemoteConversationResetIn,
     RemoteMessageIn,
     RemoteStatusOut,
     RemoteGatewayConnectIn,
@@ -707,6 +708,58 @@ async def remote_message(
             outcome["generator"], media_type="text/event-stream", headers=headers
         )
     return outcome["body"]
+
+
+@router.post("/remote/conversations", response_model=dict)
+def remote_new_conversation(
+    body: RemoteConversationResetIn,
+    request: Request,
+    db: OrmSession = Depends(get_db),
+) -> dict:
+    """Fase 27 — inicia uma NOVA conversa remota (rota a sessão estável do device).
+
+    "Nova conversa" não cria uma sessão órfã que o caminho `/remote/message`
+    rejeita: rotaciona `Device.jarvis_session_id` para uma SESSÃO NOVA a partir
+    da qual o próximo envio (LAN ou WAN — a mesma âncora do device) segue com
+    contexto limpo no Core. Sempre session-sharing do próprio device; nunca
+    expõe secrets.
+    """
+    _require_remote()
+    try:
+        authed = authenticate_bearer(
+            db,
+            body.token,
+            transport_meta=body.transport_meta or {"http": True},
+            claimed_device_id=body.claimed_device_id,
+        )
+    except (RemoteAuthError, CredentialLimitError) as exc:
+        raise RemoteError(
+            RemoteErrorCode.UNAUTHORIZED, "autenticação necessária", detail="auth failed"
+        ) from exc
+
+    from app.remote.sessions import ensure_session_valid
+
+    ensure_session_valid(db, authed.session)
+
+    from app.models import Session as JarvisSession
+    from app.models.session import utcnow
+
+    jarvis = JarvisSession(
+        title=f"Controle remoto — {authed.device.name}",
+        created_at=utcnow(),
+        updated_at=utcnow(),
+    )
+    db.add(jarvis)
+    db.flush()
+    authed.device.jarvis_session_id = jarvis.id
+    db.commit()
+
+    return {
+        "session_id": jarvis.id,
+        "title": jarvis.title,
+        "created_at": jarvis.created_at.isoformat(),
+        "updated_at": jarvis.updated_at.isoformat(),
+    }
 
 
 @router.post(

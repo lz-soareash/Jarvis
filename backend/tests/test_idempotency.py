@@ -166,19 +166,23 @@ def test_build_ai_messages_reconstructs_tool_messages(client, fake_computer, fak
     send_agent(client, session["id"], "abra o bloco de notas")
 
     from app.db.session import SessionLocal
-    from app.models import Message
     from app.services.chat import build_ai_messages
 
     db = SessionLocal()
     try:
         ai_messages = build_ai_messages(db, session["id"])
         roles = [m.role for m in ai_messages]
-        # O histórico reconstruído deve conter roles "tool" (resultado) junto
-        # do assistant que propôs a ferramenta.
-        assert "tool" in roles
-        tool_msg = next(m for m in ai_messages if m.role == "tool")
-        assert tool_msg.tool_name == "open_application"
-        assert "notepad" in str(tool_msg.content)
+        # Fase 27 — execuções persistidas viram resumo TEXTUAL do histórico (não
+        # function_call fabricada): o Gemini exige thought_signature em chamadas
+        # originais do modelo; chamadas determinísticas/reconstruídas não têm —
+        # fabricá-las causava erro 400 no Gemini thinking. O resultado (nome da
+        # ferramenta + output) continua disponível como contexto para o modelo.
+        assert "tool" not in roles
+        user_contents = " ".join(
+            m.content or "" for m in ai_messages if m.role == "user"
+        )
+        assert "open_application" in user_contents
+        assert "notepad" in user_contents
     finally:
         db.close()
 

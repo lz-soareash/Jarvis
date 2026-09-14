@@ -81,6 +81,7 @@ def build_default_registry() -> ToolRegistry:
         MobileSetVolume,
         MobileVibrate,
     )
+    from .operations import RemoteOperationTool
     from .web import WebFetch, WebSearch
     from .wol import WakeOnLan
     from app.perception.tool import ObserveComputer
@@ -152,6 +153,8 @@ def build_default_registry() -> ToolRegistry:
     registry.register(MobileSetVolume())
     registry.register(MobileSetBrightness())
     registry.register(MobileOpenApp())
+    # VEGA Remote Operations (Fase 28) — coordenadora de multi-device LEVEL_1
+    registry.register(RemoteOperationTool())
     return registry
 
 

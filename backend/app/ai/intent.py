@@ -127,6 +127,12 @@ def detect_intent(user_text: str) -> IntentMatch | None:
         return None
 
     text = user_text.strip()
+
+    # Fase 28 — multi-dispositivo (0.97 > mobile 0.96 > pc 0.95).
+    multi = _detect_multi_device(text)
+    if multi is not None:
+        return multi
+
     all_patterns = (
         _MOBILE_PATTERNS
         + _APP_PATTERNS
@@ -153,6 +159,89 @@ def detect_intent(user_text: str) -> IntentMatch | None:
                 )
 
     return best_match
+
+
+# ---------------------------------------------------------------------------
+# Fase 28 — Remote Operations: multi-dispositivo determinístico (remote_operation)
+# ---------------------------------------------------------------------------
+
+# Abertura de URL e app por alvo: dispositivo PC vs. móvel mudam os param args.
+_PC_DEVICE_TOKENS = frozenset({"computador", "pc", "notebook", "desktop"})
+_MOBILE_DEVICE_TOKENS = frozenset({"celular", "telefone", "aparelho", "mobile", "smartphone"})
+_OP_SITES = r"youtube|google|github|gmail|chrome|firefox"
+_OP_DEVICES = r"celular|telefone|aparelho|computador|pc|notebook|desktop"
+_VERB_OPT2 = r"(?:(?:abra|abre|abrir)\s+)?(?:o\s+)?"
+
+# Padrão A — duas cláusulas completas: "abra o X no A e depois o Y no B"
+# (verbo opcional em ambas: "abra o X no A e depois o chrome no B").
+_VERB_OPT = r"(?:(?:abra|abre|abrir)\s+)?(?:o\s+)?"
+_MULTI_A_RE = re.compile(
+    rf"\b{_VERB_OPT}(?P<s1>{_OP_SITES})\s+(?:no|na)\s+(?:meu\s+)?(?P<d1>{_OP_DEVICES})"
+    rf"\s+(?:e\s+(?:depois|ent[ãa]o)\s+|,?\s*(?:e\s+)?depois\s+|e\s+em\s+seguida\s+|e\s+)"
+    rf"{_VERB_OPT2}(?P<s2>{_OP_SITES})\s+(?:no|na)\s+(?:meu\s+)?(?P<d2>{_OP_DEVICES})\b",
+    re.IGNORECASE,
+)
+# Padrão B — site só na 1ª cláusula: "abra o X no A e depois no B".
+_MULTI_B_RE = re.compile(
+    rf"\b{_VERB_OPT}(?P<s1>{_OP_SITES})\s+(?:no|na)\s+(?:meu\s+)?(?P<d1>{_OP_DEVICES})"
+    rf"\s+(?:e\s+(?:depois|ent[ãa]o)\s+|,?\s*(?:e\s+)?depois\s+|e\s+em\s+seguida\s+|e\s+)"
+    rf"(?:no|na)\s+(?:meu\s+)?(?P<d2>{_OP_DEVICES})\b",
+    re.IGNORECASE,
+)
+
+
+def _operation_step(site: str, device: str) -> dict:
+    """Constrói um passo para a Remote Operation (por site e alvo amigável)."""
+    site = (site or "").strip().lower()
+    device = (device or "").strip().lower()
+    if site in ("youtube", "google", "github", "gmail"):
+        return {"action": "OPEN_URL", "params": {"url": f"https://{site}.com"}, "target": device}
+    if device in _PC_DEVICE_TOKENS:
+        return {"action": "OPEN_APP", "params": {"target": site}, "target": device}
+    package = {"chrome": "com.android.chrome", "firefox": "org.mozilla.firefox"}.get(site)
+    return {"action": "OPEN_APP", "params": {"package_name": package}, "target": device} if package else None
+
+
+def _multi_device_intent(m) -> IntentMatch | None:
+    g = m.groupdict()
+    s1, d1 = g.get("s1"), g.get("d1")
+    s2, d2 = (g.get("s2") or s1), (g.get("d2") or d1)
+    step1 = _operation_step(s1, d1)
+    step2 = _operation_step(s2, d2)
+    if step1 is None or step2 is None:
+        return None
+    if step1 == step2:
+        return None  # mesmo alvo → intenção single-device (padrões existentes)
+    steps = [step1, step2]
+    return IntentMatch(
+        tool_call=ToolCall(
+            name="remote_operation",
+            arguments={
+                "operation": f"abrir {s1} e {s2 or s1} em dispositivos",
+                "steps": steps,
+            },
+        ),
+        confidence=0.97,
+    )
+
+
+def _sanitize_continuation_params(params) -> dict:
+    """Params sanitizados da operação anterior (reuso seguro na continuidade)."""
+    if not isinstance(params, dict):
+        return {}
+    return {k: (str(v)[:400] if isinstance(v, str) else v) for k, v in params.items()}
+
+
+def _detect_multi_device(text: str) -> IntentMatch | None:
+    if not text:
+        return None
+    for pattern in (_MULTI_A_RE, _MULTI_B_RE):
+        m = pattern.search(text)
+        if m:
+            match = _multi_device_intent(m)
+            if match is not None:
+                return match
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +276,49 @@ def _strip_device_tail(query: str) -> str:
     return _DEVICE_TAIL_RE.sub("", query).strip(" ,;:-")
 
 
-def detect_continuation(user_text: str, ctx=None) -> IntentMatch | None:
+# Fase 28 — troca determinística de dispositivo (continuidade): "agora no
+# celular" / "continue no computador" / "faz isso no pc" → repete a última ação
+# de uma operação anterior no novo dispositivo. Exige marcador explícito.
+_CONTINUATION_DEVICE_SWITCH_RE = re.compile(
+    rf"\b(?:\bagora\b|\bcontinue\b(?:\s+isso)?|\bcont[íi]nua\b|\bvolta\b|\brepete\b|\brepetir\b|\bfa[çc]a\s+isso\b|\bfaz\s+isso\b|\btamb[ée]m\b)"
+    rf"\s+(?:no|na|para|pra|pro)\s+(?:meu\s+|minha\s+|o\s+|a\s+)?(?P<dev>{_OP_DEVICES})\b",
+    re.IGNORECASE,
+)
+
+
+def _latest_operation_for_continuation(db, session_id: str | None) -> dict | None:
+    """Último passo com status 'success' de uma operação recente da sessão."""
+    if db is None or not session_id:
+        return None
+    from sqlalchemy import select
+
+    from app.models.operations import RemoteOperation
+
+    try:
+        ops = db.scalars(
+            select(RemoteOperation)
+            .where(RemoteOperation.session_id == session_id)
+            .order_by(RemoteOperation.created_at.desc())
+            .limit(3)
+        ).all()
+    except Exception:  # noqa: BLE001 — continuidade nunca quebra o turno
+        return None
+    for op in ops:
+        try:
+            import json
+
+            steps = json.loads(op.steps_json or "[]")
+        except (TypeError, ValueError):
+            continue
+        for step in reversed(steps):
+            if step.get("status") == "success" and step.get("action"):
+                return step
+    return None
+
+
+def detect_continuation(
+    user_text: str, ctx=None, db=None, session_id: str | None = None
+) -> IntentMatch | None:
     """Resolve continuidade SÓ quando há contexto de dispositivo fresco.
 
     Regras conservadoras (Fase 27):
@@ -198,9 +329,40 @@ def detect_continuation(user_text: str, ctx=None) -> IntentMatch | None:
       navegação (OPEN_APP/OPEN_URL) no dispositivo ativo;
     - "agora abre o <youtube|google|github|gmail>" → `mobile_open_url` no
       dispositivo ativo;
-    - sem contexto fresco, devolve None (fluxo normal, nunca rouba intenções
-      de PC; ambiguidade é resolvida pelo fluxo "explícito > sessão > único").
+
+    Fase 28 — troca de dispositivo determinística: com marcador explícito
+    ("agora no celular"/"continue no computador"), reaplica a ÚLTIMA ação bem
+    sucedida de uma operação anterior da sessão no novo alvo (via
+    `remote_operation`), sem depender do LLM.
     """
+    text = (user_text or "").strip()
+    if not text:
+        return None
+
+    # Fase 28 — troca de dispositivo (exige operação anterior na sessão).
+    switched = _CONTINUATION_DEVICE_SWITCH_RE.search(text)
+    if switched is not None and db is not None:
+        last = _latest_operation_for_continuation(db, session_id)
+        if last is not None:
+            dev = switched.group("dev").lower()
+            steps = [
+                {
+                    "action": last.get("action"),
+                    "params": _sanitize_continuation_params(last.get("params")),
+                    "target": dev,
+                }
+            ]
+            return IntentMatch(
+                tool_call=ToolCall(
+                    name="remote_operation",
+                    arguments={
+                        "operation": f"repetir no {dev}",
+                        "steps": steps,
+                    },
+                ),
+                confidence=_CONTINUATION_CONFIDENCE,
+            )
+
     device = getattr(ctx, "device", None)
     if device is None or not getattr(device, "fresh", False) or not getattr(device, "name", ""):
         return None

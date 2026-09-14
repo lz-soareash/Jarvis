@@ -186,6 +186,20 @@ class RemoteMessageIn(APIModel):
     session_id: str | None = None
 
 
+class RemoteConversationResetIn(APIModel):
+    """Corpo de "nova conversa" remota (Fase 27).
+
+    Mesmo contrato de autenticação do `/remote/message` (token no corpo +
+    `claimed_device_id` opcional). Rotaciona a sessão JARVIS estável do device
+    para que o PRÓXIMO envio comece com contexto limpo — tanto no LAN quanto no
+    WAN (mesma âncora `Device.jarvis_session_id`).
+    """
+
+    token: str
+    claimed_device_id: str | None = None
+    transport_meta: dict[str, Any] | None = None
+
+
 class RemoteStatusOut(APIModel):
     enabled: bool
     configured: bool

@@ -15,10 +15,10 @@ import app.vega.client.model.MobileCommand
 import app.vega.client.model.MobileCommandCard
 import app.vega.client.model.Role
 import app.vega.client.model.SessionInfo
-import app.vega.client.model.ToolItem
 import app.vega.client.model.TurnEvent
+import app.vega.client.model.TurnLifecycle
 import app.vega.client.model.VegaPresence
-import app.vega.client.model.MobileCapabilities
+import app.vega.client.model.WanTurnAction
 import app.vega.client.model.MobileResultUi
 import app.vega.client.model.continuityFrom
 import app.vega.client.mobile.AndroidMobileOps
@@ -36,7 +36,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
@@ -58,9 +57,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     )
     private val tts = TtsPlayer()
     private val idCounter = AtomicLong(10_000)
-    private var busySending = false
-    private val requestToAssistant = ConcurrentHashMap<String, Long>()
-    private val assistantToRequest = ConcurrentHashMap<Long, String>()
+    private val turnLifecycle = TurnLifecycle { idCounter.getAndIncrement() }
 
     private val _coreUrl = MutableStateFlow(bridge.coreUrl)
     val coreUrl: StateFlow<String> = _coreUrl.asStateFlow()
@@ -321,32 +318,33 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun send(text: String) {
         val t = text.trim()
         if (t.isEmpty()) return
-        if (busySending) return
+        if (TurnLifecycle.isTurnInFlight(_messages.value)) return
         if (!isOnline()) {
             val status = _connection.value.label
             _banner.value = "JARVIS está $status — conecte ao Core primeiro"
             return
         }
-        busySending = true
         val user = ChatMessage(idCounterAndIncrement(), Role.USER, t, MessageStatus.DONE)
         val assistant = ChatMessage(idCounterAndIncrement(), Role.ASSISTANT, "", MessageStatus.SENDING)
         _messages.update { it + user + assistant }
+        recomputeContinuity()
+        val runEpoch = turnLifecycle.currentEpoch()
         viewModelScope.launch {
             try {
-                if (isWanOnline()) runWanTurn(t, assistant.id) else runHttpTurn(t, assistant.id)
+                if (isWanOnline()) runWanTurn(t, assistant.id) else runHttpTurn(t, assistant.id, runEpoch)
             } catch (e: Exception) {
                 failMessage(assistant.id, friendlyError(e))
             } finally {
-                busySending = false
+                turnLifecycle.forgetAssistant(assistant.id)
             }
         }
     }
 
-    private suspend fun runHttpTurn(content: String, assistantId: Long) {
+    private suspend fun runHttpTurn(content: String, assistantId: Long, runEpoch: Long) {
         val token = bridge.token ?: throw IllegalStateException("bridge não autenticado")
         setLocalPresence("thinking")
         http.sendMessageSse(_coreUrl.value, token, _conversationId.value, content)
-            .collect { ev -> handleEvent(ev, assistantId) }
+            .collect { ev -> handleEvent(ev, assistantId, runEpoch) }
         val msg = _messages.value.find { it.id == assistantId }
         if (msg != null && (msg.status == MessageStatus.SENDING || msg.status == MessageStatus.STREAMING)) {
             failMessage(assistantId, msg.error ?: "conexão encerrada sem conclusão")
@@ -358,33 +356,25 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val requestId = withContext(Dispatchers.IO) {
             wan.sendMessage(content, JSONObject().put("stream", true))
         }
-        assistantToRequest[assistantId] = requestId
-        requestToAssistant[requestId] = assistantId
+        turnLifecycle.registerTurn(requestId, assistantId)
     }
 
-    private fun handleEvent(ev: TurnEvent, assistantId: Long) {
+    private fun handleEvent(ev: TurnEvent, assistantId: Long, runEpoch: Long) {
+        if (runEpoch != turnLifecycle.currentEpoch()) return
         when (ev) {
             is TurnEvent.Chunk -> {
-                updateMessage(assistantId) { it.copy(content = it.content + ev.text, status = MessageStatus.STREAMING, error = null) }
+                _messages.update { TurnLifecycle.MessageState.chunk(it, assistantId, ev.text) }
+                recomputeContinuity()
                 if (_presence.value != "thinking") setLocalPresence("thinking")
             }
             is TurnEvent.ToolStart -> {
-                updateMessage(assistantId) { msg ->
-                    val keep = msg.tools.filterNot { t -> ev.names.contains(t.name) && t.running }
-                    msg.copy(status = MessageStatus.STREAMING, tools = keep + ev.names.map { ToolItem(it) })
-                }
+                _messages.update { TurnLifecycle.MessageState.toolStart(it, assistantId, ev.names) }
+                recomputeContinuity()
                 setLocalPresence("executing")
             }
             is TurnEvent.ToolDone -> {
-                updateMessage(assistantId) { msg ->
-                    val card = ev.structured?.let { MobileCommandCard.fromJson(it) }
-                    msg.copy(
-                        tools = msg.tools.map { t ->
-                            if (t.name == ev.name) t.copy(ok = ev.ok, running = false) else t
-                        },
-                        mobileCard = card ?: msg.mobileCard,
-                    )
-                }
+                _messages.update { TurnLifecycle.MessageState.toolDone(it, assistantId, ev.name, ev.ok, ev.structured) }
+                recomputeContinuity()
                 setLocalPresence("thinking")
             }
             is TurnEvent.ApprovalRequest -> {
@@ -392,65 +382,34 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 setLocalPresence("waiting_confirmation")
             }
             is TurnEvent.Done -> {
-                updateMessage(assistantId) {
-                    val finalContent = if (ev.content.isNotBlank()) ev.content else it.content
-                    it.copy(
-                        content = finalContent,
-                        status = MessageStatus.DONE,
-                        tools = it.tools.map { t -> t.copy(running = false) },
-                    )
-                }
+                completeTurn(assistantId, ev.content)
                 ev.sessionId?.let { _conversationId.value = it }
-                assistantToRequest[assistantId]?.let { requestToAssistant.remove(it) }
-                assistantToRequest.remove(assistantId)
-                setLocalPresence("success")
-                postponeIdle(1500)
-                speakLatest(assistantId)
             }
             is TurnEvent.ErrorEvent -> {
                 if (_messages.value.none { it.id == assistantId }) return
-                updateMessage(assistantId) { m ->
-                    m.copy(error = ev.detail.ifBlank { m.error })
-                }
+                val detail = ev.detail.ifBlank { _messages.value.find { it.id == assistantId }?.error ?: "erro" }
+                failMessage(assistantId, detail)
             }
             else -> Unit
         }
     }
 
     private fun handleWanFrame(type: String, payload: JSONObject, envelopeRequestId: String) {
-        val requestId = payload.optString("request_id").ifBlank { envelopeRequestId }
-        when (type) {
-            "agent_event" -> {
-                val inner = payload.optJSONObject("event") ?: return
-                val ev = TurnEvent.parse(inner) ?: return
-                val assistantId = requestToAssistant[requestId]
-                if (assistantId == null) {
-                    if (ev is TurnEvent.Done) appendPassiveDone(ev)
-                    return
-                }
-                viewModelScope.launch { handleEvent(ev, assistantId) }
-            }
-            "message_result" -> {
-                val assistantId = requestToAssistant[requestId] ?: return
-                if (payload.optBoolean("ok", false)) {
-                    requestToAssistant.remove(requestId)
-                    assistantToRequest.remove(assistantId)
-                } else {
-                    requestToAssistant.remove(requestId)
-                    assistantToRequest.remove(assistantId)
-                    failMessage(assistantId, payload.optString("error").ifBlank { "Core falhou ao processar" })
-                }
-            }
+        when (val action = turnLifecycle.onWanFrame(type, payload, envelopeRequestId)) {
+            is WanTurnAction.AgentEvent ->
+                viewModelScope.launch { handleEvent(action.event, action.assistantId, turnLifecycle.currentEpoch()) }
+            is WanTurnAction.Complete -> completeTurn(action.assistantId, action.content)
+            is WanTurnAction.Fail -> failMessage(action.assistantId, action.error)
+            WanTurnAction.Ignore -> Unit
         }
     }
 
-    private fun appendPassiveDone(ev: TurnEvent.Done) {
-        _messages.update {
-            it + ChatMessage(
-                idCounterAndIncrement(), Role.ASSISTANT, ev.content, MessageStatus.DONE,
-            )
-        }
+    private fun completeTurn(assistantId: Long, content: String) {
+        _messages.update { TurnLifecycle.MessageState.completeDone(it, assistantId, content) }
         recomputeContinuity()
+        setLocalPresence("success")
+        postponeIdle(1500)
+        speakLatest(assistantId)
     }
 
     private fun speakLatest(assistantId: Long) {
@@ -468,8 +427,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         setLocalPresence("verifying")
         viewModelScope.launch {
             try {
-                if (isWanOnline()) withContext(Dispatchers.IO) { wan.sendApproval(a.id, approved) }
-                else withContext(Dispatchers.IO) { http.respondApproval(_coreUrl.value, a.id, approved) }
+                if (isWanOnline()) {
+                    val awaitingId = _messages.value.lastOrNull { it.status == MessageStatus.SENDING || it.status == MessageStatus.STREAMING }?.id
+                    val resumeRequestId = withContext(Dispatchers.IO) { wan.sendApproval(a.id, approved) }
+                    // Fase 27 — a retomada WAN volta com NOVO request_id (envelope
+                    // do approval_respond): liga-o à mensagem que esperava a decisão
+                    // para não criar uma mensagem nova nem deixar a antiga parada.
+                    if (awaitingId != null) turnLifecycle.bindResume(resumeRequestId, awaitingId)
+                } else {
+                    withContext(Dispatchers.IO) { http.respondApproval(_coreUrl.value, a.id, approved) }
+                }
             } catch (e: Exception) {
                 _banner.value = "falha ao responder: ${friendlyError(e)}"
                 setLocalPresence("idle")
@@ -501,17 +468,26 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun newConversation() {
         viewModelScope.launch {
-            if (busySending) return@launch
+            if (TurnLifecycle.isTurnInFlight(_messages.value)) return@launch
+            turnLifecycle.beginConversation()
+            _pendingApproval.value = null
+            _messages.value = emptyList()
+            _sessionTitle.value = ""
+            recomputeContinuity()
+            // Fase 27 — o backend rotaciona a sessão JARVIS estável do DEVICE
+            // (mesmo mecanismo dos endpoints remotos). O id devolvido vira a nova
+            // âncora da conversa; em Core antigo sem o endpoint, cai no fallback
+            // usando a sessão estável do device (nunca quebra o próximo envio).
             try {
-                val s = withContext(Dispatchers.IO) { http.createSession(_coreUrl.value) }
+                val s = withContext(Dispatchers.IO) {
+                    http.resetConversation(_coreUrl.value, bridge.token.orEmpty(), bridge.deviceId)
+                }
                 _conversationId.value = s.id
                 _sessionTitle.value = s.title
-                _messages.value = emptyList()
-                recomputeContinuity()
-                loadSessions()
             } catch (e: Exception) {
-                _banner.value = "não foi possível criar a conversa: ${friendlyError(e)}"
+                _conversationId.value = null
             }
+            loadSessions()
         }
     }
 
@@ -527,8 +503,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openSession(id: String) {
         viewModelScope.launch {
+            if (TurnLifecycle.isTurnInFlight(_messages.value)) return@launch
             try {
                 val history = withContext(Dispatchers.IO) { http.fetchHistory(_coreUrl.value, id) }
+                turnLifecycle.beginConversation()
+                _pendingApproval.value = null
                 _conversationId.value = id
                 _messages.value = history
                 recomputeContinuity()
@@ -562,25 +541,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         tts.stop()
     }
 
-    private fun updateMessage(id: Long, fn: (ChatMessage) -> ChatMessage) {
-        _messages.update { list -> list.map { if (it.id == id) fn(it) else it } }
-        recomputeContinuity()
-    }
-
     private fun recomputeContinuity() {
         _continuity.value = continuityFrom(_messages.value)
     }
 
     private fun failMessage(id: Long, error: String) {
-        updateMessage(id) { m ->
-            val keepContent = m.content.ifBlank { "" }
-            m.copy(
-                content = keepContent.takeIf { it.isNotBlank() } ?: "",
-                status = MessageStatus.ERROR,
-                error = error,
-                tools = m.tools.map { t -> t.copy(running = false) },
-            )
-        }
+        _messages.update { TurnLifecycle.MessageState.completeError(it, id, error) }
+        recomputeContinuity()
         setLocalPresence("error")
         postponeIdle(2500)
     }

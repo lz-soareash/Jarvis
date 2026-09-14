@@ -93,6 +93,49 @@ async def respond(
         deliver_command_result(device.id, command.command_id, result, db=db)
         return JSONResponse({"status": "decided", "command_id": command.command_id, "result": result})
 
+    # Fase 28 — Remote Operation pausada por aprovação (passo LEVEL_2): a decisão
+    # retoma a OPERAÇÃO exata (approved → marca o passo autorizado e executa a
+    # partir dele, reavaliando L2/L3 dos passos seguintes; denied → passo negado
+    # e operação negada). O "sim" fica atrelado ao `operation_id`/passo da
+    # aprovação — nunca autoriza outra operação.
+    from app.remote import operations as ops_service
+
+    op_id = ops_service.approval_operation_id(approval.arguments_dict)
+    if op_id is not None:
+        operation = ops_service.load_by_id(db, op_id)
+        if operation is None:
+            raise HTTPException(status_code=409, detail="Operação remota não encontrada")
+        if operation.status in ops_service.TERMINAL_OPERATION_STATUSES:
+            approval_service.mark_applied(db, approval)
+            return JSONResponse(
+                {
+                    "status": "decided",
+                    "operation_id": operation.id,
+                    "result": ops_service.to_out(operation),
+                }
+            )
+        step_arg = approval.arguments_dict.get("step")
+        try:
+            step_index = int(step_arg) if step_arg is not None else 0
+        except (TypeError, ValueError):
+            step_index = 0
+        if not decided:
+            raise HTTPException(status_code=409, detail="Pedido de aprovação já decidido")
+        try:
+            outcome = await ops_service.resume_operation_from_approval(
+                db,
+                operation=operation,
+                approved=body.approved,
+                step=step_index,
+                session_id=approval.session_id,
+            )
+        except ops_service.OperationError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        approval_service.mark_applied(db, approval)
+        return JSONResponse(
+            {"status": "decided", "operation_id": operation.id, "result": ops_service.to_payload(outcome)}
+        )
+
     # Fase 13 — tarefa agêntica pausada por aprovação: a decisão do usuário
     # retoma o AGENT CORE exatamente do passo pendente (approved → executa,
     # denied → pula) e segue o plano; respeita a vencedora de `mark_decided`.

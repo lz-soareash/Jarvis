@@ -1437,6 +1437,54 @@ hermético turno 1→2: "abra o chrome no meu celular" → "agora pesquisa fiap"
 `assembleDebug`/`assembleRelease` BUILD SUCCESSFUL. Validação física (Galaxy A15) e WAN/WSS
 real = validação manual pendente.
 
+## Remote Operations & Secure Control (Fase 28)
+
+A VEGA evolui de "um comando em um dispositivo" para **operação coordenada entre
+dispositivos (PC + Android)** com segurança por passo — reutilizando a arquitetura existente
+(AI Core, agent, Tool/Permission Engine, approvals, `mobile_agent`, transporte WAN).
+Sem segundo Core/agent, sem LLM/API key no Android, sem shell remoto arbitrário.
+
+**Operação** (`backend/app/remote/operations.py` + `app/models/operations.py`):
+
+- `RemoteOperation` persiste em `remote_operations` (índices session/status). Status:
+  `pending | running | awaiting_confirmation | authorized | success | failed | denied |
+  unsupported | timeout | cancelled` (terminais: success/failed/denied/timeout/cancelled).
+- Catálogo `OPERATION_ACTIONS` (ex.: `OPEN_URL`, `OPEN_APP`, `CLOSE_APP`, `DEVICE_STATUS`).
+- **Resolução de destino**: PC (aliases `pc|computador|desktop|notebook`) → LOCAL;
+  móvel (`celular|telefone|aparelho|mobile|smartphone`) → `mobile_agent.resolve_target`
+  (nome livre → hint; ambiguidade → `needs_input`, op permanece `pending`).
+- **Segurança por passo** via `permission_service.effective_level` da ferramenta REAL:
+  L0/L1 executam; **L2** cria `ApprovalRequest` (`arguments` = operation/step/action/target),
+  pausa (`awaiting_confirmation`) e aguarda **apenas** a API de aprovações;
+  **L3** bloqueia — passo e operação `denied`, sem confirmação que torne L3 aceitável.
+- **Idempotência** por `operation_id`/passo (`_mark_step` nunca sobrescreve terminal),
+  `_running_operations` guarda concorrência; retomada aprova → `authorized` → reexecuta,
+  nega → `denied`. Agregação: `unsupported` trata como falha.
+- **Eventos** `remote.operation.created|started|step_started|step_completed|completed`.
+
+**Ferramenta** (`app/tools/operations.py`, registrada no registry) — `remote_operation`,
+nível **1** (`LOW`); operation_id `op_<uuid4hex16>`; timeout por passo.
+
+**API** (`app/api/operations.py`, incluída no router) — POST/GET da
+`/api/remote/operations` (NÃO gateada por `REMOTE_ENABLED`), cancel e listagem;
+resume de operação responde no `POST /api/remote/approvals/{id}/respond`.
+
+**Intent** (`app/ai/intent.py`): `_detect_multi_device` reconhece o padrão
+*punto1 no dispositivo A + segundo no dispositivo B*: "abra o youtube no meu computador e
+depois o chrome no meu celular" → `remote_operation` de 2 passos (verbo opcional nas duas
+cláusulas; segunda cláusula só com site ou só com dispositivo reusa o site). Troca de
+dispositivo em continuação ("agora faz isso no meu celular") exige operação anterior
+bem-sucedida da sessão.
+
+**Android**: `RemoteOperationCard` (modelo espelho do payload `remote.operation.result`)
+recuperado em `TurnLifecycle.MessageState.toolDone`, com título/status agregado/passos —
+nunca expõe tokens/segredos.
+
+**Validação**: backend **1024 passed, 1 skipped** (32 novos da Fase 28 em
+`tests/test_fase28_remote_operations.py` — operação, resolução de destino, L2/L3,
+resume/deny, cancelamento, API, eventos e integração com o agente); Android
+`:app:testDebugUnitTest` **75/75 verdes** (`RemoteOperationCardTest` 5 novos).
+
 ## Download
 
 Distribuições oficiais publicadas como **GitHub Release**:
@@ -1662,21 +1710,26 @@ inbox LAN no Core (`commands/poll|result`) + polling no `VegaBridge`; intentos p
 assistente pessoal; **cards `MobileCommandCard`** no chat (output JSON estruturado) com
 acessibilidade e **ações rápidas**; backend **966 passed, 1 skipped** e Android **61/61 testes
 JUnit**; validação em campo no Galaxy A15 pendente) ·
-27. V2 — Multi-turn Agentic Context (planejado): memória do turno (agenda de passos e
-justificativas) + contexto inter-turno persistente para tarefas longas ·
-28. V3 — Computer Use mais profundo (planejado): gestão de janelas, drag/scroll contínuo,
+27. Multi-turn Agentic Context & Mobile Redesign ✔ (Fase 27 COMPLETA: memória de contexto
+multi-turn real no Core — sessão/device/Task, TTL 10min, renderização sanitizada; continuidade
+determinística; backend **992 passed, 1 skipped** e Android **70/70 testes JUnit**) ·
+28. Remote Operations & Secure Control ✔ (Fase 28 COMPLETA: operação coordenada entre
+dispositivos PC+Android com segurança por passo — L2 pausa via approvals, L3 nega; resume pela
+API de aprovações; intent multi-dispositivo; card `RemoteOperationCard`; backend **1024 passed,
+1 skipped** e Android **75/75 testes JUnit**) ·
+29. V3 — Computer Use mais profundo (planejado): gestão de janelas, drag/scroll contínuo,
 uso de atalhos seguros e tolerância a layout (por via segura e confirmada) ·
-29. V4 — Planejamento hierárquico (planejado): tasks decomponíveis com dependências,
+30. V4 — Planejamento hierárquico (planejado): tasks decomponíveis com dependências,
 paralelismo controlado e view de progresso na Central de Operações ·
-30. V5 — Proativo contextual (planejado): silêncio ativo, monitoramento de estados
+31. V5 — Proativo contextual (planejado): silêncio ativo, monitoramento de estados
 (janela/carga/agenda) e sugestões com confirmação explícita ·
-31. V6 — Pesquisa agêntica (planejado): research multi-iteração com síntese em
+32. V6 — Pesquisa agêntica (planejado): research multi-iteração com síntese em
 conhecimento persistente e fontes citáveis ·
-32. V7 — Voz agêntica (planejado): TTS proativo de estados/resultados e comando
+33. V7 — Voz agêntica (planejado): TTS proativo de estados/resultados e comando
 hands-free com confirmação auditiva ·
-33. V8 — Perfil do usuário (planejado): memória de preferências com consentimento,
+34. V8 — Perfil do usuário (planejado): memória de preferências com consentimento,
 estilos de interação e affordances por dispositivo ·
-34. V9 — Autonomia governada (planejado): políticas por tarefa/domínio, revisão de
+35. V9 — Autonomia governada (planejado): políticas por tarefa/domínio, revisão de
 decisões passadas e auditoria de confiança, sempre com supervisão humana.
 
 Cada fase termina funcional, testada, documentada e sem quebrar a anterior.

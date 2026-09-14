@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session as OrmSession
 from app.ai.providers.base import AIProvider, AIProviderError
 from app.core.config import settings
 from app.models import Message, Session, utcnow
-from app.schemas.ai import AIMessage, ToolCall
+from app.schemas.ai import AIMessage
 from app.schemas.chat import MessageOut, SessionOut
 
 from . import memory as memory_service
@@ -153,30 +153,21 @@ def build_ai_messages(
             ai.append(AIMessage(role="user", content=row.content))
         elif row.role == "assistant":
             ai.append(AIMessage(role="assistant", content=row.content))
-            # Fase 11.3 (#2): reconstrói tool calls/results persistidos para que
-            # o modelo veja que a ferramenta JÁ FOI executada — evitando que um
-            # tool call antigo volte e seja re-executado num turno seguinte.
+            # Fase 27 — execuções persistidas voltam como resumo TEXTUAL (não
+            # mais como function_call fabricada): o Gemini rejeita partes
+            # function_call sem thought_signature de chamadas não geradas por ele.
             meta = _parse_meta(row.metadata_json)
+            executions: list[tuple[str, bool, str]] = []
             for ex in meta.get("tools_executed") or []:
-                tcall = ToolCall(
-                    name=ex.get("tool", ""),
-                    arguments=ex.get("arguments") or {},
-                    call_id=ex.get("execution_id") or ex.get("call_id"),
-                )
-                if not tcall.name:
+                name = ex.get("tool", "")
+                if not name:
                     continue
-                ai.append(AIMessage(role="assistant", content="", tool_calls=[tcall]))
                 out = ex.get("output")
                 if out is None:
                     out = ex.get("error") or "(falha na execução)"
-                ai.append(
-                    AIMessage(
-                        role="tool",
-                        tool_name=tcall.name,
-                        tool_call_id=tcall.call_id,
-                        content=str(out),
-                    )
-                )
+                executions.append((name, bool(ex.get("ok", True)), str(out)))
+            if executions:
+                ai.append(execution_context_message(executions))
     return ai
 
 
@@ -190,6 +181,30 @@ def _parse_meta(metadata_json: str | None) -> dict:
         return data if isinstance(data, dict) else {}
     except (ValueError, TypeError):
         return {}
+
+
+def execution_context_message(executions: list[tuple[str, bool, str]]) -> AIMessage:
+    """Mensagem "user" que relata execuções de ferramenta já realizadas.
+
+    Fase 27 — antes o pipeline reconstruía pares assistant(function_call)/tool
+    para o histórico. O Gemini novo exige `thought_signature` em functionCall
+    parts, e estas chamadas NÃO vieram do modelo (execução determinística,
+    aprovação retomada ou reconstrução de histórico) — fabricá-las faz a API
+    devolver 400. Relatar por texto preserva a semântica: o modelo sabe que a
+    ferramenta já rodou e o resultado, sem re-executar.
+    """
+    if not executions:
+        return AIMessage(role="user", content="")
+    lines: list[str] = []
+    for name, ok, output in executions:
+        status = "ok" if ok else "erro"
+        brief = (output or "").strip()[:400]
+        lines.append(f"- {name} → {status}: {brief}")
+    content = (
+        "Execuções de ferramenta já realizadas (contexto; NÃO executar novamente):\n"
+        + "\n".join(lines)
+    )
+    return AIMessage(role="user", content=content)
 
 
 async def build_system_prompt(

@@ -29,7 +29,7 @@ from app.schemas.chat import MessageOut
 from app.services import approvals as approval_service
 from app.services import audit as audit_service
 from app.services import permissions as permission_service
-from app.services.chat import build_context, sse_event
+from app.services.chat import build_context, execution_context_message, sse_event
 from app.tools import ToolContext, ToolResult
 from app.tools import registry as tool_registry
 
@@ -200,6 +200,35 @@ def _new_execution_id() -> str:
     return f"ex_{uuid.uuid4().hex[:12]}"
 
 
+def _is_operation_approval(arguments: dict) -> bool:
+    """Fase 28 — aprovação de passo de Remote Operation (retomada pela API)."""
+    return isinstance(arguments.get("operation_id"), str) and bool(arguments.get("operation_id"))
+
+
+def _extract_operation_approvals(results: list[ToolResult]) -> list[dict]:
+    """Fase 28 — aprovações embutidas no resultado de `remote_operation`.
+
+    Quando um passo L2 pausa a operação, a tool devolve `requires_confirmation`
+    com os approvals no payload estruturado; aqui eles são transformados em
+    eventos de aprovação reais (mesmo contrato do Permission Engine)."""
+    found: list[dict] = []
+    for result in results:
+        raw = getattr(result, "output", "") or ""
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if (
+            isinstance(payload, dict)
+            and payload.get("type") == "remote.operation.result"
+            and payload.get("requires_confirmation")
+        ):
+            for approval in payload.get("approvals") or []:
+                if isinstance(approval, dict) and approval.get("id"):
+                    found.append(approval)
+    return found
+
+
 async def _collect_decisions(
     db: OrmSession,
     session_id: str,
@@ -213,6 +242,13 @@ async def _collect_decisions(
     loop continua de onde parou, sem re-propor a mesma chamada.
     """
     decisions = approval_service.decided_unapplied_for_session(db, session_id)
+    # Fase 28 — aprovações de Remote Operations são retomadas diretamente pela
+    # API de aprovações (resume do passo exato), NUNCA pelo loop do agente.
+    decisions = [
+        d
+        for d in decisions
+        if not (d.tool_name == "remote_operation" and _is_operation_approval(d.arguments_dict))
+    ]
     if not decisions:
         return messages, [], []
 
@@ -253,7 +289,10 @@ async def _collect_decisions(
             )
         results.append(result)
 
-    messages.extend(provider.tool_result_message(calls, results))
+    # Fase 27 — retomada por aprovação entra como resumo TEXTUAL (sem function_call
+    # fabricada; o Gemini rejeita calls sem thought_signature que não vieram dele).
+    executions = [(c.name, r.ok, r.output or "") for c, r in zip(calls, results)]
+    messages.append(execution_context_message(executions))
     return messages, calls, results
 
 
@@ -365,7 +404,9 @@ async def run_agent(
     _primary_intent = None
     if _settings.local_first:
         _turn_ctx = load_turn_context(db, session_id)
-        _primary_intent = detect_continuation(user_text, _turn_ctx) or detect_intent(user_text)
+        _primary_intent = detect_continuation(
+            user_text, _turn_ctx, db=db, session_id=session_id
+        ) or detect_intent(user_text)
     try:
         if _primary_intent is not None and _primary_intent.tool_call.name in [
             t.name for t in tool_registry.get_tool_registry().all()
@@ -426,6 +467,26 @@ async def run_agent(
                     detail=f"aguardando decisão ({len(pending)})",
                 )
                 return
+            op_approvals = _extract_operation_approvals(results)
+            if op_approvals:
+                for approval in op_approvals:
+                    yield sse_event({"type": "approval_request", "approval": approval})
+                yield sse_event(
+                    {
+                        "type": "approval_pending",
+                        "count": len(op_approvals),
+                        "approvals": op_approvals,
+                    }
+                )
+                audit_service.log_action(
+                    db,
+                    action="agent.paused",
+                    session_id=session_id,
+                    tool="remote_operation",
+                    allowed=None,
+                    detail=f"operação aguardando decisão ({len(op_approvals)})",
+                )
+                return
             for call, result in zip([_primary_intent.tool_call], results):
                 event: dict = {"type": "tool_done", "name": call.name, "ok": result.ok}
                 if result.ok:
@@ -433,10 +494,16 @@ async def run_agent(
                 else:
                     event["detail"] = result.output
                 yield sse_event(event)
-            # Re-injeta o resultado para o LLM gerar a resposta final.
-            messages.extend(
-                provider.tool_result_message([_primary_intent.tool_call], results)
-            )
+            # Fase 27 — síntese textual após execução determinística SEM fabricar
+            # function_call: o intent foi resolvido por regras (não veio do LLM),
+            # então não existe thought_signature — e o Gemini o exige. Injeta o
+            # resumo como mensagem "user"; a trilha real fica em `_tool_executions`
+            # (persistida no metadata → MobileCommandCard).
+            executions = [
+                (_primary_intent.tool_call.name, r.ok, r.output or "")
+                for r in results
+            ]
+            messages.append(execution_context_message(executions))
     except AIProviderError as exc:
         logger.warning("Agente interrompido na intent primária: %s", exc)
         yield sse_event({"type": "error", "detail": str(exc)})
@@ -495,6 +562,27 @@ async def run_agent(
                     tool=", ".join(a.tool_name for a in pending),
                     allowed=None,
                     detail=f"aguardando decisão ({len(pending)})",
+                )
+                return
+
+            op_approvals = _extract_operation_approvals(results)
+            if op_approvals:
+                for approval in op_approvals:
+                    yield sse_event({"type": "approval_request", "approval": approval})
+                yield sse_event(
+                    {
+                        "type": "approval_pending",
+                        "count": len(op_approvals),
+                        "approvals": op_approvals,
+                    }
+                )
+                audit_service.log_action(
+                    db,
+                    action="agent.paused",
+                    session_id=session_id,
+                    tool="remote_operation",
+                    allowed=None,
+                    detail=f"operação aguardando decisão ({len(op_approvals)})",
                 )
                 return
 

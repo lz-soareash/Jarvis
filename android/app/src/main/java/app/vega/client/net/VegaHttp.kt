@@ -172,6 +172,29 @@ class VegaHttp {
         )
     }
 
+    /**
+     * Fase 27 — inicia uma NOVA conversa remota rotacionando a sessão JARVIS
+     * estável do device (mesmo contrato Bearer dos demais endpoints remotos).
+     * Devolve a nova âncora; o próximo envio já usa contexto limpo no Core.
+     */
+    fun resetConversation(coreUrl: String, token: String, deviceId: String?): SessionInfo {
+        val j = postJson(
+            coreUrl,
+            "/api/remote/conversations",
+            JSONObject().apply {
+                put("token", token)
+                deviceId?.let { put("claimed_device_id", it) }
+            },
+        )
+        return SessionInfo(
+            id = j.optString("session_id"),
+            title = j.optString("title").ifBlank { "Nova conversa" },
+            createdAt = parseTime(j.optString("created_at")),
+            updatedAt = parseTime(j.optString("updated_at")),
+            messageCount = 0,
+        )
+    }
+
     fun fetchHistory(coreUrl: String, sessionId: String): List<ChatMessage> {
         val rows = getJsonArray(coreUrl, "/api/sessions/$sessionId/messages")
         var seq = 0L

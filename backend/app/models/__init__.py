@@ -13,6 +13,7 @@ from app.models.remote import (
     RemoteOutbox,
     RemoteSession,
 )
+from app.models.operations import RemoteOperation
 from app.models.proactive import (
     ProactiveInboxEvent,
     ProactiveMessage,
@@ -37,6 +38,7 @@ __all__ = [
     "RemoteSession",
     "RemoteCommand",
     "RemoteOutbox",
+    "RemoteOperation",
     "ProactiveInboxEvent",
     "ProactiveSchedule",
     "ProactiveMessage",
