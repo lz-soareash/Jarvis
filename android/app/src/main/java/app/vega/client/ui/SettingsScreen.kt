@@ -31,12 +31,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.vega.client.BuildConfig
 import app.vega.client.ChatViewModel
+import app.vega.client.WanEndpoint
+import app.vega.client.model.WanStatus
 import app.vega.client.ui.theme.VegaColors
 
 @Composable
 fun SettingsScreen(vm: ChatViewModel) {
     val coreUrl by vm.coreUrl.collectAsState()
     val wanUrl by vm.wanUrl.collectAsState()
+    val wanStatus by vm.wanStatus.collectAsState()
     val connection by vm.connection.collectAsState()
     val wsDetail by vm.wsDetail.collectAsState()
     val heartbeats by vm.heartbeats.collectAsState()
@@ -83,7 +86,7 @@ fun SettingsScreen(vm: ChatViewModel) {
         Spacer(Modifier.height(16.dp))
 
         SectionTitle("WAN (via relé)")
-        StatusRow("Estado", connection.label.ifBlank { "—" })
+        StatusRow("Estado", wanStatus.label + wanDetailSuffix(wanStatus, vm))
         OutlinedTextField(
             value = wanUrl,
             onValueChange = { vm.setWanUrl(it) },
@@ -93,7 +96,15 @@ fun SettingsScreen(vm: ChatViewModel) {
             singleLine = true,
             textStyle = androidx.compose.ui.text.TextStyle(color = VegaColors.TextPrimary, fontSize = 13.sp),
             shape = RoundedCornerShape(12.dp),
+            isError = wanStatus == WanStatus.INVALID,
         )
+        if (wanUrl.isNotBlank() && !WanEndpoint.isValid(wanUrl, requireTls = !BuildConfig.DEBUG)) {
+            Text(
+                "A WAN exige wss:// e um endpoint público (IP privado e localhost são rejeitados).",
+                color = VegaColors.Error,
+                fontSize = 11.sp,
+            )
+        }
         Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { vm.connectWan() }, modifier = Modifier.weight(1f)) {
@@ -136,6 +147,12 @@ fun SettingsScreen(vm: ChatViewModel) {
 @Composable
 private fun SectionTitle(title: String) {
     Text(title, color = VegaColors.Primary, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 6.dp))
+}
+
+private fun wanDetailSuffix(status: WanStatus, vm: ChatViewModel): String = when (status) {
+    WanStatus.CONNECTED, WanStatus.CONNECTING, WanStatus.RECONNECTING, WanStatus.ERROR ->
+        if (vm.wan.detail.isNotBlank()) " — ${vm.wan.detail}" else ""
+    else -> ""
 }
 
 @Composable

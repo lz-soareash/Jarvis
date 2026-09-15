@@ -91,16 +91,17 @@ class VegaWan(
     private var lastDeviceId: String? = null
 
     fun connect(wanUrl: String) {
-        if (wanUrl.isBlank()) {
-            setState("offline", "URL do gateway WAN não configurada")
+        // Bugfix LAN/WAN: o endpoint WAN é validado de forma centralizada antes
+        // de qualquer socket — rejeita IP privado/localhost e (em produção)
+        // qualquer esquema que não seja wss://. NUNCA usa a LAN como fallback.
+        val v = WanEndpoint.validate(wanUrl, requireTls = !BuildConfig.DEBUG)
+        if (!v.valid) {
+            setState("offline", "WAN inválida — ${v.reason}")
             return
         }
-        if (!wanUrl.startsWith("ws://") && !wanUrl.startsWith("wss://")) {
-            setState("authentication_error", "URL inválida (use ws:// ou wss://)")
-            return
-        }
+        val target = v.normalized
         cancelTimers()
-        lastUrl = wanUrl
+        lastUrl = target
         token = token ?: prefs.getString("wan_token", null)
         if (lastDeviceId == null) lastDeviceId = prefs.getString("wan_device_id", null)
         intentionalClose = false
@@ -500,16 +501,11 @@ put("capabilities", deviceCapabilities())
     }
 
     companion object {
-        /** Usado apenas para lembrar a URL pré-configurada (ex.: tela de pareamento). */
-        fun normalizeWanUrl(raw: String): String {
-            val t = raw.trim()
-            return when {
-                t.isBlank() -> ""
-                t.startsWith("wss://") -> t
-                t.startsWith("ws://") -> t
-                else -> "wss://$t"
-            }
-        }
+        /**
+         * Usado apenas para lembrar a URL pré-configurada (ex.: tela de
+         * pareamento). Delegado ao validador central: retorna "" se inválida.
+         */
+        fun normalizeWanUrl(raw: String): String = WanEndpoint.normalizePreset(raw, requireTls = !BuildConfig.DEBUG)
 
         /** Fase 25 — nomes canônicos de capabilities de dispositivo (Registry). */
         fun mobileCapabilityNames(): List<String> =

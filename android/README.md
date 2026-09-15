@@ -80,7 +80,38 @@ Quando o Core está fora da LAN local (ou atrás de CGNAT), o app pode falar com
   aprovações reusam o MESMO AI Core do pareamento local.
 - Requisitos no Core: `REMOTE_GATEWAY_ENABLED=true` e `REMOTE_GATEWAY_PEER_TOKEN`
   igual ao `GATEWAY_PEER_TOKEN` do relé (ver `.env.example`). `wss://` exige proxy
-  TLS (Caddy/nginx) na frente do relé; validação de campo é manual
-  (`MANUAL VALIDATION REQUIRED`).
+  TLS (Caddy/nginx) na frente do relé.
 - Build/Dependência: sem SDK local (JDK 8) o build roda no CI
   (`build-android.yml`, temurin 17, `:app:assembleRelease`).
+
+### LAN vs WAN — endpoints independentes (bugfix)
+
+O app **separa explicitamente** o endpoint LAN do endpoint WAN. Eles são
+**independentes** e NUNCA são derivados um do outro:
+
+```
+LAN (Core):
+    http://192.168.100.112:8100
+    → funciona somente quando o dispositivo alcança o Core na rede local.
+
+WAN (relé):
+    wss://<PUBLIC_ENDPOINT>/api/remote/ws
+    → funciona fora da rede local através do Relay/CoreLink.
+```
+
+- `WanEndpoint.kt` centraliza a validação do endpoint WAN (usada em
+  `ChatViewModel.connectWan`, `VegaWan.connect` e na UI):
+  - exige `wss://` em produção (`ws://` só é aceito em build **debug** contra um
+    relé público de teste);
+  - **rejeita IP privado** (`10.x`, `172.16–31.x`, `192.168.x`), localhost,
+    `127.0.0.1`, `0.0.0.0`, link-local e IP não-público como endpoint WAN;
+  - rejeita caminho incompatível com `/api/remote/ws`;
+  - nunca guarda credenciais na URL.
+- O **mesmo IP pode ser válido para LAN e inválido para WAN**: `http://192.168.x.x:8100`
+  é um Core LAN legítimo, mas `ws://192.168.x.x:8200/...` NUNCA é um endpoint WAN.
+- Sem WAN configurada o estado é **NÃO CONFIGURADO** (nunca cai para LAN como
+  fallback). A tela Config/Central exibe os estados reais por canal:
+  LAN conectado/indisponível e WAN configurado/não configurado/inválido/conectado/erro.
+- `wss://<PUBLIC_ENDPOINT>/api/remote/ws` — o `<PUBLIC_ENDPOINT>` é configurado
+  pelo ambiente (ex.: domínio com proxy TLS na frente do relé). Um **Quick Tunnel
+  pode ser usado apenas para testes**; produção deve usar endpoint público estável.

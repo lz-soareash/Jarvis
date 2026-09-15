@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import app.vega.client.ChatViewModel
 import app.vega.client.model.ConnectionState
 import app.vega.client.model.SessionInfo
+import app.vega.client.model.WanStatus
 import app.vega.client.ui.theme.VegaColors
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -52,6 +53,7 @@ fun CentralScreen(
     val connection by vm.connection.collectAsState()
     val wsDetail by vm.wsDetail.collectAsState()
     val heartbeats by vm.heartbeats.collectAsState()
+    val wanStatus by vm.wanStatus.collectAsState()
     LaunchedEffect(Unit) {
         vm.loadSessions()
         vm.refreshOps()
@@ -92,6 +94,7 @@ fun CentralScreen(
                 CentralCard("Operações") {
                     InfoRow("Conexão", connection.label, color = if (connection == ConnectionState.ONLINE) VegaColors.Success else VegaColors.TextSecondary)
                     InfoRow("Transporte", wsDetail.ifBlank { "—" })
+                    InfoRow("WAN", wanStatus.label + wanDetailSuffix(wanStatus, vm), color = if (wanStatus == WanStatus.CONNECTED) VegaColors.Success else VegaColors.TextSecondary)
                     InfoRow("Heartbeats (LAN)", heartbeats.toString())
                     val j = ops
                     if (j == null) {
@@ -186,6 +189,12 @@ private fun orbFor(connection: ConnectionState): String = when (connection) {
     ConnectionState.RECONNECTING, ConnectionState.CONNECTING -> "recovering"
     ConnectionState.INITIALIZING -> "idle"
     ConnectionState.OFFLINE -> "offline"
+}
+
+private fun wanDetailSuffix(status: WanStatus, vm: ChatViewModel): String = when (status) {
+    WanStatus.CONNECTED, WanStatus.CONNECTING, WanStatus.RECONNECTING, WanStatus.ERROR ->
+        if (vm.wan.detail.isNotBlank()) " — ${vm.wan.detail}" else ""
+    else -> ""
 }
 
 private fun formatDate(epochMs: Long): String =

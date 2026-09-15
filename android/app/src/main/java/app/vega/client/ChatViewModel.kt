@@ -18,6 +18,8 @@ import app.vega.client.model.SessionInfo
 import app.vega.client.model.TurnEvent
 import app.vega.client.model.TurnLifecycle
 import app.vega.client.model.VegaPresence
+import app.vega.client.model.WanStatus
+import app.vega.client.model.WanStatusResolver
 import app.vega.client.model.WanTurnAction
 import app.vega.client.model.MobileResultUi
 import app.vega.client.model.continuityFrom
@@ -41,6 +43,7 @@ import java.util.concurrent.atomic.AtomicLong
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val app = application
+    private val requireWanTls: Boolean = !BuildConfig.DEBUG
     private val prefs: SharedPreferences = app.getSharedPreferences("vega_core", android.content.Context.MODE_PRIVATE)
 
     val bridge = VegaBridge(app, prefs.getString("core_url", VegaBridge.DEFAULT_CORE_URL) ?: VegaBridge.DEFAULT_CORE_URL)
@@ -64,6 +67,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _wanUrl = MutableStateFlow(prefs.getString("wan_url", "").orEmpty())
     val wanUrl: StateFlow<String> = _wanUrl.asStateFlow()
+
+    private val _wanStatus = MutableStateFlow(
+        WanStatusResolver.resolve(_wanUrl.value, wan.state, requireWanTls)
+    )
+    val wanStatus: StateFlow<WanStatus> = _wanStatus.asStateFlow()
 
     private val _connection = MutableStateFlow(ConnectionState.OFFLINE)
     val connection: StateFlow<ConnectionState> = _connection.asStateFlow()
@@ -161,6 +169,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             else -> if (b.isNotEmpty()) bridge.detail else wan.detail
         }
         _heartbeats.value = bridge.heartbeatsTotal
+        _wanStatus.value = WanStatusResolver.resolve(_wanUrl.value, w, requireWanTls)
         if (bridge.conversationId != null && _conversationId.value == null) _conversationId.value = bridge.conversationId
         if (wan.conversationId != null && _conversationId.value == null) _conversationId.value = wan.conversationId
     }
@@ -301,12 +310,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun connectWan() {
-        val url = _wanUrl.value
-        if (url.isBlank()) {
-            _banner.value = "Defina a URL do gateway WAN (ws:// ou wss://)"
+        val raw = _wanUrl.value.trim()
+        // Bugfix LAN/WAN: endpoint WAN validado centralmente. Um IP privado ou
+        // ws:// em produção NUNCA conecta — nem como fallback para a LAN.
+        val v = WanEndpoint.validate(raw, requireTls = requireWanTls)
+        if (!v.valid) {
+            _banner.value = "WAN inválido: ${v.reason}"
             return
         }
+        val url = v.normalized
         prefs.edit().putString("wan_url", url).apply()
+        _wanUrl.value = url
         wan.configure(token = bridge.token, pairingCode = null, deviceId = bridge.deviceId)
         wan.connect(url)
     }

@@ -1223,6 +1223,33 @@ sem segundo Core/Memória/Permissões/Tools. O relé só **transporta**; TODA au
 - **Validação**: backend **899 passed, 1 skipped** (56 testes novos da Fase 24 em
   `backend/tests/test_fase24_wan.py`); Desktop **28/28 testes Node** verdes (`npm test`).
 
+### LAN vs WAN — endpoints independentes (bugfix Fase 27)
+
+As configs de **LAN** (Core) e **WAN** (relé) são **independentes e nunca derivadas
+uma da outra**. O cliente fino (VEGA Mobile) valida o endpoint WAN centralmente
+(`android/.../WanEndpoint.kt`) antes de qualquer socket:
+
+```
+LAN (Core):       http://192.168.100.112:8100        → rede local apenas.
+WAN (relé):       wss://<PUBLIC_ENDPOINT>/api/remote/ws  → fora da LAN via Relay/CoreLink.
+```
+
+- `http://192.168.100.112:8100` é **apenas um exemplo local**; pode ser qualquer
+  IP/host alcançável na rede doméstica.
+- A **WAN nunca aceita IP privado** (`10.x`, `172.16–31.x`, `192.168.x`),
+  `localhost`, `127.0.0.1`, `0.0.0.0` nem link-local — o mesmo IP válido para LAN
+  é inválido como endpoint WAN.
+- A **WAN exige `wss://`** (TLS) em produção; `ws://` só é aceito em build debug
+  contra um relé público de teste. **Quick Tunnel pode ser usado apenas para
+  testes**; produção deve usar endpoint público estável (ex.: Caddy/nginx TLS na
+  frente do relé).
+- **Sem WAN configurada** o estado é **NOT_CONFIGURED** — nunca cai para LAN como
+  fallback. A UI da Central/Config mostra por canal: LAN conectado/indisponível;
+  WAN configurado/não configurado/inválido/conectado/erro.
+- Testes herméticos do Android (`WanEndpointTest` 25 casos + `WanStatusTest` 8
+  casos) garantem: WSS obrigatório, rejeição de http/ws/IP privado/localhost e a
+  independência LAN ↔ WAN.
+
 ## VEGA Mobile — cliente de conversa em voz e texto (Fase 25)
 
 O Mobile deixa de ser painel de conexão e vira um **cliente de conversa real** que conversa
