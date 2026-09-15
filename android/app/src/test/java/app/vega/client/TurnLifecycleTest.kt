@@ -313,4 +313,42 @@ class TurnLifecycleTest {
         }
         assertEquals(6, msgs.size)
     }
+
+    // 13. Fase 27.1 — a correlação NÃO é esquecida quando o envio WAN retorna:
+    //     a resposta do Core chega depois e o turno encerra normalmente.
+    @Test
+    fun correlationSurvivesAfterSendReturns() {
+        val lc = lc(); val msgs = freshMessages()
+        val (_, aid) = send(msgs, "abra o spotify no meu celular")
+        lc.beginConversation()
+        // runWanTurn: sendMessage (fire-and-forget) + registerTurn, e o coroutine
+        // de envio retorna IMEDIATAMENTE (não há await de resposta).
+        lc.registerTurn("r1", aid)
+
+        // O envio já retornou; a correlação TEM de continuar viva.
+        assertEquals(aid, lc.findAssistant("r1"))
+
+        // A resposta do Core chega depois (message_result).
+        apply(msgs, lc.onWanFrame("message_result", messageResultFrame("r1", ok = true, content = "Spotify aberto"), "env"))
+        val assistant = msgs.single { it.id == aid }
+        assertEquals(MessageStatus.DONE, assistant.status)
+        assertEquals("Spotify aberto", assistant.content)
+        assertFalse(TurnLifecycle.isTurnInFlight(msgs))
+    }
+
+    // 14. Fase 27.1 — documento da causa raiz: esquecer a correlação no retorno
+    //     do envio (antigo `finally { forgetAssistant }`) descartaria a resposta
+    //     legítima e deixaria a mensagem presa em "pensando…".
+    @Test
+    fun prematureForgetWouldDropLegitimateReply() {
+        val lc = lc(); val msgs = freshMessages()
+        val (_, aid) = send(msgs, "abra o spotify")
+        lc.beginConversation()
+        lc.registerTurn("r1", aid)
+        lc.forgetAssistant(aid) // removido da produção nesta fase
+
+        val dropped = lc.onWanFrame("message_result", messageResultFrame("r1", ok = true, content = "ok"), "env")
+        assertTrue(dropped is WanTurnAction.Ignore)
+        assertEquals(MessageStatus.SENDING, msgs.single { it.id == aid }.status)
+    }
 }

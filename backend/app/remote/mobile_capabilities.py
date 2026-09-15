@@ -168,8 +168,11 @@ CAPABILITIES: dict[str, CapabilitySpec] = {
 }
 
 # Allowlist de pacotes de apps que o móvel pode abrir via OPEN_APP.
+# Espelha `_MOBILE_OPEN_APP_ALIASES` de `app/ai/intent.py` (Fase 27.1) e o
+# `DEFAULT_OPEN_APP_ALLOWLIST` do APK (cliente móvel).
 DEFAULT_OPEN_APP_ALLOWLIST: frozenset[str] = frozenset(
     {
+        "com.spotify.music",
         "com.android.settings",
         "com.android.chrome",
         "org.mozilla.firefox",

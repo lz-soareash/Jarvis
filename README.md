@@ -1512,6 +1512,28 @@ nunca expõe tokens/segredos.
 resume/deny, cancelamento, API, eventos e integração com o agente); Android
 `:app:testDebugUnitTest` **75/75 verdes** (`RemoteOperationCardTest` 5 novos).
 
+## Estabilização Mobile & Chat (Fase 27.1)
+
+Correções de **causa raiz** sobre a stack das Fases 25–28 (sem redesenho de
+arquitetura, sem segundo Core/agent, sem mover LLM). Cinco defeitos confirmados
+por auditoria e corrigidos com testes de regressão determinísticos:
+
+| # | Bug | Causa raiz | Correção |
+|---|---|---|---|
+| 1 | "Abra o Spotify no meu celular" executava no PC | `detect_intent` só mapeava `mobile_open_app` p/ chrome/firefox; Spotify caía em `_APP_PATTERNS` (PC) e nem constava da allowlist | `intent.py` gera `mobile_open_app` da allowlist de apps (`_MOBILE_OPEN_APP_ALIASES`); `mobile_capabilities.py`/`operations.py`/APK incluem `com.spotify.music` |
+| 2 | "Agora abre o X" (multi-turn) voltava ao PC | continuidade só cobria sites (`_CONTINUATION_SITE_RE`), não apps | `_CONTINUATION_APP_RE`: "agora abre <app allowlisted>" → `mobile_open_app` no MESMO dispositivo (thread de navegação) |
+| 3 | Resultado do móvel virava TIMEOUT pós-SUCCESS | `_pending_commands[command_id]` era registrado **depois** de `await self._send`, então a resposta chegando na janela do envio era descartada | `link.py` registra o comando **antes** do envio e remove em falha de envio |
+| 4 | Chat preso em "pensando…" | `finally { turnLifecycle.forgetAssistant(...) }` no `send()` removia a correlação criada por `runWanTurn` (que retorna imediatamente) antes dos frames WAN chegarem | `ChatViewModel.send()` não esquece mais a correlação; o turno termina em frame terminal (`done`/`error`/`message_result`) ou em `beginConversation` |
+| 5 | Crash `Expected URL scheme 'http'/'https'` em WAN-only | chamadas HTTP usavam a base LAN/`wss://` crua | `HttpOrigin` (puro) normaliza a origem (ws→http, wss→https, host puro, vazio/ inválido→nulo) e `httpBase()` prefere a LAN conectada, senão deriva da WAN |
+
+**Validação**: backend **1039 passed, 1 skipped** (15 novos: `test_intent.py`
+roteamento mobile/PC; `test_fase27_multi_turn_context.py` continuidade de app;
+`test_fase25_mobile_commands.py` allowlist + race do CoreLink); Android
+`:app:testDebugUnitTest` **127/127 verdes** (`HttpOriginTest` 5 novos,
+`TurnLifecycleTest` 2 novos). `assembleDebug`/`assembleRelease` OK.
+Validação física no Galaxy A15: **NOT EXECUTED** (pendente de execução no
+aparelho).
+
 ## Download
 
 Distribuições oficiais publicadas como **GitHub Release**:

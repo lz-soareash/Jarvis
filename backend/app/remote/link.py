@@ -1168,8 +1168,11 @@ class CoreLink:
         if self._manager is None:
             self.stats["commands_dropped"] += 1
             raise LinkStateError("Core Link WAN não está conectado")
-        await self._send(envelope)
 
+        # Fase 27.1 — registra o comando em vôo ANTES do envio: a resposta do
+        # móvel pode chegar durante o `await self._send` (janela do race) e, sem
+        # o registro, `_on_command_result` descartaria o COMMAND_RESULT legítimo
+        # ("SUCCESS" viraria TIMEOUT no polling posterior).
         self._pending_commands[command_id] = {
             "request_id": command_id,
             "device_id": device_id,
@@ -1181,6 +1184,13 @@ class CoreLink:
         }
         self.stats["commands_dispatched"] += 1
         self._bump_pending_commands()
+        try:
+            await self._send(envelope)
+        except Exception:
+            # Falha de envio não deixa comando "fantasma" em vôo.
+            self._pending_commands.pop(command_id, None)
+            self.stats["commands_dropped"] += 1
+            raise
         return self._pending_command_summary(command_id)
 
     def _bump_pending_commands(self) -> None:

@@ -456,6 +456,41 @@ def test_continuation_strips_device_tail(db_session):
     assert "fiap" in url
 
 
+def test_continuation_agora_open_app_spotify(db_session):
+    # Fase 27.1 — "agora abre o spotify" continua no MESMO dispositivo.
+    session = _make_session(db_session)
+    _outcome_payload(db_session, session.id)  # OPEN_APP → thread de navegação
+    ctx = turn_context.load_turn_context(db_session, session.id)
+    match = detect_continuation("agora abre o spotify", ctx)
+    assert match is not None
+    assert match.tool_call.name == "mobile_open_app"
+    assert match.tool_call.arguments["package_name"] == "com.spotify.music"
+    assert match.tool_call.arguments["device"] == "Galaxy A15"
+
+
+def test_continuation_open_app_requires_agora(db_session):
+    session = _make_session(db_session)
+    _outcome_payload(db_session, session.id)
+    ctx = turn_context.load_turn_context(db_session, session.id)
+    assert detect_continuation("abre o spotify", ctx) is None
+
+
+def test_continuation_open_app_requires_browser_thread(db_session):
+    session = _make_session(db_session)
+    turn_context.record_device_outcome(
+        db_session,
+        session.id,
+        device_id="dev-galaxy",
+        device_name="Galaxy A15",
+        capability="BATTERY_STATUS",
+        status="success",
+        transport="lan",
+        summary="bateria",
+    )
+    ctx = turn_context.load_turn_context(db_session, session.id)
+    assert detect_continuation("agora abre o spotify", ctx) is None
+
+
 # ---------------------------------------------------------------------------
 # Parte F — Integração com o fluxo real (build_system_prompt + run_agent)
 # ---------------------------------------------------------------------------

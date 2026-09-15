@@ -185,3 +185,57 @@ class TestIntentDetectionNegative:
     def test_low_confidence_below_threshold(self):
         # Texto ambíguo que não atinge confidence >= 0.85
         assert detect_intent("algo") is None
+
+
+class TestIntentDetectionMobileAppRouting:
+    """Fase 27.1 — app allowlisted com menção ao celular NÃO abre no PC."""
+
+    def test_mobile_spotify_routes_to_mobile_open_app(self):
+        result = detect_intent("abra o spotify no meu celular")
+        assert result is not None
+        assert result.tool_call.name == "mobile_open_app"
+        assert result.tool_call.arguments["package_name"] == "com.spotify.music"
+
+    def test_mobile_spotify_telefone(self):
+        result = detect_intent("abrir o spotify no telefone")
+        assert result is not None
+        assert result.tool_call.name == "mobile_open_app"
+        assert result.tool_call.arguments["package_name"] == "com.spotify.music"
+
+    def test_pc_spotify_stays_desktop(self):
+        # Sem menção ao celular, o comportamento de PC é preservado.
+        result = detect_intent("abra o spotify")
+        assert result is not None
+        assert result.tool_call.name == "open_application"
+        assert result.tool_call.arguments["target"] == "spotify"
+
+    def test_mobile_chrome_routes_to_mobile_open_app(self):
+        result = detect_intent("abra o chrome no meu celular")
+        assert result is not None
+        assert result.tool_call.name == "mobile_open_app"
+        assert result.tool_call.arguments["package_name"] == "com.android.chrome"
+
+    def test_mobile_firefox_routes_to_mobile_open_app(self):
+        result = detect_intent("abre o firefox no meu celular")
+        assert result is not None
+        assert result.tool_call.name == "mobile_open_app"
+        assert result.tool_call.arguments["package_name"] == "org.mozilla.firefox"
+
+    def test_mobile_settings_routes_to_mobile_open_app(self):
+        result = detect_intent("abra as configurações no meu celular")
+        assert result is not None
+        assert result.tool_call.name == "mobile_open_app"
+        assert result.tool_call.arguments["package_name"] == "com.android.settings"
+
+    def test_pc_chrome_stays_desktop(self):
+        result = detect_intent("abra o chrome")
+        assert result is not None
+        assert result.tool_call.name == "open_application"
+        assert result.tool_call.arguments["target"] == "chrome"
+
+    def test_mobile_open_app_beats_pc_confidence(self):
+        # Desempate determinístico: mobile (0.96) > PC (0.95).
+        result = detect_intent("abra o spotify no meu aparelho")
+        assert result is not None
+        assert result.confidence > 0.95
+        assert result.tool_call.name == "mobile_open_app"

@@ -92,6 +92,7 @@ object MobileCapabilities {
     )
 
     val DEFAULT_OPEN_APP_ALLOWLIST: Set<String> = setOf(
+        "com.spotify.music",
         "com.android.settings",
         "com.android.chrome",
         "org.mozilla.firefox",

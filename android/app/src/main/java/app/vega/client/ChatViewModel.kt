@@ -26,6 +26,7 @@ import app.vega.client.model.continuityFrom
 import app.vega.client.mobile.AndroidMobileOps
 import app.vega.client.mobile.MobileCommandExecutor
 import app.vega.client.net.ApiException
+import app.vega.client.net.HttpOrigin
 import app.vega.client.net.VegaHttp
 import app.vega.client.voice.SpeechIn
 import app.vega.client.voice.TtsPlayer
@@ -143,6 +144,27 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private fun isWanOnline() = wan.state == "connected"
     private fun isOnline() = isLanOnline() || isWanOnline()
 
+    /**
+     * Fase 27.1 — base HTTP do Core para os endpoints `/api/...`.
+     *
+     * Prefere a LAN (Core local) quando conectada; em WAN-only deriva a origem
+     * HTTP do endpoint WAN (ws→http, wss→https). Devolve "" quando não há base
+     * válida — evita o crash do OkHttp por URL sem esquema.
+     */
+    private fun httpBase(): String {
+        val lan = HttpOrigin.normalize(_coreUrl.value)
+        if (isLanOnline() && lan != null) return lan
+        return HttpOrigin.fromWan(_wanUrl.value) ?: lan ?: ""
+    }
+
+    private fun httpBaseOrThrow(): String {
+        val base = httpBase()
+        if (base.isBlank()) {
+            throw IllegalStateException("sem endereço HTTP do Core (LAN offline e WAN sem origem http/https)")
+        }
+        return base
+    }
+
     private fun startPolling() {
         viewModelScope.launch {
             while (true) {
@@ -187,7 +209,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         ) return
         viewModelScope.launch {
             try {
-                val j = withContext(Dispatchers.IO) { http.getJson(_coreUrl.value, "/api/vega/state") }
+                val base = httpBase()
+                if (base.isBlank()) return@launch
+                val j = withContext(Dispatchers.IO) { http.getJson(base, "/api/vega/state") }
                 _presence.value = VegaPresence.canonical(j.optString("state"))
             } catch (_: Exception) {
             }
@@ -348,8 +372,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 if (isWanOnline()) runWanTurn(t, assistant.id) else runHttpTurn(t, assistant.id, runEpoch)
             } catch (e: Exception) {
                 failMessage(assistant.id, friendlyError(e))
-            } finally {
-                turnLifecycle.forgetAssistant(assistant.id)
             }
         }
     }
@@ -357,7 +379,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun runHttpTurn(content: String, assistantId: Long, runEpoch: Long) {
         val token = bridge.token ?: throw IllegalStateException("bridge não autenticado")
         setLocalPresence("thinking")
-        http.sendMessageSse(_coreUrl.value, token, _conversationId.value, content)
+        http.sendMessageSse(httpBaseOrThrow(), token, _conversationId.value, content)
             .collect { ev -> handleEvent(ev, assistantId, runEpoch) }
         val msg = _messages.value.find { it.id == assistantId }
         if (msg != null && (msg.status == MessageStatus.SENDING || msg.status == MessageStatus.STREAMING)) {
@@ -431,7 +453,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val content = _messages.value.find { it.id == assistantId }?.content.orEmpty()
         if (content.isBlank()) return
         viewModelScope.launch {
-            tts.play(http.ttsUrl(_coreUrl.value, content))
+            tts.play(http.ttsUrl(httpBaseOrThrow(), content))
         }
     }
 
@@ -449,7 +471,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     // para não criar uma mensagem nova nem deixar a antiga parada.
                     if (awaitingId != null) turnLifecycle.bindResume(resumeRequestId, awaitingId)
                 } else {
-                    withContext(Dispatchers.IO) { http.respondApproval(_coreUrl.value, a.id, approved) }
+                    withContext(Dispatchers.IO) { http.respondApproval(httpBaseOrThrow(), a.id, approved) }
                 }
             } catch (e: Exception) {
                 _banner.value = "falha ao responder: ${friendlyError(e)}"
@@ -494,7 +516,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             // usando a sessão estável do device (nunca quebra o próximo envio).
             try {
                 val s = withContext(Dispatchers.IO) {
-                    http.resetConversation(_coreUrl.value, bridge.token.orEmpty(), bridge.deviceId)
+                    http.resetConversation(httpBaseOrThrow(), bridge.token.orEmpty(), bridge.deviceId)
                 }
                 _conversationId.value = s.id
                 _sessionTitle.value = s.title
@@ -508,7 +530,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun loadSessions() {
         viewModelScope.launch {
             try {
-                _sessions.value = withContext(Dispatchers.IO) { http.listSessions(_coreUrl.value) }
+                _sessions.value = withContext(Dispatchers.IO) { http.listSessions(httpBaseOrThrow()) }
             } catch (e: Exception) {
                 _banner.value = "não foi possível carregar o histórico: ${friendlyError(e)}"
             }
@@ -519,7 +541,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             if (TurnLifecycle.isTurnInFlight(_messages.value)) return@launch
             try {
-                val history = withContext(Dispatchers.IO) { http.fetchHistory(_coreUrl.value, id) }
+                val history = withContext(Dispatchers.IO) { http.fetchHistory(httpBaseOrThrow(), id) }
                 turnLifecycle.beginConversation()
                 _pendingApproval.value = null
                 _conversationId.value = id
@@ -539,7 +561,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             try {
-                _ops.value = withContext(Dispatchers.IO) { http.opsOverview(_coreUrl.value) }
+                _ops.value = withContext(Dispatchers.IO) { http.opsOverview(httpBaseOrThrow()) }
             } catch (e: Exception) {
                 _ops.value = null
                 _banner.value = "Operações indisponíveis: ${friendlyError(e)}"

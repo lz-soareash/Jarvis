@@ -88,6 +88,11 @@ def test_open_app_allowlist_has_default_system_apps():
     assert "com.android.chrome" in DEFAULT_OPEN_APP_ALLOWLIST
 
 
+def test_open_app_allowlist_includes_spotify():
+    # Fase 27.1 — "abra o spotify no meu celular" precisa realmente abrir.
+    assert "com.spotify.music" in DEFAULT_OPEN_APP_ALLOWLIST
+
+
 def test_validate_command_accepts_known_low_risk():
     spec = validate_command("open_url", {"url": "https://example.com"})
     assert spec.name == "OPEN_URL"
@@ -286,6 +291,76 @@ async def test_on_command_result_rejects_wrong_device():
     )
     assert link.stats["commands_dropped"] == 1
     assert link.pending_command_summary("cmd-w")["status"] == "pending"
+
+
+# -- Fase 27.1: race do CoreLink (registro ANTES do envio) --------------------
+
+
+async def test_dispatch_registers_pending_before_send_window():
+    """O comando está registrado ANTES de `_send` — fecha a janela do race."""
+    link = _make_link()
+    _bind_link(link, "dev-1")
+    seen: dict = {}
+
+    async def _send(envelope):
+        seen["pending_at_send"] = "cmd-race" in link._pending_commands  # noqa: SLF001
+
+    link._send = _send  # noqa: SLF001
+    link._manager = SimpleNamespace()
+    summary = await link.dispatch_mobile_command(
+        command_id="cmd-race", device_id="dev-1", capability="DEVICE_INFO", args={}
+    )
+    assert seen["pending_at_send"] is True
+    assert summary["status"] == "pending"
+
+
+async def test_dispatch_reply_arriving_during_send_is_success():
+    """Resposta imediata do móvel durante o envio vira SUCCESS, nunca TIMEOUT."""
+    link = _make_link()
+    _bind_link(link, "dev-1")
+
+    async def _send(envelope):
+        await link._on_command_result(  # noqa: SLF001 — resposta chega no envio
+            build_message(
+                MessageType.COMMAND_RESULT,
+                device_id="dev-1",
+                command_id="cmd-fast",
+                payload={
+                    "command_id": "cmd-fast",
+                    "status": "success",
+                    "result": {"ok": True},
+                },
+            )
+        )
+
+    link._send = _send  # noqa: SLF001
+    link._manager = SimpleNamespace()
+    summary = await link.dispatch_mobile_command(
+        command_id="cmd-fast", device_id="dev-1", capability="DEVICE_INFO", args={}
+    )
+    assert summary["status"] == "success"
+    assert link.stats["commands_dropped"] == 0
+    assert link.stats["commands_timeouts"] == 0
+    # Consultar de novo não rebaixa o resultado para TIMEOUT.
+    assert link.pending_command_summary("cmd-fast")["status"] == "success"
+
+
+async def test_dispatch_send_failure_removes_pending():
+    """Falha de envio não deixa comando fantasma em vôo."""
+    link = _make_link()
+    _bind_link(link, "dev-1")
+
+    async def _send(envelope):
+        raise RuntimeError("relay fora do ar")
+
+    link._send = _send  # noqa: SLF001
+    link._manager = SimpleNamespace()
+    with pytest.raises(RuntimeError):
+        await link.dispatch_mobile_command(
+            command_id="cmd-fail", device_id="dev-1", capability="DEVICE_INFO", args={}
+        )
+    assert "cmd-fail" not in link._pending_commands  # noqa: SLF001
+    assert link.stats["commands_dropped"] == 1
 
 
 async def test_pending_command_sweeps_timeout_lazily():

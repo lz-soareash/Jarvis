@@ -50,10 +50,12 @@ class MobileCapabilitiesTest {
     @Test
     fun defaultAllowlistContainsExpectedPackages() {
         val allowlist = MobileCapabilities.DEFAULT_OPEN_APP_ALLOWLIST
-        assertEquals(3, allowlist.size)
+        assertEquals(4, allowlist.size)
         assertTrue("com.android.settings" in allowlist)
         assertTrue("com.android.chrome" in allowlist)
         assertTrue("org.mozilla.firefox" in allowlist)
+        // Fase 27.1 — Spotify passa a ser roteável para abertura no móvel.
+        assertTrue("com.spotify.music" in allowlist)
     }
 
     @Test

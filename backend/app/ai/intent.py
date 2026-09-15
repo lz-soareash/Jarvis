@@ -28,13 +28,32 @@ class IntentMatch:
 # explícita ao dispositivo ("celular/telefone/aparelho"), para nunca roubar
 # intenções de PC. Confidence 0.96 > PC (0.90-0.95) para desempate ("abra o
 # chrome no meu celular" → mobile_open_app, e não open_application).
+#
+# Fase 27.1 — "abra o Spotify no meu celular" NÃO pode abrir no PC: o padrão
+# mobile_open_app é gerado a partir da allowlist de pacotes conhecidos e só
+# dispara com menção explícita ao dispositivo. O espelho das allowlists vive em
+# `app/remote/mobile_capabilities.py` (Core) e no APK (cliente móvel).
+_MOBILE_OPEN_APP_ALIASES: dict[str, str] = {
+    "spotify": "com.spotify.music",
+    "chrome": "com.android.chrome",
+    "firefox": "org.mozilla.firefox",
+    "settings": "com.android.settings",
+    "configurações": "com.android.settings",
+}
+_MOBILE_OPEN_APP_ALT = "|".join(
+    sorted(_MOBILE_OPEN_APP_ALIASES, key=lambda k: -len(k))
+)
+_MOBILE_OPEN_APP_RE = re.compile(
+    rf"\b(?:abra|abrir|abre)\s+(?:(?:as?|o)\s+)?(?P<app>{_MOBILE_OPEN_APP_ALT})\s+no\s+(?:meu\s+)?(?:celular|telefone|aparelho)\b",
+    re.IGNORECASE,
+)
 _MOBILE_PATTERNS: list[tuple[re.Pattern, str, callable, float]] = [
     (re.compile(r"\b(?:bateria\s+do\s+(?:meu\s+)?(?:celular|telefone|aparelho)|quanto\s+est[áa]\s+(?:a\s+)?bateria\s+do\s+(?:meu\s+)?(?:celular|telefone))\b", re.IGNORECASE), "mobile_battery_status", lambda m: {}, 0.96),
     (re.compile(r"\b(?:informa[çc][õo]es\s+do\s+(?:meu\s+)?(?:celular|telefone|aparelho)|status\s+do\s+(?:meu\s+)?(?:celular|telefone|dispositivo)|como\s+est[áa]\s+o\s+(?:meu\s+)?celular)\b", re.IGNORECASE), "mobile_device_info", lambda m: {}, 0.96),
     (re.compile(r"\b(?:(?:como\s+est[áa]\s+(?:a\s+)?)?rede\s+do\s+(?:meu\s+)?(?:celular|telefone)|wifi\s+do\s+(?:meu\s+)?(?:celular|telefone))\b", re.IGNORECASE), "mobile_network_status", lambda m: {}, 0.96),
     (re.compile(r"\b(?:o\s+que\s+est[áa]\s+tocando\s+no\s+(?:meu\s+)?(?:celular|telefone|aparelho)|m[ií]dia\s+no\s+(?:meu\s+)?(?:celular|telefone))\b", re.IGNORECASE), "mobile_media_status", lambda m: {}, 0.96),
     (re.compile(r"\b(?:abra|abrir|abre)\s+(?:o\s+)?(youtube|google|github|gmail)\s+no\s+(?:meu\s+)?(?:celular|telefone|aparelho)\b", re.IGNORECASE), "mobile_open_url", lambda m: {"url": f"https://{m.group(1)}.com"}, 0.96),
-    (re.compile(r"\b(?:abra|abrir|abre)\s+(?:o\s+)?(chrome|firefox)\s+no\s+(?:meu\s+)?(?:celular|telefone|aparelho)\b", re.IGNORECASE), "mobile_open_app", lambda m: {"package_name": "com.android.chrome" if m.group(1) == "chrome" else "org.mozilla.firefox"}, 0.96),
+    (_MOBILE_OPEN_APP_RE, "mobile_open_app", lambda m: {"package_name": _MOBILE_OPEN_APP_ALIASES[m.group("app").lower()]}, 0.96),
     (re.compile(r"\b(?:fa[çc]a\s+(?:o\s+)?(?:meu\s+)?(?:celular|telefone|aparelho)\s+vibrar|vibre?\s+o\s+(?:meu\s+)?(?:celular|telefone|aparelho))\b", re.IGNORECASE), "mobile_vibrate", lambda m: {"duration_ms": 500}, 0.95),
     (re.compile(r"\b(?:aumente?|diminua?|abaixe?|baixe?)\s+(?:o\s+)?volume\s+do\s+(?:meu\s+)?(?:celular|telefone|aparelho)\b", re.IGNORECASE), "mobile_set_volume", lambda m: {"stream": "music", "level": 65 if "aument" in m.group(0) else 35}, 0.92),
     (re.compile(r"\b(?:aumente?|diminua?|abaixe?)\s+(?:a\s+)?(?:luz|brilho)\s+do\s+(?:meu\s+)?(?:celular|telefone|aparelho)\b", re.IGNORECASE), "mobile_set_brightness", lambda m: {"level": 80 if "aument" in m.group(0) else 40}, 0.9),
@@ -260,6 +279,12 @@ _CONTINUATION_SITE_RE = re.compile(
     r"\b(?P<now>agora\s+)?abre\s+(?:o\s+)?(?P<site>youtube|google|github|gmail)\b",
     re.IGNORECASE,
 )
+# "Agora abre o spotify" — continua abrindo APP allowlisted no MESMO
+# dispositivo (Fase 27.1), em vez de cair no caminho PC (`_APP_PATTERNS`).
+_CONTINUATION_APP_RE = re.compile(
+    rf"\b(?P<now>agora\s+)?abre\s+(?:(?:as?|o)\s+)?(?P<app>{_MOBILE_OPEN_APP_ALT})\b",
+    re.IGNORECASE,
+)
 # Sufixo opcional de dispositivo na consulta ("no meu celular") a remover.
 _DEVICE_TAIL_RE = re.compile(
     r"\s+(?:no|na)\s+(?:meu\s+)?(?:celular|telefone|aparelho)\s*$", re.IGNORECASE
@@ -397,5 +422,17 @@ def detect_continuation(
             ),
             confidence=_CONTINUATION_CONFIDENCE,
         )
+
+    app = _CONTINUATION_APP_RE.search(text)
+    if app and app.group("now"):
+        pkg = _MOBILE_OPEN_APP_ALIASES.get(app.group("app").lower())
+        if pkg and getattr(device, "capability", "") in _BROWSER_CAPABILITIES:
+            return IntentMatch(
+                tool_call=ToolCall(
+                    name="mobile_open_app",
+                    arguments={"package_name": pkg, "device": hint},
+                ),
+                confidence=_CONTINUATION_CONFIDENCE,
+            )
 
     return None

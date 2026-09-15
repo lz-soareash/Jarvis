@@ -83,12 +83,15 @@ _PC_TARGET_ALIASES = frozenset({"pc", "computador", "desktop", "notebook"})
 _MOBILE_TARGET_ALIASES = frozenset({"celular", "telefone", "aparelho", "mobile", "smartphone"})
 
 # Aliases fechados de app → pacote android (OPEN_APP no móvel) e → alias do PC.
+# Espelha `_MOBILE_OPEN_APP_ALIASES` de `app/ai/intent.py` (Fase 27.1).
 APP_ALIAS_TO_PACKAGE: dict[str, str] = {
+    "spotify": "com.spotify.music",
     "chrome": "com.android.chrome",
     "firefox": "org.mozilla.firefox",
     "settings": "com.android.settings",
 }
 PACKAGE_TO_PC_ALIAS: dict[str, str] = {
+    "com.spotify.music": "spotify",
     "com.android.chrome": "chrome",
     "org.mozilla.firefox": "firefox",
     "com.android.settings": "settings",
