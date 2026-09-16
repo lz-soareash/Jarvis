@@ -1,6 +1,7 @@
 """Testes da Fase 7 — Filesystem: controlador (sandbox), ferramentas e permissões."""
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -49,9 +50,14 @@ def test_controller_rejects_escape(client, tmp_path):
     with pytest.raises(fs_module.FileSystemError):
         c.read_file("../outside.txt")
     with pytest.raises(fs_module.FileSystemError):
-        c.read_file("C:/Windows/win.ini")
-    with pytest.raises(fs_module.FileSystemError):
         c.read_file("/etc/passwd")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="normalização de drive letter é comportamento Windows-only")
+def test_controller_rejects_windows_drive_path(client, tmp_path):
+    c = fs_module.FileSystemController(root=tmp_path)
+    with pytest.raises(fs_module.FileSystemError):
+        c.read_file("C:/Windows/win.ini")
 
 
 def test_controller_write_and_read_roundtrip(client, tmp_path):
