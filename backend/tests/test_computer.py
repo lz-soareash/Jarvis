@@ -192,8 +192,10 @@ class _FakeUser32:
 def _patch_user32(monkeypatch):
     fake = _FakeUser32()
     # WinDLL("user32", ...) deve retornar o próprio fake (que tem keybd_event).
+    # `raising=False`: em Linux o atributo ctypes.WinDLL nem existe (só Windows);
+    # o teste força sys.platform=win32 e injeta o grafo WinDLL fabricado.
     monkeypatch.setattr(
-        computer_module.ctypes, "WinDLL", lambda *a, **k: fake
+        computer_module.ctypes, "WinDLL", lambda *a, **k: fake, raising=False
     )
     return fake
 
