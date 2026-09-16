@@ -1,0 +1,33 @@
+name: debug-pytest
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: install deps
+        run: |
+          pip install -r requirements.txt -r backend/requirements-dev.txt
+      - name: pytest probe
+        working-directory: backend
+        run: |
+          set +e
+          python -m pytest -q -p no:cacheprovider --tb=short > pytest-out.txt 2>&1
+          code=$?
+          echo "::error::PYTEST_EXIT=$code"
+          python - <<'EOF'
+          data = open("pytest-out.txt", "rb").read().decode("utf-8", "replace")
+          tail = data[-2000:]
+          print("::error::TAIL<<EOF")
+          print(tail)
+          print("::error::EOF")
+          EOF
+          exit 0
