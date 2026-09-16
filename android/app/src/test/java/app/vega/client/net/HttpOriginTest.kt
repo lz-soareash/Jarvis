@@ -51,4 +51,19 @@ class HttpOriginTest {
         assertNull(HttpOrigin.fromWan(""))
         assertNull(HttpOrigin.fromWan(null))
     }
+
+    @Test
+    fun preservesPortAndLowercasesScheme() {
+        assertEquals("https://core.example.com:8200", HttpOrigin.normalize("WSS://core.example.com:8200/api/remote/ws"))
+        assertEquals("http://192.168.0.10:8100", HttpOrigin.normalize("ws://192.168.0.10:8100"))
+    }
+
+    @Test
+    fun emptyBaseNeverYieldsHttpApiOrigin() {
+        // Fase 27.2 (F9) — base vazia → origem nula (nunca "/api/..." sem origem).
+        assertNull(HttpOrigin.normalize(""))
+        assertNull(HttpOrigin.normalize(null))
+        assertNull(HttpOrigin.fromWan(""))
+        assertNull(HttpOrigin.normalize("://sem-host"))
+    }
 }

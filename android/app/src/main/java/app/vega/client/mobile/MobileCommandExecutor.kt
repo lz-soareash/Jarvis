@@ -5,6 +5,7 @@ import app.vega.client.model.CommandStatus
 import app.vega.client.model.MobileCapabilities
 import app.vega.client.model.MobileCommand
 import app.vega.client.model.MobileCapability
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -25,29 +26,40 @@ import java.util.concurrent.ConcurrentHashMap
  * Segurança:
  * - comando de capability DESCONHECIDA → `unsupported` (nunca roda);
  * - OPEN_APP só abre pacotes da allowlist LOCAL (→ `denied`);
+ * - OPEN_URL recusa esquemas fora de http(s) e credenciais embutidas (→ `denied`);
  * - SET_BRIGHTNESS exige WRITE_SETTINGS concedido (→ `denied`);
  * - ACCESSIBILITY_CONTROL é declarada, mas executável=false (→ `unsupported`).
+ * - Fase 27.2 (F4): comando duplicado EM EXECUÇÃO aguarda o MESMO resultado
+ *   terminal da execução real (uma única execução física; sem CANCELLED fake).
  */
 class MobileCommandExecutor(
     private val ops: MobileOps,
     private val allowlist: Set<String> = MobileCapabilities.DEFAULT_OPEN_APP_ALLOWLIST,
 ) {
-    private val running = ConcurrentHashMap<String, Long>()
+    private val inflight = ConcurrentHashMap<String, CompletableDeferred<CommandResult>>()
     private val historical = ConcurrentHashMap<String, CommandResult>()
     private val maxHistory = 50
 
     suspend fun execute(command: MobileCommand): CommandResult {
         historical[command.commandId]?.let { return it }
         val started = nowIso()
-        if (running.putIfAbsent(command.commandId, System.currentTimeMillis()) != null) {
-            return CommandResult(command.commandId, CommandStatus.CANCELLED.value, null, "comando reentrante ignorado", started, nowIso())
+        val signal = CompletableDeferred<CommandResult>()
+        val existing = inflight.putIfAbsent(command.commandId, signal)
+        if (existing != null) {
+            // F4 — duplicado aguarda o mesmo resultado terminal (idempotência
+            // sem execução dupla e sem CANCELLED artificial).
+            return existing.await()
         }
         return try {
             val result = executeOne(command, started)
             remember(result)
+            signal.complete(result)
             result
+        } catch (e: Throwable) {
+            signal.completeExceptionally(e)
+            throw e
         } finally {
-            running.remove(command.commandId)
+            inflight.remove(command.commandId)
         }
     }
 
@@ -80,6 +92,7 @@ class MobileCommandExecutor(
             val pkg = args.optString("package_name").trim()
             if (pkg !in allowlist) "pacote fora da allowlist local" else null
         }
+        "OPEN_URL" -> UrlAllowlist.validate(args.optString("url"))
         "SET_BRIGHTNESS" -> {
             if (!ops.canWriteSettings()) "WRITE_SETTINGS não concedido no dispositivo" else null
         }

@@ -1,14 +1,24 @@
 name: Build, validate and stage Android APK
 description: |-
-  Compila app-release.apk (assinado com as secrets VEGA_KEYSTORE_* quando
-  presentes; caso contrário com um keystore efêmero self-signed gerado no
-  próprio job — nunca persistido), valida o APK (aapt2 + apksigner) e o copia
-  para o diretório staging informado (relativo à raiz do repositório).
-  Nenhuma chave/password sai do job ou entra no Git.
+  Fase 27.2 (F10/F11): roda os unit tests (testDebugUnitTest+testReleaseUnitTest)
+  e compila app-release.apk. Assinatura oficial via secrets VEGA_KEYSTORE_*;
+  quando `require-official-signing=true` e as secrets estiverem ausentes o job
+  FALHA imediatamente (nunca publica APK com keystore efêmero self-signed —
+  causa raiz do Play Protect). Com `false` (CI/preview) usa keystore efêmero
+  gerado no job e nunca persistido. Valida o APK (aapt2 + apksigner) e o copia
+  para o staging. Nenhuma chave/password sai do job ou entra no Git.
 inputs:
   staging:
     description: "Diretório destino do APK (ex.: releases-staging). Obrigatório."
     required: true
+  require-official-signing:
+    description: "true → falha se as secrets VEGA_KEYSTORE_* não estiverem presentes (release público)."
+    required: false
+    default: "false"
+  run-tests:
+    description: "true → executa os unit tests do Android antes do assembleRelease."
+    required: false
+    default: "true"
 runs:
   using: composite
   steps:
@@ -20,6 +30,16 @@ runs:
           ~/.gradle/wrapper
         key: gradle-${{ runner.os }}-${{ hashFiles('android/app/build.gradle.kts', 'android/gradle/wrapper/gradle-wrapper.properties') }}
 
+    - name: unit tests
+      working-directory: android
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ "${{ inputs.run-tests }}" = "true" ]; then
+          echo "== unit tests (debug + release) =="
+          ./gradlew :app:testDebugUnitTest :app:testReleaseUnitTest
+        fi
+
     - name: build APK
       working-directory: android
       shell: bash
@@ -30,8 +50,11 @@ runs:
         if [ -n "${VEGA_KEYSTORE_BASE64:-}" ]; then
           echo "Assinatura oficial: usando secrets VEGA_KEYSTORE_*."
           ./gradlew :app:assembleRelease
+        elif [ "${{ inputs.require-official-signing }}" = "true" ]; then
+          echo "::error::Assinatura oficial obrigatória para release público — configure as secrets VEGA_KEYSTORE_BASE64, VEGA_KEYSTORE_PASSWORD, VEGA_KEYSTORE_KEY_ALIAS e VEGA_KEYSTORE_KEY_PASSWORD (Fase 27.2 F10)."
+          exit 1
         else
-          echo "Secrets ausentes: gerando keystore efêmero de CI (self-signed VEGA) neste job."
+          echo "Secrets ausentes e release NÃO exige assinatura oficial: gerando keystore efêmero de CI (self-signed VEGA) apenas para este job."
           CI_KEYSTORE_PASS=$(openssl rand -hex 16)
           mkdir -p app/keystore
           keytool -genkeypair -v -keystore app/keystore/ci-release.jks -alias vega-release \

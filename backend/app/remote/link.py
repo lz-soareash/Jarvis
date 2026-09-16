@@ -71,6 +71,9 @@ _LINK_STATS_KEYS = (
     "commands_results",
     "commands_timeouts",
     "commands_dropped",
+    # Fase 27.2 — COMMAND_RESULT que chega DEPOIS do deadline (TIMEOUT terminal):
+    # contabilizado para observabilidade, NUNCA reabre o estado terminal.
+    "commands_late_results",
 )
 
 _BROKER_EVENT_PREFIXES = ("remote.", "device.", "session.", "proactive.")
@@ -177,6 +180,11 @@ class CoreLink:
         # Fase 25 — comandos de dispositivo em vôo/resultados recentes.
         # pending: command_id -> {request_id, device_id, capability, timeout_ms,
         #                        dispatched_ts, deadline_ts}
+        # Fase 27.2 — contrato de concorrência (F6): TODAS as mutações em
+        # `_pending_commands`/`_command_results` são SÍNCRONAS dentro do event
+        # loop single-threaded do asyncio (nenhum `await` entre leitura e
+        # escrita). Portanto NÃO há corrida real e `asyncio.Lock` seria apenas
+        # overhead/deadlock potencial — documentado em vez de adicionado.
         self._pending_commands: dict[str, dict[str, Any]] = {}
         # history: command_id -> resultado sanitizado (não retorna args/erros brutos).
         self._command_results: dict[str, dict[str, Any]] = {}
@@ -1288,6 +1296,12 @@ class CoreLink:
         Identidade confiável: `envelope.device_id` foi rotulado pelo relé (o Core
         nunca confia no `device_id` alegado). O `command_id` correlaciona com o
         comando despachado; resultados desconhecidos são contados e descartados.
+
+        Fase 27.2 (F5) — o sweep de expirados roda ANTES da correlação: um
+        COMMAND_RESULT que chega depois do deadline não encontra o comando em
+        vôo (já vira TIMEOUT terminal no histórico) e é contabilizado como
+        `commands_late_results`. Um SUCCESS tardio NUNCA reabre um TIMEOUT já
+        decidido — o estado terminal é imutável.
         """
         payload = envelope.payload or {}
         command_id = payload.get("command_id") or envelope.command_id
@@ -1295,10 +1309,17 @@ class CoreLink:
         if not command_id:
             self.stats["commands_dropped"] += 1
             return None
+        # F5: expira ANTES de correlacionar — fecha a janela em que um resultado
+        # tardio (após o deadline) poderia ser aceito como sucesso legítimo.
+        self._sweep_expired_commands()
         pending = self._pending_commands.get(command_id)
         bound = self._bound(device_id)
         if bound is None or pending is None or pending["device_id"] != device_id:
-            self.stats["commands_dropped"] += 1
+            if self._command_results.get(command_id, {}).get("status") == "timeout":
+                # Resultado tardio após TIMEOUT terminal: só observabilidade.
+                self.stats["commands_late_results"] += 1
+            else:
+                self.stats["commands_dropped"] += 1
             return None
 
         self._pending_commands.pop(command_id, None)

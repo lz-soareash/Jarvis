@@ -1,12 +1,14 @@
 # JARVIS Core - dependências de runtime
-fastapi>=0.115
-uvicorn[standard]>=0.30
-pydantic>=2.7
-pydantic-settings>=2.4
-SQLAlchemy>=2.0.30
-python-dotenv>=1.0
-google-genai>=1.0
-edge-tts>=7.0
-# Local LLM (Fase 11 ext) — wheels CPU pré-compilados
-# pip install --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu/ llama-cpp-python
-llama-cpp-python>=0.3
+# Fase 27.2 (F12) — pins exatos das versões validadas no ambiente local
+# (pytest: 1039 passed / 1 skipped; core, desktop e android cientes).
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+pydantic==2.13.5
+pydantic-settings==2.15.0
+SQLAlchemy==2.0.52
+python-dotenv==1.2.3
+google-genai==2.20.0
+edge-tts==7.2.8
+# Local LLM (Fase 11 ext) — OPCIONAL; wheels CPU pré-compilados:
+#   pip install --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu/ llama-cpp-python
+# Não instalado no ambiente validado (runtime remoto via google-genai cobre o Core).

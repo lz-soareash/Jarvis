@@ -24,6 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
+from urllib.parse import urlsplit
 
 
 class MobileCommandStatus(str, Enum):
@@ -187,19 +188,60 @@ def get_capability(name: str) -> CapabilitySpec | None:
     return CAPABILITIES.get(name.strip().upper())
 
 
+# Fase 27.2 (F2) — únicos schemes admitidos em OPEN_URL no móvel.
+_URL_SCHEMES_ALLOWED = frozenset({"http", "https"})
+
+
+def validate_http_url(url: str) -> str:
+    """Valida uma URL absoluta para OPEN_URL (fail-fast no Core).
+
+    Regras conservadoras (Fase 27.2):
+    - apenas `http://`/`https://` (qualquer outro scheme é rejeitado:
+      `intent`, `file`, `content`, `javascript`, `tel`, `mailto`, custom…);
+    - URL sem scheme (ex.: `google.com`) é rejeitada;
+    - credenciais embutidas (`user:pass@host`) são rejeitadas;
+    - authority vazia/espacial é rejeitada.
+    Devolve a URL original (sem normalização de host/path). Levanta
+    `MobileCommandError` quando inválida.
+    """
+    if not isinstance(url, str) or not url.strip():
+        raise MobileCommandError("OPEN_URL: url obrigatória e não vazia")
+    raw = url.strip()
+    if any(ch.isspace() or ord(ch) < 0x20 for ch in raw):
+        raise MobileCommandError("OPEN_URL: url com caracteres inválidos")
+    split = urlsplit(raw)
+    scheme = (split.scheme or "").strip().lower()
+    if scheme not in _URL_SCHEMES_ALLOWED:
+        raise MobileCommandError(
+            "OPEN_URL: apenas http(s) são permitidos"
+            f" (scheme: {split.scheme or 'ausente'})"
+        )
+    if not split.netloc or split.netloc.strip() != split.netloc:
+        raise MobileCommandError("OPEN_URL: host ausente ou inválido")
+    if split.username is not None:
+        raise MobileCommandError("OPEN_URL: credenciais embutidas não são permitidas")
+    return raw
+
+
 def validate_command(capability: str, args: dict[str, Any] | None) -> CapabilitySpec:
     """Valida capability + args no Core (fail-fast). Levanta MobileCommandError.
 
     A capability DEVE existir no registry; os args são validados pelo schema
     da spec (tipos exatos, obrigatórios, sem extras). O móvel faz a validação
     LOCAL (allowlist/permissões) no momento da execução — duas camadas.
+
+    Fase 27.2 (F2): `OPEN_URL` passa ainda por `validate_http_url` — o Core
+    rejeita schemes perigosos antes de despachar; o executor Android repete a
+    validação como segunda defesa.
     """
     spec = get_capability(capability)
     if spec is None:
         raise MobileCommandError(
             f"capability desconhecida: {capability!r} (registry VEGA Mobile Control)"
         )
-    spec.validate_args(args)
+    validated = spec.validate_args(args)
+    if spec.name == "OPEN_URL" and "url" in validated:
+        validate_http_url(validated["url"])
     return spec
 
 

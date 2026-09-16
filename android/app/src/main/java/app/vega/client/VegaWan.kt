@@ -12,6 +12,8 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import app.vega.client.security.WanCiphers
+import app.vega.client.security.WanSecretStore
 import org.json.JSONObject
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -26,13 +28,71 @@ import kotlin.random.Random
  * estados offline/connecting/connected/reconnecting/authentication_error/
  * core_unavailable. O relé só transporta; TODA autoridade continua no Core.
  *
- * O token NUNCA vai em URL e NUNCA é logado. Credenciais ficam em
- * SharedPreferences ("vega_wan"). Implementação: OkHttp WebSocket.
+ * O token NUNCA vai em URL e NUNCA é logado. Credenciais (token/device id)
+ * ficam criptografadas (AES/GCM via Android Keystore) no SharedPreferences
+ * ("vega_wan") — Fase 27.2 (F1). Implementação: OkHttp WebSocket.
  */
 class VegaWan(
     private val context: Context,
     private val scope: CoroutineScope,
 ) {
+    /**
+     * Fase 27.2 (F1) — credenciais nunca ficam em claro no SharedPreferences
+     * ("vega_wan"). O token e o device id são gravados sob as chaves
+     * `enc.wan_token`/`enc.wan_device_id` como blobs AES/GCM com a chave do
+     * Android Keystore ([WanSecretStore]). Um valor legado em claro é MIGRADO
+     * na primeira leitura (lê → criptografa → apaga o plaintext).
+     *
+     * Falha do Keystore na LEITURA → retorna nulo (nunca decripta parcial);
+     * falha na GRAVAÇÃO → preserva o legado com aviso (modo degradado, somente
+     * em device sem AndroidKeystore — raro).
+     */
+    private fun readCredential(prefKey: String): String? {
+        val encryptedKey = "enc.$prefKey"
+        if (!prefs.getString(encryptedKey, null).isNullOrBlank()) {
+            return try {
+                WanCiphers.decrypt(WanSecretStore.key(context), prefs.getString(encryptedKey, null)!!)
+            } catch (e: Throwable) {
+                Log.w(logTag, "falha ao decriptar $prefKey: ${e.message}")
+                null
+            }
+        }
+        val legacy = prefs.getString(prefKey, null)
+        if (legacy.isNullOrBlank()) return null
+        if (WanSecretStore.isAvailable()) {
+            try {
+                writeSecretBlob(encryptedKey, legacy)
+            } catch (e: Throwable) {
+                Log.w(logTag, "migração de $prefKey falhou; legado preservado")
+                return legacy
+            }
+        }
+        return legacy
+    }
+
+    private fun writeCredential(prefKey: String, value: String?) {
+        val encryptedKey = "enc.$prefKey"
+        if (value.isNullOrBlank()) {
+            prefs.edit().remove(prefKey).remove(encryptedKey).apply()
+            return
+        }
+        if (WanSecretStore.isAvailable()) {
+            try {
+                writeSecretBlob(encryptedKey, value)
+                return
+            } catch (e: Throwable) {
+                Log.w(logTag, "keystore indisponível ao gravar $prefKey; modo degradado")
+            }
+        }
+        // Modo degradado (sem AndroidKeystore): grava legado em claro com aviso.
+        prefs.edit().putString(prefKey, value).remove(encryptedKey).apply()
+    }
+
+    private fun writeSecretBlob(encryptedKey: String, value: String) {
+        val blob = WanCiphers.encrypt(WanSecretStore.key(context), value)
+        prefs.edit().putString(encryptedKey, blob).remove(encryptedKey.removePrefix("enc.")).apply()
+    }
+
     private val prefs = context.getSharedPreferences("vega_wan", Context.MODE_PRIVATE)
     private val logTag = "vega-wan"
 
@@ -44,9 +104,9 @@ class VegaWan(
         private set
 
     val deviceId: String?
-        get() = prefs.getString("wan_device_id", null)
+        get() = readCredential("wan_device_id")
     val hasToken: Boolean
-        get() = !prefs.getString("wan_token", null).isNullOrBlank()
+        get() = !readCredential("wan_token").isNullOrBlank()
 
     var onTurnFrame: ((type: String, payload: JSONObject, requestId: String) -> Unit)? = null
     var onMobileCommand: ((payload: JSONObject) -> Unit)? = null
@@ -83,7 +143,7 @@ class VegaWan(
 
     /** Pré-configura credenciais antes de conectar (ex.: tela de pareamento). */
     fun configure(token: String?, pairingCode: String?, deviceId: String?) {
-        this.token = token ?: prefs.getString("wan_token", null)
+        this.token = token ?: readCredential("wan_token")
         this.pairingCode = pairingCode?.takeIf { it.isNotBlank() }
         if (deviceId != null) this.lastDeviceId = deviceId
     }
@@ -102,8 +162,8 @@ class VegaWan(
         val target = v.normalized
         cancelTimers()
         lastUrl = target
-        token = token ?: prefs.getString("wan_token", null)
-        if (lastDeviceId == null) lastDeviceId = prefs.getString("wan_device_id", null)
+        token = token ?: readCredential("wan_token")
+        if (lastDeviceId == null) lastDeviceId = readCredential("wan_device_id")
         intentionalClose = false
         revokedTerminal = false
         reauthAttempts = 0
@@ -394,14 +454,18 @@ put("capabilities", deviceCapabilities())
             .put("content", content)
             .put("stream", opts.optBoolean("stream", false))
             .put("tools", !opts.optBoolean("tools", false))
-        sendEnvelope("message", payload, requestId)
+        // Fase 27.2 (F3) — falha real de envio propaga: `send()` do ChatViewModel
+        // encerra a mensagem com erro visível e o requestId nunca vira órfão
+        // (o turno não é correlacionado sem envio confirmado).
+        val sent = sendEnvelope("message", payload, requestId)
+        if (!sent) throw IllegalStateException("WAN não transmitiu a mensagem (socket fechado)")
         return requestId
     }
 
     fun sendComputerTask(content: String, autonomy: String? = null): String {
         if (state != "connected") throw IllegalStateException("sem conexão WAN autenticada")
         val requestId = UUID.randomUUID().toString()
-        sendEnvelope(
+        val sent = sendEnvelope(
             "computer_task",
             JSONObject()
                 .put("target_device_id", lastDeviceId)
@@ -409,17 +473,19 @@ put("capabilities", deviceCapabilities())
                 .apply { if (autonomy != null) put("autonomy", autonomy) },
             requestId,
         )
+        if (!sent) throw IllegalStateException("WAN não transmitiu a tarefa (socket fechado)")
         return requestId
     }
 
     fun sendApproval(approvalId: String, approved: Boolean): String {
         if (state != "connected") throw IllegalStateException("sem conexão WAN autenticada")
         val requestId = UUID.randomUUID().toString()
-        sendEnvelope(
+        val sent = sendEnvelope(
             "approval_respond",
             JSONObject().put("target_device_id", lastDeviceId).put("approval_id", approvalId).put("approved", approved),
             requestId,
         )
+        if (!sent) throw IllegalStateException("WAN não transmitiu a decisão (socket fechado)")
         return requestId
     }
 
@@ -468,16 +534,25 @@ put("capabilities", deviceCapabilities())
     }
 
     private fun persist(tok: String) {
+        // F1 — token e device id via Keystore; sessão/conversa são ids de sessão
+        // (não credenciais) e seguem no SharedPreferences como antes.
+        writeCredential("wan_token", tok)
+        writeCredential("wan_device_id", lastDeviceId)
         prefs.edit()
-            .putString("wan_token", tok)
-            .putString("wan_device_id", lastDeviceId)
             .putString("wan_session_id", sessionId)
             .putString("wan_conversation_id", conversationId)
             .apply()
     }
 
-    private fun sendEnvelope(type: String, payload: JSONObject, requestId: String? = null) {
-        val socket = ws ?: return
+    /**
+     * Envia um envelope WAN. Fase 27.2 (F3): devolve TRUE apenas quando o
+     * OkHttp `WebSocket.send` realmente enfileirou a mensagem (retorna false
+     * em socket fechado/falho, sem lançar). Missões críticas (message/
+     * computer_task/approval) checam o retorno e propagam; heartbeat/auth/
+     * command_result seguem best-effort (o protocolo já cobre retry/timeout).
+     */
+    private fun sendEnvelope(type: String, payload: JSONObject, requestId: String? = null): Boolean {
+        val socket = ws ?: return false
         val env = JSONObject()
             .put("version", 1)
             .put("type", type)
@@ -486,10 +561,11 @@ put("capabilities", deviceCapabilities())
             .put("device_id", lastDeviceId ?: JSONObject.NULL)
             .put("timestamp", java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", java.util.Locale.US).format(java.util.Date()))
             .put("payload", payload)
-        try {
+        return try {
             socket.send(env.toString())
         } catch (e: Exception) {
             Log.w(logTag, "falha ao enviar: ${e.message}")
+            false
         }
     }
 

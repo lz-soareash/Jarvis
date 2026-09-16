@@ -316,18 +316,32 @@ def load_turn_context(db: OrmSession, session_id: str) -> TurnContext:
 
 
 def render_context_blocks(ctx: TurnContext) -> list[str]:
-    """Blocos sistêmicos injetados no prompt (sem ids, tokens ou segredos)."""
+    """Blocos sistêmicos injetados no prompt (sem ids, tokens ou segredos).
+
+    Fase 27.2 (F7) — continuidade só quando a ÚLTIMA ação do dispositivo foi
+    `success`. Se o último resultado foi `failed`/`timeout`/`denied`/
+    `unsupported`, NÃO é assumido sucesso: o bloco deixa explícito que o
+    contexto de dispositivo não está ativo (histórico preservado, sem claim).
+    """
     blocks: list[str] = []
 
     device = ctx.device
     if device is not None and device.name:
-        blocks.append(
-            "[Continuidade de dispositivo]\n"
-            f"Você está operando no celular '{device.name}'. "
-            f"Última ação executada nele: {device.label} ({device.status})."
-        )
-        if device.summary:
-            blocks.append(f"Resumo da última ação: {device.summary}.")
+        if device.status == "success":
+            blocks.append(
+                "[Continuidade de dispositivo]\n"
+                f"Você está operando no celular '{device.name}'. "
+                f"Última ação executada nele: {device.label} (sucesso)."
+            )
+            if device.summary:
+                blocks.append(f"Resumo da última ação: {device.summary}.")
+        else:
+            blocks.append(
+                "[Dispositivo]\n"
+                f"A última ação no celular '{device.name}' ({device.label}) "
+                f"não foi concluída com sucesso (status: {device.status}). "
+                "Não assuma continuidade de dispositivo."
+            )
 
     task = ctx.active_task
     if task is not None:

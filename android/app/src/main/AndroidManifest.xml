@@ -23,6 +23,12 @@
         </intent>
     </queries>
 
+    <!-- Fase 27.2 (F13): usesCleartextTraffic="true" libera cleartext para a LAN
+         do Core (http://192.168.x.x:8100); o WAN sempre usa TLS (wss/https). Um
+         NetworkSecurityConfig com domains não resolveria: a LAN é um IP arbitrário
+         do usuário, não listável como domain. A defesa em profundidade fica no
+         cliente: WanEndpoint.validate só aceita wss:// em produção e http(s)
+         explícito na LAN. -->
     <application
         android:name=".VegaApplication"
         android:label="VEGA"

@@ -125,6 +125,38 @@ def test_validate_command_normalizes_strip_strings():
     assert spec.name == "OPEN_URL"
 
 
+# -- Fase 27.2 (F2): OPEN_URL — validação de scheme http(s) no Core -----------
+
+
+@pytest.mark.parametrize(
+    "good",
+    ["https://google.com", "http://example.com", "https://www.google.com/search?q=fiap"],
+)
+def test_open_url_accepts_http_https(good):
+    validate_command("OPEN_URL", {"url": good})
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "intent://host/#Intent;scheme=https;end",
+        "file:///etc/hosts",
+        "content://com.foo.bar/data",
+        "javascript:alert(1)",
+        "tel:+5511999999999",
+        "mailto:you@example.com",
+        "myapp://open",
+        "ftp://host/arquivo",
+        "google.com",
+        "https://user:pass@host.example.com/x",
+        "http://usuario:senha@192.168.0.10/",
+    ],
+)
+def test_open_url_rejects_unsafe_schemes_and_credentials(bad):
+    with pytest.raises(MobileCommandError):
+        validate_command("OPEN_URL", {"url": bad})
+
+
 def test_validate_command_accepts_empty_args_for_stateless():
     spec = validate_command("DEVICE_INFO", {})
     assert spec.name == "DEVICE_INFO"
@@ -416,6 +448,81 @@ async def test_command_timeout_remembered_in_history():
     assert summary["status"] == "timeout"
     historical = link._command_results["cmd-hist"]  # noqa: SLF001
     assert historical["status"] == "timeout"
+
+
+# -- Fase 27.2 (F5): resultado tardio nunca reabre TIMEOUT terminal ------------
+
+
+async def test_late_success_after_timeout_never_reopens_terminal():
+    """F5 — SUCCESS que chega DEPOIS do TIMEOUT já decidido é contabilizado
+    como `commands_late_results` e NÃO reabre o estado terminal."""
+    link = _make_link()
+    _bind_link(link, "dev-1")
+    await _send_spy(link)
+    await link.dispatch_mobile_command(
+        command_id="cmd-late", device_id="dev-1", capability="DEVICE_INFO", args={}, timeout_ms=1000
+    )
+    link._pending_commands["cmd-late"]["deadline_ts"] -= 500  # noqa: SLF001 — expira
+    assert link.pending_command_summary("cmd-late")["status"] == "timeout"
+    await link._on_command_result(  # noqa: SLF001
+        build_message(
+            MessageType.COMMAND_RESULT,
+            device_id="dev-1",
+            command_id="cmd-late",
+            payload={"command_id": "cmd-late", "status": "success", "result": {"ok": True}},
+        )
+    )
+    assert link._command_results["cmd-late"]["status"] == "timeout"  # noqa: SLF001
+    assert link.pending_command_summary("cmd-late")["status"] == "timeout"
+    assert link.stats["commands_late_results"] == 1
+    assert link.stats["commands_results"] == 0
+
+
+async def test_late_result_before_any_sweep_is_locked_by_deadline():
+    """F5 — resultado tardio que chega após o deadline MAS antes do primeiro
+    sweep/poll também é rejeitado: o sweep roda no início de `_on_command_result`."""
+    link = _make_link()
+    _bind_link(link, "dev-1")
+    await _send_spy(link)
+    await link.dispatch_mobile_command(
+        command_id="cmd-race-late", device_id="dev-1", capability="DEVICE_INFO", args={}, timeout_ms=1000
+    )
+    link._pending_commands["cmd-race-late"]["deadline_ts"] -= 500  # noqa: SLF001 — expira
+    await link._on_command_result(  # noqa: SLF001
+        build_message(
+            MessageType.COMMAND_RESULT,
+            device_id="dev-1",
+            command_id="cmd-race-late",
+            payload={"command_id": "cmd-race-late", "status": "success"},
+        )
+    )
+    assert "cmd-race-late" not in link._pending_commands  # noqa: SLF001
+    assert link._command_results["cmd-race-late"]["status"] == "timeout"  # noqa: SLF001
+    assert link.stats["commands_late_results"] == 1
+    assert link.stats["commands_results"] == 0
+
+
+async def test_duplicate_command_result_is_idempotent():
+    """F5/F6 — COMMAND_RESULT duplicado (reenvio) não corrompe estado nem reexecuta."""
+    link = _make_link()
+    _bind_link(link, "dev-1")
+    await _send_spy(link)
+    await link.dispatch_mobile_command(
+        command_id="cmd-dup2", device_id="dev-1", capability="DEVICE_INFO", args={}
+    )
+    reply = build_message(
+        MessageType.COMMAND_RESULT,
+        device_id="dev-1",
+        command_id="cmd-dup2",
+        payload={"command_id": "cmd-dup2", "status": "success", "result": {"ok": True}},
+    )
+    await link._on_command_result(reply)  # noqa: SLF001
+    assert link.pending_command_summary("cmd-dup2")["status"] == "success"
+    await link._on_command_result(reply)  # noqa: SLF001 — duplicata tardia
+    assert link.pending_command_summary("cmd-dup2")["status"] == "success"
+    assert link.stats["commands_results"] == 1
+    assert link.stats["commands_late_results"] == 0
+    assert link.stats["commands_dropped"] == 1
 
 
 # ---------------------------------------------------------------------------

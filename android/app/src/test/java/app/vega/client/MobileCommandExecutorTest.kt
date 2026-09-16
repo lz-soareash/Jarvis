@@ -13,6 +13,7 @@ import org.junit.Test
 class FakeMobileOps : MobileOps {
     var writable = true
     val openedApps = mutableListOf<String>()
+    val openedUrls = mutableListOf<String>()
     var vibratedMs: Int? = null
     var volumeLevel: Int? = null
     var volumeStream: String? = null
@@ -30,7 +31,10 @@ class FakeMobileOps : MobileOps {
 
     override suspend fun batteryStatus(): JSONObject = JSONObject().put("level_percent", 80).put("charging", true)
     override suspend fun networkStatus(): JSONObject = JSONObject().put("network", "wifi").put("online", true)
-    override suspend fun openUrl(url: String, external: Boolean): JSONObject = JSONObject().put("opened", true)
+    override suspend fun openUrl(url: String, external: Boolean): JSONObject {
+        openedUrls.add(url)
+        return JSONObject().put("opened", true)
+    }
     override suspend fun vibrate(durationMs: Int): JSONObject {
         vibratedMs = durationMs
         return JSONObject().put("duration_ms", durationMs)
@@ -149,7 +153,9 @@ class MobileCommandExecutorTest {
     }
 
     @Test
-    fun duplicateCommandIdWhileRunningIsCancelled() = runBlocking {
+    fun duplicateCommandIdWhileRunningSharesSingleResult() = runBlocking {
+        // Fase 27.2 (F4) — duplicado NÃO é CANCELLED fake: aguarda o MESMO
+        // resultado terminal da execução real (uma única execução física).
         val out = FakeMobileOps()
         out.suspendDurationMs = 300L
         val ex = MobileCommandExecutor(out)
@@ -161,7 +167,41 @@ class MobileCommandExecutorTest {
         first.join()
         second.join()
         assertEquals("success", firstStatus[0])
-        assertEquals("cancelled", secondStatus[0])
+        assertEquals("success", secondStatus[0])
+        assertEquals(1, out.deviceInfoCalls)
+    }
+
+    @Test
+    fun openUrlAcceptsHttpAndHttpsScheme() = runBlocking {
+        val out = FakeMobileOps()
+        val r = MobileCommandExecutor(out).execute(
+            cmd("OPEN_URL", JSONObject().put("url", "https://www.google.com/search?q=fiap"))
+        )
+        assertEquals("success", r.status)
+        assertEquals(listOf("https://www.google.com/search?q=fiap"), out.openedUrls)
+    }
+
+    @Test
+    fun openUrlRejectsUnsafeSchemesAndCredentials() = runBlocking {
+        val out = FakeMobileOps()
+        val ex = MobileCommandExecutor(out)
+        val bad = listOf(
+            "intent://evil/#Intent;scheme=https;end",
+            "file:///etc/hosts",
+            "content://com.foo/data",
+            "javascript:alert(1)",
+            "tel:+5511999999999",
+            "mailto:you@example.com",
+            "myapp://open",
+            "google.com",
+            "https://user:pass@host.example.com/x",
+        )
+        for (url in bad) {
+            val r = ex.execute(cmd("OPEN_URL", JSONObject().put("url", url)))
+            assertEquals("denied", r.status)
+            assertNotNull(r.error)
+        }
+        assertTrue(out.openedUrls.isEmpty())
     }
 
     @Test

@@ -358,6 +358,67 @@ def test_render_blocks_empty_without_context(db_session):
     assert turn_context.system_context_block(db_session, session.id) == []
 
 
+def test_render_failed_outcome_does_not_claim_continuity(db_session):
+    """Fase 27.2 (F7) — resultado NÃO-sokcess não é assumido como sucesso."""
+    session = _make_session(db_session)
+    turn_context.record_device_outcome(
+        db_session,
+        session.id,
+        device_id="dev-galaxy",
+        device_name="Galaxy A15",
+        capability="OPEN_URL",
+        status="timeout",
+        transport="lan",
+        summary="abertura de URL não respondeu a tempo (TIMEOUT).",
+    )
+    blocks = turn_context.system_context_block(db_session, session.id)
+    joined = "\n".join(blocks)
+    assert "[Continuidade de dispositivo]" not in joined
+    assert "[Dispositivo]" in joined
+    assert "Galaxy A15" in joined
+    assert "não foi concluída com sucesso" in joined
+    assert "Não assuma continuidade" in joined
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["failed", "timeout", "denied", "unsupported", "cancelled"],
+)
+def test_render_non_success_status_never_reuses_continuity_block(db_session, status):
+    session = _make_session(db_session)
+    turn_context.record_device_outcome(
+        db_session,
+        session.id,
+        device_id="dev-galaxy",
+        device_name="Galaxy A15",
+        capability="OPEN_APP",
+        status=status,
+        transport="lan",
+        summary="resumo",
+    )
+    joined = "\n".join(turn_context.system_context_block(db_session, session.id))
+    assert "[Continuidade de dispositivo]" not in joined
+
+
+def test_render_success_keeps_continuity_block(db_session):
+    session = _make_session(db_session)
+    _outcome_payload(db_session, session.id)  # status=success
+    joined = "\n".join(turn_context.system_context_block(db_session, session.id))
+    assert "[Continuidade de dispositivo]" in joined
+    assert "Galaxy A15" in joined
+
+
+def test_render_blocks_never_expose_device_id_or_tokens(db_session):
+    """Fase 27.2 (F8) — device_id/token/credential jamais chegam ao prompt."""
+    session = _make_session(db_session)
+    _outcome_payload(db_session, session.id)
+    joined = "\n".join(turn_context.system_context_block(db_session, session.id)).lower()
+    assert "dev-galaxy" not in joined
+    assert "token" not in joined
+    assert "credential" not in joined
+    assert "bearer" not in joined
+
+
 # ---------------------------------------------------------------------------
 # Parte E — Continuidade determinística
 # ---------------------------------------------------------------------------

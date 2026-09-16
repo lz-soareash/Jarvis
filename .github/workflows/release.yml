@@ -9,6 +9,32 @@ permissions:
   contents: write
 
 jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: pytest
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          # conftest.py força ENV=test e isola banco/LLM/rede antes de importar o app.
+          python -m pytest -q -p no:cacheprovider --tb=short
+
   windows:
     runs-on: windows-latest
     steps:
@@ -49,6 +75,8 @@ jobs:
       - uses: ./.github/actions/build-android
         with:
           staging: release-artifacts
+          require-official-signing: 'true'
+          run-tests: 'true'
 
       - name: upload
         uses: actions/upload-artifact@v4
@@ -58,7 +86,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [windows, android]
+    needs: [windows, android, backend-tests]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -117,11 +145,13 @@ jobs:
             - Device Bridge (Registro/Pareamento/Heartbeat) com `device_id` emitido pelo servidor
             - Identidade e presença VEGA, Computer Action/Use foundation e Proactive (planejado/limitado)
             - Distribuição automatizada e reproduzível via GitHub Actions (Fase 22)
+            - Fase 27.2: credenciais WAN criptografadas (AES/GCM + Android Keystore), allowlist de URL no executor, idempotência de comandos móveis duplicados e gates de qualidade no pipeline
 
             ### Notas de assinatura
 
             - Artefatos Windows **não** são assinados com Authenticode (sem certificado de code-signing); verifique via `SHA256SUMS.txt`.
-            - APK Android assinado (v2). Se as secrets `VEGA_KEYSTORE_*` não estiverem configuradas, a assinatura usa um **keystore efêmero self-signed gerado no CI** (certificado VEGA/CI); para chave oficial estável, configure `VEGA_KEYSTORE_BASE64`/`VEGA_KEYSTORE_PASSWORD`/`VEGA_KEYSTORE_KEY_ALIAS`/`VEGA_KEYSTORE_KEY_PASSWORD` como GitHub Secrets e reexecute a release.
+            - APK Android assinado (v2). O release **exige** as secrets `VEGA_KEYSTORE_*` (Fase 27.2 F10): sem elas o job `android` falha e o Release não é criado — nunca publicamos APK self-signed de CI no GitHub Release. Configure `VEGA_KEYSTORE_BASE64`/`VEGA_KEYSTORE_PASSWORD`/`VEGA_KEYSTORE_KEY_ALIAS`/`VEGA_KEYSTORE_KEY_PASSWORD` como GitHub Secrets.
+            - Gate de qualidade (Fase 27.2 F11): antes de publicar, o pipeline roda `pytest` (backend) e `testDebugUnitTest`/`testReleaseUnitTest` (Android).
           files: |
             release-artifacts/merged/VEGA-*.apk
             release-artifacts/merged/VEGA-*.exe
