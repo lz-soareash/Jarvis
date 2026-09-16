@@ -1,0 +1,5 @@
+# JARVIS Core - dependências de TESTE (dev) — Fase 27.2 (F11)
+# Versões validadas no ambiente local (pytest: 1064 passed / 1 skipped).
+pytest==9.1.1
+pytest-asyncio==1.4.0
+httpx==0.28.1
