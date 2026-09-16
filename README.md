@@ -1542,21 +1542,21 @@ Distribuições oficiais publicadas como **GitHub Release**:
 
 ### Windows
 
-- [`VEGA-0.25.0-win-x64.exe`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.25.0) —
+- [`VEGA-0.25.1-win-x64.exe`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.25.1) —
   instalador (NSIS, 64 bits)
-- [`VEGA-0.25.0-win-x64-portable.exe`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.25.0) —
+- [`VEGA-0.25.1-win-x64-portable.exe`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.25.1) —
   versão portátil (executa sem instalação)
-- [`VEGA-0.25.0-win-x64-portable.zip`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.25.0) —
+- [`VEGA-0.25.1-win-x64-portable.zip`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.25.1) —
   pasta portátil compactada
 
 ### Android
 
-- [`VEGA-0.25.0-android.apk`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.25.0) —
+- [`VEGA-0.25.1-android.apk`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.25.1) —
   aplicativo Android (APK assinado, v2)
 
 ### Checksums
 
-- [`SHA256SUMS.txt`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.25.0) — verificação dos
+- [`SHA256SUMS.txt`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.25.1) — verificação dos
   downloads. Ex.: baixe o arquivo junto e rode no diretório dos downloads:
   `sha256sum -c SHA256SUMS.txt`.
 
