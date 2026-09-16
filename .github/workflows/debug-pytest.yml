@@ -1,6 +1,8 @@
 name: debug-pytest
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
