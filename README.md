@@ -1531,8 +1531,11 @@ roteamento mobile/PC; `test_fase27_multi_turn_context.py` continuidade de app;
 `test_fase25_mobile_commands.py` allowlist + race do CoreLink); Android
 `:app:testDebugUnitTest` **127/127 verdes** (`HttpOriginTest` 5 novos,
 `TurnLifecycleTest` 2 novos). `assembleDebug`/`assembleRelease` OK.
-Validação física no Galaxy A15: **NOT EXECUTED** (pendente de execução no
-aparelho).
+Validação física no Galaxy A15: **EXECUTED** (2026-09-17, APK release v0.25.2) —
+abrir Spotify/Chrome no aparelho, "agora pesquisa FIAP" (`web_search`) e
+"abre o Spotify no computador" (`open_application` no PC) confirmados nos logs
+do Core; o chat sai de "pensando…" e o Send reabilita. Detalhes e o defeito de
+continuidade de sessão observado em Fase 27.2.1.
 
 ## Hardening Final — Credenciais WAN fail-closed (Fase 27.2.1)
 
@@ -1568,8 +1571,33 @@ decriptação corrompida             → nulo (nunca segredo parcial)
 
 **Validação**: Android `:app:testDebugUnitTest`/`:app:testReleaseUnitTest`
 verdes (10 testes novos de `WanCredentialStoreTest`) e `assembleDebug`/
-`assembleRelease` OK; suíte Backend e Desktop sem drift. Teste físico no
-Galaxy A15: **NOT EXECUTED** (pendente de execução pelo proprietário).
+`assembleRelease` OK; suíte Backend e Desktop sem drift.
+
+**Teste físico no Galaxy A15: EXECUTED** (2026-09-17, APK release v0.25.2, Core
+`0.25.3` real; transporte LAN nos itens funcionais + WAN via relé no item 1).
+Os 7 itens da lista foram executados com evidência em logs do Core/relé e na UI:
+
+| Item | Resultado | Evidência |
+|---|---|---|
+| Conectar WAN | OK | relé local e público `mobiles[].device_id=38f825de…`, `auth_requests==auth_results`, UI "WAN ativo" |
+| Abrir Spotify no celular | OK | `mCurrentFocus=com.spotify.music/.MainActivity`; Core `mobile_open_app (conf=0.96)` + `allowed=True` |
+| Abrir Chrome no celular | OK | `mCurrentFocus=com.android.chrome/.MainActivity`; Core `mobile_open_app` + `allowed=True` |
+| "agora pesquisa FIAP" | OK | Core `web_search` (DuckDuckGo HTTP 202) + síntese Gemini; resposta exibida no chat |
+| "abre o Spotify no computador" | OK | Core `open_application (conf=0.95)` → `jarvis.computer: App aberto via alias: spotify -> Spotify`, `allowed=True`; Spotify já em execução (sem PID novo) |
+| Chat não preso em "pensando…" | OK | presença `ociosa` após cada turn |
+| Send reabilitado após conclusão | OK | campo vazio + `Enviar` disponível |
+
+Observações: (a) a WAN via túnel `trycloudflare` free é instável — hiccup de DNS
+do hostname derruba o stream no meio da turn e a conexão pode cair ao fim
+(relé passou a `mobile_count:0`); (b) o app não auto-conecta a WAN no boot
+(exige "Conectar WAN"); (c) **defeito observado (continuidade de sessão)**:
+mensagens de seguimento em uma mesma sessão foram rejeitadas pelo Core com
+`sessão de conversa não disponível para continuação`
+(`backend/app/remote/message.py` → `resolve_conversation`) — reproduzido 3× na
+mesma sessão; `ChatViewModel.kt:422` define `_conversationId` a partir do
+`sessionId` do evento `done` e o reenvia como `session_id`, e o Core o recusa
+(sessão inexistente ou sem device dono confiável). Contorno observado: "Nova
+conversa" (`resetConversation`) faz a turn imediatamente seguinte ser aceita.
 
 ## Download
 
@@ -1795,7 +1823,8 @@ móveis por **tools `mobile_*`** estruturadas (`Agent → mobile_command → WAN
 inbox LAN no Core (`commands/poll|result`) + polling no `VegaBridge`; intentos pt-BR de
 assistente pessoal; **cards `MobileCommandCard`** no chat (output JSON estruturado) com
 acessibilidade e **ações rápidas**; backend **966 passed, 1 skipped** e Android **61/61 testes
-JUnit**; validação em campo no Galaxy A15 pendente) ·
+JUnit**; validação em campo no Galaxy A15 **EXECUTED** (v0.25.2, 2026-09-17 —
+ver Fase 27.2.1) ·
 27. Multi-turn Agentic Context & Mobile Redesign ✔ (Fase 27 COMPLETA: memória de contexto
 multi-turn real no Core — sessão/device/Task, TTL 10min, renderização sanitizada; continuidade
 determinística; backend **992 passed, 1 skipped** e Android **70/70 testes JUnit**) ·
