@@ -3,8 +3,10 @@ description: |-
   Fase 27.2 (F10/F11): roda os unit tests (testDebugUnitTest+testReleaseUnitTest)
   e compila app-release.apk. Assinatura oficial via secrets VEGA_KEYSTORE_*;
   quando `require-official-signing=true` e as secrets estiverem ausentes o job
-  FALHA imediatamente (nunca publica APK com keystore efêmero self-signed —
-  causa raiz do Play Protect). Com `false` (CI/preview) usa keystore efêmero
+  FALHA imediatamente (nunca publica APK com keystore efêmero self-signed — a
+  assinatura efêmera impede atualizações compatíveis e não fornece uma
+  identidade de assinatura estável; o Google Play Protect pode sinalizar
+  sideloads sem histórico). Com `false` (CI/preview) usa keystore efêmero
   gerado no job e nunca persistido. Valida o APK (aapt2 + apksigner) e o copia
   para o staging. Nenhuma chave/password sai do job ou entra no Git.
 inputs:

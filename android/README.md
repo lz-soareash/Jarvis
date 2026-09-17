@@ -43,6 +43,13 @@ Sem `keystore.properties`, o release sai **sem assinatura** (unsigned). No CI
 `VEGA_KEYSTORE_BASE64`/`VEGA_KEYSTORE_PASSWORD`/`VEGA_KEYSTORE_KEY_ALIAS`/
 `VEGA_KEYSTORE_KEY_PASSWORD` (o Gradle decodifica o B64 para `keystore/ci-release.jks`).
 
+> **AES-256-GCM (credenciais WAN) ≠ RSA-2048 (assinatura do APK).** O keystore de
+> release usa chave **RSA-2048** (`keytool -keyalg RSA -keysize 2048`)
+> **exclusivamente para assinar o APK** (v2). As credenciais WAN do app
+> (token/`device_id`) são protegidas com **AES-256-GCM** via Android Keystore
+> (Seção "Segurança das credenciais WAN" abaixo). São dois mecanismos
+> independentes; o RSA do keystore não criptografa nenhum token.
+
 ## Build debug (dev)
 
 ```bash
@@ -83,6 +90,24 @@ Quando o Core está fora da LAN local (ou atrás de CGNAT), o app pode falar com
   TLS (Caddy/nginx) na frente do relé.
 - Build/Dependência: sem SDK local (JDK 8) o build roda no CI
   (`build-android.yml`, temurin 17, `:app:assembleRelease`).
+
+### Segurança das credenciais WAN (Fases 27.2/27.2.1 — fail-closed)
+
+- WAN token e `device_id` são protegidos com **AES-256-GCM** (IV 12 bytes, tag
+  128 bits, `SecureRandom`) e a chave de 256 bits vive no **Android Keystore**
+  (`WanSecretStore`, alias `vega_wan_key` — o material nunca é serializado para
+  SharedPreferences e morre no factory-reset/desinstalação). O blob versionado
+  `v1.` (Base64URL) fica em `SharedPreferences("vega_wan")` sob `enc.wan_token`/
+  `enc.wan_device_id`.
+- **Plaintext NUNCA é gravado, nem como fallback** (fail-closed). Keystore
+  indisponível/falha → a gravação falha, nenhum segredo é armazenado e qualquer
+  plaintext legado é **removido**; leituras devolvem nulo (nunca segredo
+  parcial/corrompido) — após reiniciar, o aparelho volta a exigir pareamento.
+- Migração: uma credencial em claro de versões anteriores só é lida na
+  primeira leitura **com Keystore disponível** (lê → criptografa → apaga o
+  plaintext). Se a migração falhar, o plaintext é removido (re-pareamento).
+- Política decidida em `WanCredentialStore` (pura, testada em JVM, sem Android):
+  `WanCiphers` só faz a criptografia; `WanSecretStore` só gerencia a chave.
 
 ### LAN vs WAN — endpoints independentes (bugfix)
 

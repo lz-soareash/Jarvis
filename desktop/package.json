@@ -1,7 +1,7 @@
 {
   "name": "vega-desktop",
   "productName": "VEGA",
-  "version": "0.25.2",
+  "version": "0.25.3",
   "description": "VEGA Desktop — cliente fino do JARVIS Core (Device Bridge, Fase 21; Distribution & Client Experience, Fase 22). Sem segundo AI Core: toda a inteligência vive no Core em http://127.0.0.1:8100.",
   "main": "main.js",
   "author": "VEGA",

@@ -1534,6 +1534,43 @@ roteamento mobile/PC; `test_fase27_multi_turn_context.py` continuidade de app;
 Validação física no Galaxy A15: **NOT EXECUTED** (pendente de execução no
 aparelho).
 
+## Hardening Final — Credenciais WAN fail-closed (Fase 27.2.1)
+
+Auditoria da Fase 27.2: a criptografia **AES-256-GCM + Android Keystore** das
+credenciais WAN estava estruturalmente correta, mas existia um fallback que
+gravava o WAN token em **plaintext** quando o Android Keystore falhava/estava
+indisponível. Esta fase **remove esse fallback** e corrige a documentação que
+misturava dois mecanismos independentes:
+
+**Credenciais WAN (Android):** **AES-256-GCM** com chave de 256 bits no
+**Android Keystore** (`WanSecretStore`) — blob versionado `v1.` em
+SharedPreferences; **plaintext NUNCA é gravado, nem como fallback**.
+
+**Assinatura do APK:** o keystore de release usa **RSA-2048**
+(`keytool -keyalg RSA -keysize 2048`) **somente para assinar o APK** (v2). O
+RSA NÃO criptografa tokens WAN — são mecanismos separados e independentes.
+
+Política **fail-closed** (decisão em `WanCredentialStore`, camada pura com
+testes JVM):
+
+```
+Android Keystore disponível        → AES-256-GCM → blob criptografado
+Android Keystore indisponível/falha→ NADA em claro: gravação falha; plaintext
+                                      legado não migrado é REMOVIDO → re-pareia
+decriptação corrompida             → nulo (nunca segredo parcial)
+```
+
+- Migração de credencial legada continua segura: plaintext antigo só é lido
+  **com Keystore disponível** (lê → criptografa → apaga o plaintext); falhou a
+  migração → plaintext removido.
+- `VegaWan.storageDegraded` sinaliza persistência falha — a sessão atual segue
+  em memória, mas reiniciar o app exige novo pareamento (nada em claro).
+
+**Validação**: Android `:app:testDebugUnitTest`/`:app:testReleaseUnitTest`
+verdes (10 testes novos de `WanCredentialStoreTest`) e `assembleDebug`/
+`assembleRelease` OK; suíte Backend e Desktop sem drift. Teste físico no
+Galaxy A15: **NOT EXECUTED** (pendente de execução pelo proprietário).
+
 ## Download
 
 Distribuições oficiais publicadas como **GitHub Release**:
@@ -1542,21 +1579,21 @@ Distribuições oficiais publicadas como **GitHub Release**:
 
 ### Windows
 
-- [`VEGA-0.25.1-win-x64.exe`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.25.1) —
+- [`VEGA-0.25.2-win-x64.exe`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.25.2) —
   instalador (NSIS, 64 bits)
-- [`VEGA-0.25.1-win-x64-portable.exe`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.25.1) —
+- [`VEGA-0.25.2-win-x64-portable.exe`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.25.2) —
   versão portátil (executa sem instalação)
-- [`VEGA-0.25.1-win-x64-portable.zip`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.25.1) —
+- [`VEGA-0.25.2-win-x64-portable.zip`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.25.2) —
   pasta portátil compactada
 
 ### Android
 
-- [`VEGA-0.25.1-android.apk`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.25.1) —
+- [`VEGA-0.25.2-android.apk`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.25.2) —
   aplicativo Android (APK assinado, v2)
 
 ### Checksums
 
-- [`SHA256SUMS.txt`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.25.1) — verificação dos
+- [`SHA256SUMS.txt`](https://github.com/lz-soareash/Jarvis/releases/tag/v0.25.2) — verificação dos
   downloads. Ex.: baixe o arquivo junto e rode no diretório dos downloads:
   `sha256sum -c SHA256SUMS.txt`.
 

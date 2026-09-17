@@ -31,6 +31,25 @@ function syncVersion() {
   } else {
     console.log(`[sync-version] package.json já em ${version}`);
   }
+  // Fase 27.2.1 — o lockfile também carrega a versão raiz (top-level e
+  // packages[""]); mantê-lo alinhado evita drift no CI (contrato do AGENTS.md).
+  const lockPath = path.join(__dirname, "..", "package-lock.json");
+  const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+  let lockChanged = false;
+  if (lock.version !== version) {
+    lock.version = version;
+    lockChanged = true;
+  }
+  if (lock.packages && lock.packages[""] && lock.packages[""].version !== version) {
+    lock.packages[""].version = version;
+    lockChanged = true;
+  }
+  if (lockChanged) {
+    fs.writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`, "utf8");
+    console.log(`[sync-version] package-lock.json -> ${version}`);
+  } else {
+    console.log(`[sync-version] package-lock.json já em ${version}`);
+  }
   return version;
 }
 

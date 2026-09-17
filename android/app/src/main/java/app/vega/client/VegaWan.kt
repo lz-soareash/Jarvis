@@ -13,6 +13,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import app.vega.client.security.WanCiphers
+import app.vega.client.security.WanCredentialStore
 import app.vega.client.security.WanSecretStore
 import org.json.JSONObject
 import java.util.UUID
@@ -29,63 +30,66 @@ import kotlin.random.Random
  * core_unavailable. O relé só transporta; TODA autoridade continua no Core.
  *
  * O token NUNCA vai em URL e NUNCA é logado. Credenciais (token/device id)
- * ficam criptografadas (AES/GCM via Android Keystore) no SharedPreferences
- * ("vega_wan") — Fase 27.2 (F1). Implementação: OkHttp WebSocket.
+ * ficam criptografadas com AES-256-GCM + Android Keystore no SharedPreferences
+ * ("vega_wan") — Fases 27.2/27.2.1 (F1 + fail-closed: sem plaintext nem como
+ * fallback). Implementação: OkHttp WebSocket.
  */
 class VegaWan(
     private val context: Context,
     private val scope: CoroutineScope,
 ) {
     /**
-     * Fase 27.2 (F1) — credenciais nunca ficam em claro no SharedPreferences
-     * ("vega_wan"). O token e o device id são gravados sob as chaves
-     * `enc.wan_token`/`enc.wan_device_id` como blobs AES/GCM com a chave do
-     * Android Keystore ([WanSecretStore]). Um valor legado em claro é MIGRADO
-     * na primeira leitura (lê → criptografa → apaga o plaintext).
+     * Fase 27.2.1 (fail-closed) — credenciais WAN NUNCA ficam em claro no
+     * SharedPreferences ("vega_wan"). O token e o device id são gravados sob as
+     * chaves `enc.wan_token`/`enc.wan_device_id` como blobs AES-256-GCM
+     * ([WanCiphers]) com a chave do Android Keystore ([WanSecretStore]).
      *
-     * Falha do Keystore na LEITURA → retorna nulo (nunca decripta parcial);
-     * falha na GRAVAÇÃO → preserva o legado com aviso (modo degradado, somente
-     * em device sem AndroidKeystore — raro).
+     * Um valor legado em claro é MIGRADO na primeira leitura (lê → criptografa
+     * → apaga o plaintext) SOMENTE com o Keystore disponível. Se a migração
+     * falhar ou o Keystore estiver indisponível, o plaintext é REMOVIDO e a
+     * leitura devolve nulo (fail-closed): nenhum segredo é preservado em
+     * armazenamento inseguro — o usuário re-pareia.
+     *
+     * Falha de decriptação → nulo (nunca decripta parcial / nunca usa segredo
+     * corrompido). A política é decidida em [WanCredentialStore] (pura, testada
+     * em JVM).
      */
     private fun readCredential(prefKey: String): String? {
         val encryptedKey = "enc.$prefKey"
-        if (!prefs.getString(encryptedKey, null).isNullOrBlank()) {
-            return try {
-                WanCiphers.decrypt(WanSecretStore.key(context), prefs.getString(encryptedKey, null)!!)
-            } catch (e: Throwable) {
-                Log.w(logTag, "falha ao decriptar $prefKey: ${e.message}")
-                null
-            }
-        }
-        val legacy = prefs.getString(prefKey, null)
-        if (legacy.isNullOrBlank()) return null
-        if (WanSecretStore.isAvailable()) {
-            try {
-                writeSecretBlob(encryptedKey, legacy)
-            } catch (e: Throwable) {
-                Log.w(logTag, "migração de $prefKey falhou; legado preservado")
-                return legacy
-            }
-        }
-        return legacy
+        return WanCredentialStore.read(
+            keystoreAvailable = WanSecretStore.isAvailable(),
+            encryptedBlob = { prefs.getString(encryptedKey, null) },
+            legacyPlain = { prefs.getString(prefKey, null) },
+            decrypt = { blob -> WanCiphers.decrypt(WanSecretStore.key(context), blob) },
+            migrateToEncrypted = { plain -> writeSecretBlob(encryptedKey, plain) },
+            removeLegacy = { prefs.edit().remove(prefKey).apply() },
+            onLegacyRemovedFailClosed = {
+                Log.w(logTag, "$prefKey removido (fail-closed): plaintext legado não migrado — re-pareamento necessário")
+            },
+        )
     }
 
-    private fun writeCredential(prefKey: String, value: String?) {
+    /**
+     * Fase 27.2.1 (fail-closed) — retorna TRUE apenas quando a credencial foi
+     * gravada como blob AES-256-GCM via Keystore. Sem Keystore / falha: NADA é
+     * gravado em claro (plaintext legado é removido) e retorna FALSE — o
+     * chamador registra o erro controlado.
+     */
+    private fun writeCredential(prefKey: String, value: String?): Boolean {
         val encryptedKey = "enc.$prefKey"
-        if (value.isNullOrBlank()) {
-            prefs.edit().remove(prefKey).remove(encryptedKey).apply()
-            return
+        val ok = WanCredentialStore.write(
+            keystoreAvailable = WanSecretStore.isAvailable(),
+            value = value,
+            writeEncrypted = { plain -> writeSecretBlob(encryptedKey, plain) },
+            removeAll = { prefs.edit().remove(prefKey).remove(encryptedKey).apply() },
+            removeLegacy = { prefs.edit().remove(prefKey).apply() },
+        )
+        if (!ok) {
+            // Fail-closed (Fase 27.2.1): credencial não protegida pelo Keystore
+            // não é persistida — nunca cai para SharedPreferences em claro.
+            Log.e(logTag, "credencial $prefKey NÃO persistida: Android Keystore indisponível/falha — nada em claro no disco (fail-closed)")
         }
-        if (WanSecretStore.isAvailable()) {
-            try {
-                writeSecretBlob(encryptedKey, value)
-                return
-            } catch (e: Throwable) {
-                Log.w(logTag, "keystore indisponível ao gravar $prefKey; modo degradado")
-            }
-        }
-        // Modo degradado (sem AndroidKeystore): grava legado em claro com aviso.
-        prefs.edit().putString(prefKey, value).remove(encryptedKey).apply()
+        return ok
     }
 
     private fun writeSecretBlob(encryptedKey: String, value: String) {
@@ -107,6 +111,15 @@ class VegaWan(
         get() = readCredential("wan_device_id")
     val hasToken: Boolean
         get() = !readCredential("wan_token").isNullOrBlank()
+
+    /**
+     * Fase 27.2.1 — TRUE quando a credencial do `auth_result` NÃO pôde ser
+     * persistida com segurança (Android Keystore indisponível/falha). A sessão
+     * atual segue em memória; após reiniciar o app não há token em disco e o
+     * usuário re-pareia (nunca gravamos plaintext como fallback).
+     */
+    var storageDegraded: Boolean = false
+        private set
 
     var onTurnFrame: ((type: String, payload: JSONObject, requestId: String) -> Unit)? = null
     var onMobileCommand: ((payload: JSONObject) -> Unit)? = null
@@ -193,6 +206,7 @@ class VegaWan(
         token = null
         sessionId = null
         conversationId = null
+        storageDegraded = false
         stop()
         setState("offline", "credenciais revogadas no dispositivo")
     }
@@ -536,12 +550,21 @@ put("capabilities", deviceCapabilities())
     private fun persist(tok: String) {
         // F1 — token e device id via Keystore; sessão/conversa são ids de sessão
         // (não credenciais) e seguem no SharedPreferences como antes.
-        writeCredential("wan_token", tok)
-        writeCredential("wan_device_id", lastDeviceId)
+        val tokenSaved = writeCredential("wan_token", tok)
+        val deviceSaved = writeCredential("wan_device_id", lastDeviceId)
         prefs.edit()
             .putString("wan_session_id", sessionId)
             .putString("wan_conversation_id", conversationId)
             .apply()
+        if (!tokenSaved || !deviceSaved) {
+            // Fail-closed (Fase 27.2.1): a sessão atual continua (autenticada
+            // em memória), mas a credencial NÃO foi gravada — nunca em claro.
+            // Após reiniciar o app o usuário precisará re-parear.
+            storageDegraded = true
+            Log.e(logTag, "WAN ativo em memória, mas credencial NÃO protegida pelo Keystore — re-pareamento necessário após reinício (nada em claro)")
+        } else {
+            storageDegraded = false
+        }
     }
 
     /**

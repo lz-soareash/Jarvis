@@ -7,8 +7,8 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /**
- * Fase 27.2 (F1) — criptografia AES/GCM das credenciais WAN (Kotlin PURO,
- * testável em JVM, sem dependências Android).
+ * Fase 27.2 (F1) + 27.2.1 — criptografia AES-256-GCM das credenciais WAN
+ * (Kotlin PURO, testável em JVM, sem dependências Android).
  *
  * O key material vem do Android Keystore via [WanSecretStore]; aqui vive apenas
  * o formato do blob:
