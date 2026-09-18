@@ -11,6 +11,7 @@ Cobrem as fronteiras de segurança introduzidas na Fase 16:
 Tudo é hermético: REMOTE_ENABLED=false por padrão, sem rede, sem credenciais.
 """
 
+import json
 from datetime import timedelta
 
 import pytest
@@ -190,6 +191,80 @@ def test_remote_message_stream_reuses_sse(client, monkeypatch, fake_ai):
         body = "".join(res.iter_text())
     assert "request_id" in body
     assert req_id in body
+
+
+def _sse_payloads(body: str) -> list[dict]:
+    """Extrai os payloads JSON dos eventos `data: {...}` de uma resposta SSE."""
+    out = []
+    for line in body.splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        raw = line[len("data:") :].strip()
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(payload, dict):
+            out.append(payload)
+    return out
+
+
+def test_remote_message_stream_done_session_id_is_conversation_anchor(
+    client, monkeypatch, fake_ai
+):
+    """Regressão (Fase 16/21): o `session_id` injetado no SSE é a sessão JARVIS
+    (âncora de conversa), nunca a sessão REMOTA de transporte.
+
+    Antes da correção o stream injetava `ctx.session_id` (sessão remota); o
+    cliente fino o guardava como âncora e o reenviava, e `resolve_conversation`
+    o recusava ("sessão de conversa não disponível para continuação"),
+    quebrando a segunda turn consecutiva via HTTP/SSE.
+    """
+    _enable(monkeypatch)
+    paired = _pair(client)
+
+    with client.stream(
+        "POST",
+        "/api/remote/message",
+        json={"token": paired["token"], "content": "oi", "stream": True, "tools": False},
+    ) as res:
+        assert res.status_code == 200
+        body = "".join(res.iter_text())
+
+    payloads = _sse_payloads(body)
+    done = next((p for p in payloads if p.get("type") == "done"), None)
+    assert done is not None, body
+    conversation_id = done["session_id"]
+
+    from app.db.session import SessionLocal
+    from app.models import Session as JarvisSession
+    from app.models.remote import Device as RemoteDevice
+
+    with SessionLocal() as check:
+        # A âncora emitida tem de ser uma sessão JARVIS real (e não a remota).
+        assert check.get(JarvisSession, conversation_id) is not None
+        owner = check.scalar(
+            select(RemoteDevice).where(
+                RemoteDevice.jarvis_session_id == conversation_id
+            )
+        )
+        assert owner is not None and owner.is_trusted
+
+    # O follow-up usando a âncora do SSE é aceito (não cai no erro de sessão).
+    follow = client.post(
+        "/api/remote/message",
+        json={
+            "token": paired["token"],
+            "content": "de novo",
+            "stream": False,
+            "tools": False,
+            "session_id": conversation_id,
+        },
+    )
+    assert follow.status_code == 200, follow.text
+    assert follow.json()["status"] == "completed"
+    assert follow.json()["session_id"] == conversation_id
 
 
 def test_remote_message_invalid_content(client, monkeypatch, fake_ai):

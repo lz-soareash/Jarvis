@@ -1592,12 +1592,21 @@ do hostname derruba o stream no meio da turn e a conexão pode cair ao fim
 (relé passou a `mobile_count:0`); (b) o app não auto-conecta a WAN no boot
 (exige "Conectar WAN"); (c) **defeito observado (continuidade de sessão)**:
 mensagens de seguimento em uma mesma sessão foram rejeitadas pelo Core com
-`sessão de conversa não disponível para continuação`
-(`backend/app/remote/message.py` → `resolve_conversation`) — reproduzido 3× na
-mesma sessão; `ChatViewModel.kt:422` define `_conversationId` a partir do
-`sessionId` do evento `done` e o reenvia como `session_id`, e o Core o recusa
-(sessão inexistente ou sem device dono confiável). Contorno observado: "Nova
-conversa" (`resetConversation`) faz a turn imediatamente seguinte ser aceita.
+`sessão de conversa não disponível para continuação` — reproduzido 3× na mesma
+sessão (só a 1ª turn após "Nova conversa" era aceita).
+
+**Correção da continuidade de sessão (HTTP/SSE)**: causa raiz — o `done` do chat
+(`app/services/chat.py`) não carrega `session_id`, então `_remote_sse`
+(`app/remote/message.py`) injetava `ctx.session_id` = **sessão REMOTA de
+transporte** (`authed.session_id`) em cada evento; o cliente fino
+(`ChatViewModel.kt:422`) a guardava como âncora e a reenviava, e
+`resolve_conversation` a procurava como `JarvisSession` → 400. O caminho WAN
+(`message_result`) não tocava a âncora, por isso só o HTTP/LAN quebrava. Fix:
+`_remote_sse` passa a injetar o `jarvis_session_id` (a MESMA âncora do caminho
+não-stream `_compose`). Validado por teste de regressão
+(`test_remote_message_stream_done_session_id_is_conversation_anchor`), suíte
+backend **1066 passed, 1 skipped**, e E2E contra o Core vivo (mensagem em stream
++ follow-up com a âncora → `200 completed`).
 
 ## Download
 

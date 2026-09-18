@@ -140,7 +140,7 @@ def _compose(
             raise RemoteMessageError("resposta em stream indisponível")
         return {
             "kind": "stream",
-            "generator": _remote_sse(turn.generator, ctx),
+            "generator": _remote_sse(turn.generator, ctx, jarvis_session_id),
             "jarvis_session_id": jarvis_session_id,
         }
 
@@ -188,13 +188,20 @@ def _compose(
 
 
 async def _remote_sse(
-    generator: AsyncIterator[str], ctx: RemoteRequestContext
+    generator: AsyncIterator[str], ctx: RemoteRequestContext, jarvis_session_id: str
 ) -> AsyncIterator[str]:
     """Enriquece o SSE existente com `request_id`/`session_id` (correlação).
 
     Mantém o contrato SSE do frontend (`start`/`chunk`/`done`) intacto: apenas
     adiciona request_id/session_id ao JSON de cada evento. Itens não-JSON
     passam intactos (compatibilidade com o path existente).
+
+    O `session_id` injetado é o da **sessão de conversa JARVIS** (`jarvis_session_id`)
+    — a MESMA âncora devolvida pelo caminho não-stream (`_compose`) e aceita de
+    volta em `resolve_conversation`. Usar o id da sessão REMOTA de transporte
+    (`ctx.session_id`) corrompia a âncora: o cliente o reenviava no próximo
+    envio e o Core o recusava ("sessão de conversa não disponível para
+    continuação"), quebrando turns consecutivas por HTTP/SSE.
     """
     async for item in generator:
         try:
@@ -205,8 +212,8 @@ async def _remote_sse(
             continue
         if isinstance(payload, dict):
             payload["request_id"] = ctx.request_id
-            if ctx.session_id and "session_id" not in payload:
-                payload["session_id"] = ctx.session_id
+            if "session_id" not in payload:
+                payload["session_id"] = jarvis_session_id
             yield sse_event(payload)
         else:
             yield item
