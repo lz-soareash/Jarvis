@@ -1608,6 +1608,15 @@ não-stream `_compose`). Validado por teste de regressão
 backend **1066 passed, 1 skipped**, e E2E contra o Core vivo (mensagem em stream
 + follow-up com a âncora → `200 completed`).
 
+Re-validado **no aparelho físico** (Galaxy A15, APK v0.25.2, Core corrigido): após
+"Nova conversa", duas turns LAN consecutivas em uma mesma sessão — MSG1 "abre o
+chrome no meu celular" → `POST /api/remote/message` 200 (SSE) + `mobile_open_app
+allowed=True` (Chrome abriu); MSG2 "agora abre o spotify no meu celular" →
+`session_shared allowed=True` + turno concluído com resposta de ambiguidade
+(`mobile_open_app allowed=False` por política, sem o 400 de sessão). A stack teve
+de ser reiniciada antes do teste (Core/relé/túnel fora do ar); o teste usou o
+transporte LAN (WAN permaneceu desconectada).
+
 ## Download
 
 Distribuições oficiais publicadas como **GitHub Release**:
