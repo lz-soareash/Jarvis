@@ -316,16 +316,17 @@ async def test_endpoint_respond_remote_dicts_applied_only_on_success(db, client)
     from app.remote.jarvis_session import get_or_create_jarvis_session
     from app.tools import ToolResult
 
-    dev_id, _token = _paired_device(db)
+    dev_id, token = _paired_device(db)
     result = await _queue_l2_command(db, dev_id, "cmd-ep")
     approval_id = result["approval_id"]
     device = db.get(Device, dev_id)
     get_or_create_jarvis_session(db, device)
 
+    headers = {"Authorization": f"Bearer {token}"}
     with mock.patch("app.remote.resume._run_tool", new_callable=mock.AsyncMock) as rt:
         rt.return_value = ToolResult.success("ok")
         resp = client.post(
-            f"/api/approvals/{approval_id}/respond", json={"approved": True}
+            f"/api/approvals/{approval_id}/respond", json={"approved": True}, headers=headers
         )
 
     assert resp.status_code == 200
@@ -348,22 +349,23 @@ async def test_endpoint_respond_remote_concurrent_second_not_decided(db, client)
     from app.remote.jarvis_session import get_or_create_jarvis_session
     from app.tools import ToolResult
 
-    dev_id, _token = _paired_device(db)
+    dev_id, token = _paired_device(db)
     result = await _queue_l2_command(db, dev_id, "cmd-cc")
     approval_id = result["approval_id"]
     device = db.get(Device, dev_id)
     get_or_create_jarvis_session(db, device)
 
+    headers = {"Authorization": f"Bearer {token}"}
     with mock.patch("app.remote.resume._run_tool", new_callable=mock.AsyncMock) as rt:
         rt.return_value = ToolResult.success("ok")
 
         # Primeira decisão (efetiva).
         first = client.post(
-            f"/api/approvals/{approval_id}/respond", json={"approved": True}
+            f"/api/approvals/{approval_id}/respond", json={"approved": True}, headers=headers
         )
         # Segunda decisão concorrente: comando já processado → 409 (não re-executa).
         second = client.post(
-            f"/api/approvals/{approval_id}/respond", json={"approved": True}
+            f"/api/approvals/{approval_id}/respond", json={"approved": True}, headers=headers
         )
 
     assert first.status_code == 200

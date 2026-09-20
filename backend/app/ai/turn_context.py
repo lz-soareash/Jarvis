@@ -328,13 +328,24 @@ def render_context_blocks(ctx: TurnContext) -> list[str]:
     device = ctx.device
     if device is not None and device.name:
         if device.status == "success":
-            blocks.append(
-                "[Continuidade de dispositivo]\n"
-                f"Você está operando no celular '{device.name}'. "
-                f"Última ação executada nele: {device.label} (sucesso)."
-            )
-            if device.summary:
-                blocks.append(f"Resumo da última ação: {device.summary}.")
+            if device.fresh:
+                blocks.append(
+                    "[Continuidade de dispositivo]\n"
+                    f"Você está operando no celular '{device.name}'. "
+                    f"Última ação executada nele: {device.label} (sucesso)."
+                )
+                if device.summary:
+                    blocks.append(f"Resumo da última ação: {device.summary}.")
+            else:
+                # Fase 28.1 — frescura: a última ação aconteceu há mais que o
+                # TTL (_DEVICE_CONTEXT_TTL_S). O dado é preservado, mas NÃO é
+                # emitida a claim de continuidade automática.
+                blocks.append(
+                    "[Dispositivo]\n"
+                    f"A última ação no celular '{device.name}' ({device.label}) "
+                    f"foi concluída com sucesso HÁ MAIS DE {_DEVICE_CONTEXT_TTL_S}s. "
+                    "O contexto de continuidade expirou: não assuma continuidade automática."
+                )
         else:
             blocks.append(
                 "[Dispositivo]\n"

@@ -18,7 +18,18 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from fastapi import Request, Response
+from fastapi import Depends, HTTPException, Request, Response
+from sqlalchemy.orm import Session as OrmSession
+
+from app.db.session import get_db
+from app.remote.auth import (
+    AuthenticatedDevice,
+    RemoteAuthError,
+    authenticate_bearer,
+)
+from app.remote.credentials import CredentialLimitError
+from app.remote.errors import RemoteError
+from app.remote.sessions import ensure_session_valid
 
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -68,3 +79,80 @@ def expose_request_id(context: RemoteRequestContext, body: dict[str, Any]) -> di
     if context.session_id and "session_id" not in body:
         body["session_id"] = context.session_id
     return body
+
+
+# ---------------------------------------------------------------------------
+# Fase 28.1 — autenticação HTTP remota (camada central comum)
+# ---------------------------------------------------------------------------
+# Identidade deriva EXCLUSIVAMENTE do `Authorization: Bearer <token>` (nunca de
+# `device_id` alegado). A mesma regra dos contratos Bearer existentes
+# (`/remote/auth`, `/remote/heartbeat`, `/remote/message`...): token → device →
+# sessão, validando revogação/expiração/TTL/device-trust. Token nunca é logado.
+
+
+def extract_bearer_token(request: Request) -> str | None:
+    """Lê o token de `Authorization: Bearer`, sem revelá-lo na resposta."""
+    auth = request.headers.get("authorization", "").strip()
+    if not auth:
+        return None
+    scheme, _, value = auth.partition(" ")
+    if scheme.lower() != "bearer" or not value.strip():
+        return None
+    return value.strip()
+
+
+def _auth_error_http(exc: Exception) -> HTTPException:
+    """Falhas de autenticação viram 401 (token/sessão) e 403 (device negado).
+
+    `RemoteError` já carrega `http_status`/`message` sanitizados (mesmo contrato
+    dos demais endpoints remotos); falhas genéricas AZ 401 sem revelar causa.
+    """
+    if isinstance(exc, RemoteError):
+        return HTTPException(status_code=exc.http_status, detail=exc.message)
+    return HTTPException(status_code=401, detail="autenticação necessária")
+
+
+def optional_remote_device(
+    request: Request,
+    db: OrmSession = Depends(get_db),
+) -> AuthenticatedDevice | None:
+    """Valida `Authorization: Bearer` quando presente; `None` = caminho local.
+
+    - header ausente            → None (request local/SPA, comportamento atual);
+    - header presente + ok      → `AuthenticatedDevice`;
+    - token inválido/revogado/expirado → 401;
+    - device não autorizado     → 403.
+    """
+    token = extract_bearer_token(request)
+    if not token:
+        return None
+    try:
+        authed = authenticate_bearer(
+            db, token, transport_meta={"http": True, "auth": "header"}
+        )
+        ensure_session_valid(db, authed.session)
+        return authed
+    except (RemoteAuthError, CredentialLimitError, RemoteError) as exc:
+        raise _auth_error_http(exc) from exc
+
+
+def require_remote_device(
+    request: Request,
+    db: OrmSession = Depends(get_db),
+) -> AuthenticatedDevice:
+    """Exige identidade remota: 401 quando o token está ausente/inválido."""
+    authed = optional_remote_device(request, db)
+    if authed is None:
+        raise HTTPException(status_code=401, detail="autenticação necessária")
+    return authed
+
+
+def device_anchor_session(db: OrmSession, authed: AuthenticatedDevice) -> str:
+    """Sessão JARVIS estável do device — escopo de posse de dados (Fase 28.1).
+
+    Operações, histórico e aprovações remotas pertencem à sessão-âncora do
+    device autenticado; abstrai `get_or_create_jarvis_session` para a API.
+    """
+    from app.remote.jarvis_session import get_or_create_jarvis_session
+
+    return get_or_create_jarvis_session(db, authed.device)

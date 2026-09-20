@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session as OrmSession
 from app.ai.registry import get_ai_router
 from app.ai.providers.base import AIProviderStatus
 from app.db.session import get_db
+from app.remote.auth import AuthenticatedDevice
 from app.schemas.ops import (
     ExecutionEventOut,
     OpsOverview,
@@ -13,12 +14,21 @@ from app.schemas.ops import (
 )
 from app.services import ops as ops_service
 
+from .remote_deps import optional_remote_device
+
 router = APIRouter(prefix="/api/ops", tags=["ops"])
 
 
 @router.get("/overview", response_model=OpsOverview)
-def overview(db: OrmSession = Depends(get_db)) -> OpsOverview:
-    """Quadro geral do JARVIS: AI Core, provedores, memória, tarefas, tools, Atlas."""
+def overview(
+    db: OrmSession = Depends(get_db),
+    _authed: AuthenticatedDevice | None = Depends(optional_remote_device),
+) -> OpsOverview:
+    """Quadro geral do JARVIS: AI Core, provedores, memória, tarefas, tools, Atlas.
+
+    Fase 28.1 — observabilidade remota: token presente é validado (401 se
+    inválido/revogado); ausente mantém o painel local atual.
+    """
     return ops_service.build_overview(db)
 
 

@@ -65,6 +65,25 @@ def _add_session(db, session_id="sess-28"):
     db.commit()
 
 
+def _api_paired():
+    """Pareia um device via serviço (HTTP pairings fica 503 com REMOTE_ENABLED=false)
+    e devolve o token Bearer para os endpoints protegidos por device."""
+    from app.db.session import SessionLocal
+    from app.remote.pairing import create_pairing, submit_code
+
+    db = SessionLocal()
+    try:
+        _, code = create_pairing(db)
+        _, token = submit_code(db, code=code, device_name="Ops-Dev")
+        return token
+    finally:
+        db.close()
+
+
+def _api_headers(token):
+    return {"Authorization": f"Bearer {token}"}
+
+
 def _add_device(db, **overrides) -> Device:
     defaults: dict = {
         "id": "dev-galaxy",
@@ -555,12 +574,14 @@ def test_to_out_sanitized_and_list_by_session(db_session, fake_pc):
 def test_api_create_pc_operation(client, monkeypatch):
     controller = FakePcController()
     monkeypatch.setattr(computer_module, "get_system_controller", lambda: controller)
+    token = _api_paired()
     res = client.post(
         "/api/remote/operations",
         json={
             "operation": "abrir teste",
             "steps": [{"action": "OPEN_APP", "target": "pc", "params": {"target": "chrome"}}],
         },
+        headers=_api_headers(token),
     )
     assert res.status_code == 201
     data = res.json()
@@ -570,40 +591,65 @@ def test_api_create_pc_operation(client, monkeypatch):
     assert controller.opened_apps == ["chrome"]
 
 
-def test_api_create_l2_without_session_returns_denied(client, monkeypatch):
+def test_api_operations_without_token_unauthorized(client, monkeypatch):
+    """Fase 28.1: endpoint strict — sem Bearer, 401 antes de tocar o controller."""
     controller = FakePcController()
     monkeypatch.setattr(computer_module, "get_system_controller", lambda: controller)
+    res = client.post(
+        "/api/remote/operations",
+        json={"steps": [{"action": "OPEN_APP", "target": "pc", "params": {"target": "chrome"}}]},
+    )
+    assert res.status_code == 401
+    assert controller.opened_apps == []
+
+
+def test_api_create_l2_pauses_awaiting_confirmation(client, monkeypatch):
+    """Fase 28.1: operação remota SEMPRE tem sessão (âncora JARVIS do device);
+    L2 segura pausa aguardando confirmação (nunca 'denied por falta de sessão')."""
+    controller = FakePcController()
+    monkeypatch.setattr(computer_module, "get_system_controller", lambda: controller)
+    token = _api_paired()
     res = client.post(
         "/api/remote/operations",
         json={
             "operation": "fechar chrome",
             "steps": [{"action": "CLOSE_APP", "target": "pc", "params": {"process_name": "chrome"}}],
         },
+        headers=_api_headers(token),
     )
     assert res.status_code == 201
     data = res.json()
-    assert data["requires_confirmation"] is False
-    assert data["operation"]["status"] == "denied"  # L2 sem sessão não executa
+    assert data["requires_confirmation"] is True
+    assert data["operation"]["status"] == "awaiting_confirmation"
+    assert len(data["approvals"]) == 1
+    assert data["approvals"][0]["arguments"]["operation_id"] == data["operation"]["id"]
+    assert controller.closed_apps == []
 
 
 def test_api_get_list_cancel(client, monkeypatch):
     controller = FakePcController()
     monkeypatch.setattr(computer_module, "get_system_controller", lambda: controller)
+    token = _api_paired()
+    headers = _api_headers(token)
     created = client.post(
         "/api/remote/operations",
         json={"steps": [{"action": "OPEN_APP", "target": "pc", "params": {"target": "chrome"}}]},
+        headers=headers,
     ).json()
     op_id = created["operation"]["id"]
 
-    listed = client.get("/api/remote/operations").json()
+    listed = client.get("/api/remote/operations", headers=headers).json()
     assert any(o["id"] == op_id for o in listed)
 
-    got = client.get(f"/api/remote/operations/{op_id}").json()
+    got = client.get(f"/api/remote/operations/{op_id}", headers=headers).json()
     assert got["status"] == "success"
 
-    assert client.get("/api/remote/operations/op_nao-existe").status_code == 404
-    cancelled = client.post(f"/api/remote/operations/{op_id}/cancel").json()
+    assert client.get("/api/remote/operations/op_nao-existe", headers=headers).status_code == 404
+    cancelled = client.post(f"/api/remote/operations/{op_id}/cancel", headers=headers).json()
     assert cancelled["status"] == "success"  # terminal permanece terminal
+
+    # listar sem token não expõe operações remotas
+    assert client.get("/api/remote/operations").status_code == 401
 
 
 def test_api_approvals_respond_resumes_operation(client, fake_pc):

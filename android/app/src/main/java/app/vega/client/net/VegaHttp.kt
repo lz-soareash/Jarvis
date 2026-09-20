@@ -40,34 +40,37 @@ class VegaHttp {
 
     private fun baseUrl(url: String) = url.trimEnd('/')
 
-    private fun headers(): okhttp3.Headers = okhttp3.Headers.Builder()
-        .add("Content-Type", "application/json")
-        .add("User-Agent", "jarvis/${BuildConfig.VERSION_NAME} (android; device-bridge)")
-        .add("X-Request-ID", UUID.randomUUID().toString())
-        .build()
+    private fun headers(token: String? = null): okhttp3.Headers {
+        val builder = okhttp3.Headers.Builder()
+            .add("Content-Type", "application/json")
+            .add("User-Agent", "jarvis/${BuildConfig.VERSION_NAME} (android; device-bridge)")
+            .add("X-Request-ID", UUID.randomUUID().toString())
+        if (!token.isNullOrBlank()) builder.add("Authorization", "Bearer $token")
+        return builder.build()
+    }
 
-    fun postJson(coreUrl: String, path: String, body: JSONObject?): JSONObject {
+    fun postJson(coreUrl: String, path: String, body: JSONObject?, token: String? = null): JSONObject {
         val req = Request.Builder()
             .url(baseUrl(coreUrl) + path)
-            .headers(headers())
+            .headers(headers(token))
             .post(body?.toString()?.toRequestBody(jsonType) ?: "{}".toRequestBody(jsonType))
             .build()
         return executeJson(json.newCall(req))
     }
 
-    fun getJson(coreUrl: String, path: String): JSONObject {
+    fun getJson(coreUrl: String, path: String, token: String? = null): JSONObject {
         val req = Request.Builder()
             .url(baseUrl(coreUrl) + path)
-            .headers(headers())
+            .headers(headers(token))
             .get()
             .build()
         return executeJson(json.newCall(req))
     }
 
-    fun getJsonArray(coreUrl: String, path: String): List<JSONObject> {
+    fun getJsonArray(coreUrl: String, path: String, token: String? = null): List<JSONObject> {
         val req = Request.Builder()
             .url(baseUrl(coreUrl) + path)
-            .headers(headers())
+            .headers(headers(token))
             .get()
             .build()
         val res = json.newCall(req).execute()
@@ -150,8 +153,8 @@ class VegaHttp {
             awaitClose { call.cancel() }
         }
 
-    fun listSessions(coreUrl: String): List<SessionInfo> =
-        getJsonArray(coreUrl, "/api/sessions").map { j ->
+    fun listSessions(coreUrl: String, token: String? = null): List<SessionInfo> =
+        getJsonArray(coreUrl, "/api/sessions", token).map { j ->
             SessionInfo(
                 id = j.optString("id"),
                 title = j.optString("title").ifBlank { "Conversa ${j.optString("id").take(8)}" },
@@ -195,8 +198,8 @@ class VegaHttp {
         )
     }
 
-    fun fetchHistory(coreUrl: String, sessionId: String): List<ChatMessage> {
-        val rows = getJsonArray(coreUrl, "/api/sessions/$sessionId/messages")
+    fun fetchHistory(coreUrl: String, sessionId: String, token: String? = null): List<ChatMessage> {
+        val rows = getJsonArray(coreUrl, "/api/sessions/$sessionId/messages", token)
         var seq = 0L
         return rows.mapNotNull { j ->
             val role = if (j.optString("role") == "user") Role.USER else Role.ASSISTANT
@@ -210,13 +213,15 @@ class VegaHttp {
         }
     }
 
-    fun opsOverview(coreUrl: String): JSONObject = getJson(coreUrl, "/api/ops/overview")
+    fun opsOverview(coreUrl: String, token: String? = null): JSONObject =
+        getJson(coreUrl, "/api/ops/overview", token)
 
-    fun respondApproval(coreUrl: String, approvalId: String, approved: Boolean) {
+    fun respondApproval(coreUrl: String, approvalId: String, approved: Boolean, token: String? = null) {
         postJson(
             coreUrl,
             "/api/approvals/$approvalId/respond",
             JSONObject().put("approved", approved),
+            token,
         )
     }
 

@@ -150,12 +150,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * Prefere a LAN (Core local) quando conectada; em WAN-only deriva a origem
      * HTTP do endpoint WAN (ws→http, wss→https). Devolve "" quando não há base
      * válida — evita o crash do OkHttp por URL sem esquema.
+     *
+     * Fase 28.1 — usada APENAS por endpoints com contrato remoto
+     * (sessions/histórico/ops/aprovações/remote-*): o token do device vai no
+     * header `Authorization: Bearer`. Endpoints só-LAN (/api/vega/state, TTS)
+     * usam [localCoreBase], que nunca deriva da WAN.
      */
     private fun httpBase(): String {
         val lan = HttpOrigin.normalize(_coreUrl.value)
         if (isLanOnline() && lan != null) return lan
         return HttpOrigin.fromWan(_wanUrl.value) ?: lan ?: ""
     }
+
+    /**
+     * Fase 28.1 — base HTTP LAN-only (estado local + síntese de voz). Nunca
+     * deriva da WAN: esses endpoints não têm contrato remoto.
+     */
+    private fun localCoreBase(): String? = HttpOrigin.normalize(_coreUrl.value)
 
     private fun httpBaseOrThrow(): String {
         val base = httpBase()
@@ -164,6 +175,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
         return base
     }
+
+    /**
+     * Fase 28.1 — credencial do device para `Authorization: Bearer`: LAN
+     * (bridge) ou WAN (authToken em memória). O Core identifica o device pelo
+     * token; prefix "Bearer" nunca vaza para logs/URLs.
+     */
+    private fun deviceToken(): String? = bridge.token ?: wan.authToken
 
     private fun startPolling() {
         viewModelScope.launch {
@@ -209,8 +227,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         ) return
         viewModelScope.launch {
             try {
-                val base = httpBase()
-                if (base.isBlank()) return@launch
+                val base = localCoreBase()
+                if (base == null) return@launch
                 val j = withContext(Dispatchers.IO) { http.getJson(base, "/api/vega/state") }
                 _presence.value = VegaPresence.canonical(j.optString("state"))
             } catch (_: Exception) {
@@ -389,10 +407,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun runWanTurn(content: String, assistantId: Long) {
         setLocalPresence("thinking")
-        val requestId = withContext(Dispatchers.IO) {
-            wan.sendMessage(content, JSONObject().put("stream", true))
-        }
+        // Fase 28.1 — corrige a corrida "resposta chega antes do registerTurn":
+        // o request_id é gerado e correlacionado ANTES do envio (para a
+        // possível resposta imediata do Core); falha de envio limpa a correlação.
+        val requestId = wan.newRequestId()
         turnLifecycle.registerTurn(requestId, assistantId)
+        try {
+            withContext(Dispatchers.IO) {
+                wan.sendMessage(content, JSONObject().put("stream", true), requestId)
+            }
+        } catch (e: Exception) {
+            turnLifecycle.forgetAssistant(assistantId)
+            throw e
+        }
     }
 
     private fun handleEvent(ev: TurnEvent, assistantId: Long, runEpoch: Long) {
@@ -453,7 +480,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val content = _messages.value.find { it.id == assistantId }?.content.orEmpty()
         if (content.isBlank()) return
         viewModelScope.launch {
-            tts.play(http.ttsUrl(httpBaseOrThrow(), content))
+            val base = localCoreBase() ?: return@launch
+            tts.play(http.ttsUrl(base, content))
         }
     }
 
@@ -465,13 +493,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 if (isWanOnline()) {
                     val awaitingId = _messages.value.lastOrNull { it.status == MessageStatus.SENDING || it.status == MessageStatus.STREAMING }?.id
-                    val resumeRequestId = withContext(Dispatchers.IO) { wan.sendApproval(a.id, approved) }
-                    // Fase 27 — a retomada WAN volta com NOVO request_id (envelope
-                    // do approval_respond): liga-o à mensagem que esperava a decisão
-                    // para não criar uma mensagem nova nem deixar a antiga parada.
+                    // Fase 28.1 — correlaciona ANTES do envio (mesmo fixo do
+                    // runWanTurn): o approval_respond pode retornar no instante
+                    // seguinte; falha de envio limpa a correlação.
+                    val resumeRequestId = wan.newRequestId()
                     if (awaitingId != null) turnLifecycle.bindResume(resumeRequestId, awaitingId)
+                    try {
+                        withContext(Dispatchers.IO) {
+                            wan.sendApproval(a.id, approved, resumeRequestId)
+                        }
+                    } catch (e: Exception) {
+                        awaitingId?.let { turnLifecycle.forgetAssistant(it) }
+                        throw e
+                    }
                 } else {
-                    withContext(Dispatchers.IO) { http.respondApproval(httpBaseOrThrow(), a.id, approved) }
+                    withContext(Dispatchers.IO) {
+                        http.respondApproval(httpBaseOrThrow(), a.id, approved, deviceToken())
+                    }
                 }
             } catch (e: Exception) {
                 _banner.value = "falha ao responder: ${friendlyError(e)}"
@@ -530,7 +568,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun loadSessions() {
         viewModelScope.launch {
             try {
-                _sessions.value = withContext(Dispatchers.IO) { http.listSessions(httpBaseOrThrow()) }
+                _sessions.value = withContext(Dispatchers.IO) { http.listSessions(httpBaseOrThrow(), deviceToken()) }
             } catch (e: Exception) {
                 _banner.value = "não foi possível carregar o histórico: ${friendlyError(e)}"
             }
@@ -541,7 +579,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             if (TurnLifecycle.isTurnInFlight(_messages.value)) return@launch
             try {
-                val history = withContext(Dispatchers.IO) { http.fetchHistory(httpBaseOrThrow(), id) }
+                val history = withContext(Dispatchers.IO) { http.fetchHistory(httpBaseOrThrow(), id, deviceToken()) }
                 turnLifecycle.beginConversation()
                 _pendingApproval.value = null
                 _conversationId.value = id
@@ -561,7 +599,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             try {
-                _ops.value = withContext(Dispatchers.IO) { http.opsOverview(httpBaseOrThrow()) }
+                _ops.value = withContext(Dispatchers.IO) { http.opsOverview(httpBaseOrThrow(), deviceToken()) }
             } catch (e: Exception) {
                 _ops.value = null
                 _banner.value = "Operações indisponíveis: ${friendlyError(e)}"

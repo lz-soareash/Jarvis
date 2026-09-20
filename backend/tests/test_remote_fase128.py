@@ -222,12 +222,12 @@ async def test_reconnect_not_busy_loop_when_stopped(db):
 # ===========================================================================
 
 async def test_revocation_blocks_resume_of_pending_approval(db, client):
-    """Device revogado enquanto approval pendente → respond bloqueado (409)."""
+    """Device revogado enquanto approval pendente → respond bloqueado (401)."""
     from app.models.remote import Device
     from app.remote import devices as devices_svc
     from app.tools import ToolResult
 
-    dev_id, _t = _paired_device(db)
+    dev_id, token = _paired_device(db)
     result = await _queue_l2(db, dev_id, "rv-pending")
     approval_id = result["approval_id"]
 
@@ -236,14 +236,17 @@ async def test_revocation_blocks_resume_of_pending_approval(db, client):
     device = db.get(Device, dev_id)
     assert device.is_active is False
 
-    # Decisão de aprovação no endpoint: device inativo → 409, tool NÃO roda.
+    # Fase 28.1: approval ancorado ao JARVIS do device exige o device dono;
+    # revogado → token não autentica mais (401 no boundary HTTP).
     with mock.patch("app.remote.resume._run_tool", new_callable=mock.AsyncMock) as rt:
         rt.return_value = ToolResult.success("ok")
         resp = client.post(
-            f"/api/approvals/{approval_id}/respond", json={"approved": True}
+            f"/api/approvals/{approval_id}/respond",
+            json={"approved": True},
+            headers={"Authorization": f"Bearer {token}"},
         )
 
-    assert resp.status_code == 409
+    assert resp.status_code == 401
     assert rt.await_count == 0  # retomada bloqueada — nada foi executado
 
 

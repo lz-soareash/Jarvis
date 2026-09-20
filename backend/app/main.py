@@ -127,6 +127,10 @@ def create_app() -> FastAPI:
     app.add_middleware(RemotePayloadGuardMiddleware)
     app.add_middleware(RemoteErrorHandlerMiddleware)
 
+    # Fase 28.1 — APIs sensíveis (remotas, sessões, aprovações, ops) respondem
+    # com `Cache-Control: no-store` (mais externo: cobre também os erros).
+    app.add_middleware(NoStoreHeadersMiddleware)
+
     # Frontend Vanilla/PWA servido pelo próprio Core na mesma porta (8100).
     if FRONTEND_DIR.is_dir():
         app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
@@ -141,50 +145,126 @@ def create_app() -> FastAPI:
 class RemotePayloadGuardMiddleware:
     """Rejeita payloads acima do teto nos endpoints remotos (Fase 16, seção 22).
 
-    Checa `Content-Length` (barato, sem ler o corpo) para `POST/PUT/PATCH` em
-    `/api/remote/*`. O contrato de erro é o mesmo do protocolo.
+    Dupla proteção em `POST/PUT/PATCH` de `/api/remote/*`:
+    - `Content-Length` declarado acima do teto → 413 imediato (sem ler o corpo);
+    - corpo sem `Content-Length` confiável (chunked) → o middleware BUFFERS os
+      bytes reais e corta no teto (413) antes do AI Core. Fase 28.1 fecha o gap
+      em que uma chamada chunked poderia ultrapassar o limite físico.
+    O contrato de erro é o mesmo do protocolo.
     """
 
     def __init__(self, app) -> None:
         self.app = app
 
     async def __call__(self, scope, receive, send) -> None:
-        if (
+        guarded = (
             scope["type"] == "http"
             and scope.get("path", "").startswith(_REMOTE_PREFIX)
             and scope.get("method") in ("POST", "PUT", "PATCH")
-        ):
-            headers = dict(scope.get("headers") or [])
-            raw_length = headers.get(b"content-length")
-            if raw_length and raw_length.isdigit() and int(raw_length) > settings.remote_max_payload_bytes:
-                request = Request(scope)
-                request_id = _request_id_from(request)
-                body = json.dumps(
-                    {
-                        "type": "error",
-                        "request_id": request_id,
-                        "code": "PAYLOAD_TOO_LARGE",
-                        "message": "payload acima do limite permitido",
-                    }
-                ).encode("utf-8")
-                response = {
-                    "type": "http.response.start",
-                    "status": 413,
-                    "headers": [
-                        (b"content-type", b"application/json"),
-                        (b"content-length", str(len(body)).encode("ascii")),
-                        (b"x-request-id", request_id.encode("ascii")),
-                    ],
-                }
-                await send(response)
-                await send(
-                    {
-                        "type": "http.response.body",
-                        "body": body,
-                    }
-                )
+        )
+        if not guarded:
+            await self.app(scope, receive, send)
+            return
+
+        headers = dict(scope.get("headers") or [])
+        raw_length = headers.get(b"content-length")
+        declared = int(raw_length) if raw_length and raw_length.isdigit() else None
+        if declared is not None and declared > settings.remote_max_payload_bytes:
+            await self._send_too_large(scope, send)
+            return
+
+        limit = settings.remote_max_payload_bytes
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
                 return
-        await self.app(scope, receive, send)
+            if message["type"] != "http.request":
+                continue
+            chunk = message.get("body", b"") or b""
+            total += len(chunk)
+            if total > limit:
+                await self._send_too_large(scope, send)
+                return
+            chunks.append(chunk)
+            if not message.get("more_body", False):
+                break
+        body = b"".join(chunks)
+
+        canned = False
+
+        async def replayed_receive():
+            nonlocal canned
+            if not canned:
+                canned = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            return {"type": "http.disconnect"}
+
+        await self.app(scope, replayed_receive, send)
+
+    async def _send_too_large(self, scope, send) -> None:
+        request = Request(scope)
+        request_id = _request_id_from(request)
+        body = json.dumps(
+            {
+                "type": "error",
+                "request_id": request_id,
+                "code": "PAYLOAD_TOO_LARGE",
+                "message": "payload acima do limite permitido",
+            }
+        ).encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 413,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                    (b"x-request-id", request_id.encode("ascii")),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+
+_SENSITIVE_API_PREFIXES = (
+    "/api/remote/",
+    "/api/sessions",
+    "/api/approvals",
+    "/api/ops",
+)
+
+
+class NoStoreHeadersMiddleware:
+    """`Cache-Control: no-store` nas respostas de APIs sensíveis (Fase 28.1).
+
+    Histórico de sessão, aprovações, observabilidade e toda a fronteira remota
+    não podem ser servidos de cache (proxies/CDN/imobolitan rede). As demais
+    rotas (front-end estático) passam sem alteração.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        if not path.startswith(_SENSITIVE_API_PREFIXES):
+            await self.app(scope, receive, send)
+            return
+
+        async def send_wrapped(message) -> None:
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                if not any(k.lower() == b"cache-control" for k, _ in headers):
+                    headers.append((b"cache-control", b"no-store"))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_wrapped)
 
 
 class RemoteErrorHandlerMiddleware:

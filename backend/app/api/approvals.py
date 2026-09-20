@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session as OrmSession
 
@@ -11,6 +11,7 @@ from app.services import approvals as approval_service
 from app.services import chat as chat_service
 
 from .deps import get_ai_provider
+from .remote_deps import require_remote_device
 
 router = APIRouter(prefix="/api", tags=["approvals"])
 
@@ -39,6 +40,7 @@ def list_pending(
 async def respond(
     approval_id: str,
     body: ApprovalRespond,
+    request: Request,
     db: OrmSession = Depends(get_db),
     provider: AIProvider = Depends(get_ai_provider),
 ):
@@ -47,6 +49,12 @@ async def respond(
     A decisão é registrada e o `run_agent` é reexecutado para que a resposta
     final flua em tempo real: pedidos aprovados aparecem como executions e os
     negados como recusas no contexto do modelo.
+
+    Fase 28.1 — aprovação vinculada a contexto REMOTO (sessão JARVIS-âncora de
+    um device) só pode ser decidida pelo PRÓPRIO device autenticado
+    (`Authorization: Bearer`): sem token → 401; token de outro device → 403.
+    Aprovações locais (sessão sem vínculo de device) mantêm o comportamento de
+    painel local atual.
     """
     approval = approval_service.get_approval(db, approval_id)
     if approval is None:
@@ -55,6 +63,19 @@ async def respond(
         raise HTTPException(status_code=409, detail="Pedido de aprovação já decidido")
     if approval_service.is_expired(approval):
         raise HTTPException(status_code=410, detail="Pedido de aprovação expirou")
+
+    # Fase 28.1 — origem remota: a sessão da aprovação é a âncora de um device?
+    from app.models import Device as AppDevice
+
+    anchor = (
+        db.query(AppDevice).filter(AppDevice.jarvis_session_id == approval.session_id).scalar()
+    )
+    if anchor is not None:
+        authed = require_remote_device(request, db)
+        if authed.device.id != anchor.id:
+            raise HTTPException(
+                status_code=403, detail="Pedido não autorizado para este device"
+            )
 
     approval, decided = approval_service.mark_decided(db, approval, approved=body.approved)
 

@@ -124,6 +124,10 @@ class VegaWan(
     var onTurnFrame: ((type: String, payload: JSONObject, requestId: String) -> Unit)? = null
     var onMobileCommand: ((payload: JSONObject) -> Unit)? = null
 
+    /** Fase 28.1 — credencial atual (em memória) para os endpoints HTTP remotos. */
+    val authToken: String?
+        get() = token
+
     private var ws: WebSocket? = null
     private var heartbeatJob: Job? = null
     private var reconnectJob: Job? = null
@@ -460,9 +464,9 @@ put("capabilities", deviceCapabilities())
         return org.json.JSONArray(caps)
     }
 
-    fun sendMessage(content: String, opts: JSONObject = JSONObject()): String {
+    fun sendMessage(content: String, opts: JSONObject = JSONObject(), requestId: String? = null): String {
         if (state != "connected") throw IllegalStateException("sem conexão WAN autenticada")
-        val requestId = UUID.randomUUID().toString()
+        val rid = requestId ?: UUID.randomUUID().toString()
         val payload = JSONObject()
             .put("target_device_id", lastDeviceId)
             .put("content", content)
@@ -470,10 +474,12 @@ put("capabilities", deviceCapabilities())
             .put("tools", !opts.optBoolean("tools", false))
         // Fase 27.2 (F3) — falha real de envio propaga: `send()` do ChatViewModel
         // encerra a mensagem com erro visível e o requestId nunca vira órfão
-        // (o turno não é correlacionado sem envio confirmado).
-        val sent = sendEnvelope("message", payload, requestId)
+        // (o turno não é correlacionado sem envio confirmado). Fase 28.1: o
+        // `requestId` pode vir de fora — o view model registra a correlação ANTES
+        // do envio, matando a corrida "frame chega antes do registerTurn".
+        val sent = sendEnvelope("message", payload, rid)
         if (!sent) throw IllegalStateException("WAN não transmitiu a mensagem (socket fechado)")
-        return requestId
+        return rid
     }
 
     fun sendComputerTask(content: String, autonomy: String? = null): String {
@@ -491,17 +497,20 @@ put("capabilities", deviceCapabilities())
         return requestId
     }
 
-    fun sendApproval(approvalId: String, approved: Boolean): String {
+    fun sendApproval(approvalId: String, approved: Boolean, requestId: String? = null): String {
         if (state != "connected") throw IllegalStateException("sem conexão WAN autenticada")
-        val requestId = UUID.randomUUID().toString()
+        val rid = requestId ?: UUID.randomUUID().toString()
         val sent = sendEnvelope(
             "approval_respond",
             JSONObject().put("target_device_id", lastDeviceId).put("approval_id", approvalId).put("approved", approved),
-            requestId,
+            rid,
         )
         if (!sent) throw IllegalStateException("WAN não transmitiu a decisão (socket fechado)")
-        return requestId
+        return rid
     }
+
+    /** Gera um request_id novo (usado correlacionar ANTES do envio WAN). */
+    fun newRequestId(): String = UUID.randomUUID().toString()
 
     /** Fase 25 — emite COMMAND_RESULT do executor ao Core (status canônico). */
     fun sendCommandResult(

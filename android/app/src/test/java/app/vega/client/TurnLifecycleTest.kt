@@ -351,4 +351,68 @@ class TurnLifecycleTest {
         assertTrue(dropped is WanTurnAction.Ignore)
         assertEquals(MessageStatus.SENDING, msgs.single { it.id == aid }.status)
     }
+
+    // 15. Fase 28.1 — corrida "frame chega antes do registerTurn" fechada: o
+    //     request_id é correlacionado ANTES do envio, então uma resposta do Core
+    //     que chega no instante seguinte (ainda durante o send) resolve o turno.
+    @Test
+    fun correlationRegisteredBeforeSendResolvesRacingReply() {
+        val lc = lc(); val msgs = freshMessages()
+        val (_, aid) = send(msgs, "abra o youtube no celular")
+        lc.beginConversation()
+        // runWanTurn Fase 28.1: gera o id e registra ANTES de wan.sendMessage.
+        val rid = "race-rid"
+        lc.registerTurn(rid, aid)
+
+        // O "envio" ainda está em andamento quando o primeiro frame chega —
+        // antes da correlação isso viraria Ignore e a mensagem ficaria SENDING.
+        val early = lc.onWanFrame("agent_event", agentFrame(rid, """{"type":"chunk","text":"abrindo"}"""), "env")
+        assertTrue(early is WanTurnAction.AgentEvent)
+        apply(msgs, early)
+        assertEquals(MessageStatus.STREAMING, msgs.single { it.id == aid }.status)
+
+        apply(msgs, lc.onWanFrame("message_result", messageResultFrame(rid, ok = true, content = "Youtube aberto"), "env"))
+        assertEquals(MessageStatus.DONE, msgs.single { it.id == aid }.status)
+        assertFalse(TurnLifecycle.isTurnInFlight(msgs))
+    }
+
+    // 16. Fase 28.1 — falha REAL de envio limpa a correlação pré-registrada:
+    //     nada fica órfão esperando frames que nunca virão.
+    @Test
+    fun sendFailureForgetsPreRegisteredCorrelation() {
+        val lc = lc(); val msgs = freshMessages()
+        val (_, aid) = send(msgs, "não vai sair")
+        lc.beginConversation()
+        val rid = "fail-rid"
+        lc.registerTurn(rid, aid)
+        assertEquals(aid, lc.findAssistant(rid))
+
+        lc.forgetAssistant(aid) // catch do runWanTurn, enviar falhou
+        assertNull(lc.findAssistant(rid))
+        val late = lc.onWanFrame("message_result", messageResultFrame(rid, ok = true, content = "tarde demais"), "env")
+        assertTrue(late is WanTurnAction.Ignore)
+        assertEquals(MessageStatus.SENDING, msgs.single { it.id == aid }.status)
+    }
+
+    // 17. Fase 28.1 — approval_respond WAN: bindResume ANTES do envio; o frame
+    //     de retomada que chega imediatamente já resolve a MESMA mensagem e o
+    //     request do turno original é descartado (sem vazar correlação).
+    @Test
+    fun approvalResumeRegisteredBeforeSendResolves() {
+        val lc = lc(); val msgs = freshMessages()
+        val (_, aid) = send(msgs, "abrir app")
+        lc.beginConversation()
+        lc.registerTurn("orig", aid)
+
+        val resume = "resume-rid"
+        lc.bindResume(resume, aid)
+        assertNull(lc.findAssistant("orig"))
+        assertEquals(aid, lc.findAssistant(resume))
+
+        apply(msgs, lc.onWanFrame("message_result", messageResultFrame(resume, ok = true, content = "retomado"), "env"))
+        assertEquals(MessageStatus.DONE, msgs.single { it.id == aid }.status)
+        assertFalse(TurnLifecycle.isTurnInFlight(msgs))
+        assertTrue(lc.isFinished(resume))
+        assertNull(lc.findAssistant(resume))
+    }
 }
