@@ -43,6 +43,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
+    private val logTag = "vega-chat"
     private val app = application
     private val requireWanTls: Boolean = !BuildConfig.DEBUG
     private val prefs: SharedPreferences = app.getSharedPreferences("vega_core", android.content.Context.MODE_PRIVATE)
@@ -124,6 +125,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val accessibilityEnabled: StateFlow<Boolean> = _accessibilityEnabled.asStateFlow()
 
     private var lastLocalPresenceAt = 0L
+
+    /**
+     * Fase 29 — turnos enviados pela WAN em voo (assistantIds). Quando o socket
+     * WAN cai, essas mensagens não têm a proteção do SSE do caminho HTTP (que
+     * falha sozinho); sem isso ficariam presas em SENDING/STREAMING e bloqueariam
+     * o input. Todas as operações neste set ocorrem na main thread (viewModelScope).
+     */
+    private val wanTurns = HashSet<Long>()
+    private var lastWanState: String? = null
 
     init {
         wan.onTurnFrame = { type, payload, requestId -> handleWanFrame(type, payload, requestId) }
@@ -210,8 +220,31 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
         _heartbeats.value = bridge.heartbeatsTotal
         _wanStatus.value = WanStatusResolver.resolve(_wanUrl.value, w, requireWanTls)
+        handleTransportLoss(w)
         if (bridge.conversationId != null && _conversationId.value == null) _conversationId.value = bridge.conversationId
         if (wan.conversationId != null && _conversationId.value == null) _conversationId.value = wan.conversationId
+    }
+
+    /**
+     * Fase 29 — quando a WAN sai de "connected", os turnos WAN em voo são
+     * encerrados (SUCCESS/ERROR/TIMEOUT/DISCONNECTED): o OKHttp não falha a
+     * mensagem como o SSE do caminho HTTP faz. Reaproveita a detecção JÁ
+     * existente (state machine + heartbeat half-open) — sem novos timers.
+     * Frames tardios do mesmo request são ignorados pela correlação removida.
+     */
+    private fun handleTransportLoss(w: String) {
+        val prev = lastWanState
+        lastWanState = w
+        if (prev != "connected" || w == "connected" || wanTurns.isEmpty()) return
+        val toFail = _messages.value
+            .filter { it.status == MessageStatus.SENDING || it.status == MessageStatus.STREAMING }
+            .map { it.id }
+            .filter { it in wanTurns }
+        if (toFail.isEmpty()) return
+        Log.w(logTag, "WAN desconectada com ${toFail.size} turno(s) em voo — encerrando turnos")
+        for (id in toFail) {
+            if (turnLifecycle.failTurn(id)) failMessage(id, "conexão WAN perdida durante a resposta")
+        }
     }
 
     private fun pollPresence() {
@@ -397,6 +430,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun runHttpTurn(content: String, assistantId: Long, runEpoch: Long) {
         val token = bridge.token ?: throw IllegalStateException("bridge não autenticado")
         setLocalPresence("thinking")
+        Log.i(logTag, "http turn iniciado assistant=$assistantId session=${_conversationId.value}")
         http.sendMessageSse(httpBaseOrThrow(), token, _conversationId.value, content)
             .collect { ev -> handleEvent(ev, assistantId, runEpoch) }
         val msg = _messages.value.find { it.id == assistantId }
@@ -416,7 +450,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             withContext(Dispatchers.IO) {
                 wan.sendMessage(content, JSONObject().put("stream", true), requestId)
             }
+            // Fase 29 — marca o turno como WAN-bound: se o socket cair antes da
+            // resposta, o handleTransportLoss encerra a mensagem (e não o SSE).
+            wanTurns.add(assistantId)
+            Log.i(logTag, "wan turn iniciado assistant=$assistantId request=${requestId.take(8)}")
         } catch (e: Exception) {
+            wanTurns.remove(assistantId)
             turnLifecycle.forgetAssistant(assistantId)
             throw e
         }
@@ -468,10 +507,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun completeTurn(assistantId: Long, content: String) {
+        wanTurns.remove(assistantId)
         _messages.update { TurnLifecycle.MessageState.completeDone(it, assistantId, content) }
         recomputeContinuity()
         setLocalPresence("success")
         postponeIdle(1500)
+        Log.i(logTag, "turn completo assistant=$assistantId")
         speakLatest(assistantId)
     }
 
@@ -620,10 +661,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun failMessage(id: Long, error: String) {
+        wanTurns.remove(id)
         _messages.update { TurnLifecycle.MessageState.completeError(it, id, error) }
         recomputeContinuity()
         setLocalPresence("error")
         postponeIdle(2500)
+        Log.w(logTag, "turn falhou assistant=$id: $error")
     }
 
     private fun friendlyError(e: Exception): String = when (e) {

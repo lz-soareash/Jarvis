@@ -415,4 +415,52 @@ class TurnLifecycleTest {
         assertTrue(lc.isFinished(resume))
         assertNull(lc.findAssistant(resume))
     }
+
+    // 18. Fase 29 — WAN cai no meio da resposta: `failTurn` encerra o turno em
+    //     voo (nada fica "pensando…" / input bloqueado) e um frame tardio do
+    //     mesmo request é descartado (a correlação foi removida).
+    @Test
+    fun wanDisconnectFailsInFlightTurnAndDropsLateFrame() {
+        val lc = lc(); val msgs = freshMessages()
+        val (_, aid) = send(msgs, "lista de memórias")
+        lc.beginConversation()
+        val rid = "drop-rid"
+        lc.registerTurn(rid, aid)
+
+        apply(msgs, lc.onWanFrame("agent_event", agentFrame(rid, """{"type":"chunk","text":"buscando"}"""), "env"))
+        assertEquals(MessageStatus.STREAMING, msgs.single { it.id == aid }.status)
+
+        // handleTransportLoss (ChatViewModel): socket WAN saiu de connected.
+        assertTrue(lc.failTurn(aid))
+        msgs.replaceAll { TurnLifecycle.MessageState.completeError(listOf(it), aid, "conexão WAN perdida durante a resposta").first() }
+        assertEquals(MessageStatus.ERROR, msgs.single { it.id == aid }.status)
+        assertFalse(TurnLifecycle.isTurnInFlight(msgs))
+        assertNull(lc.findAssistant(rid))
+        assertTrue(lc.isFinished(rid))
+
+        // A resposta que chegou APÓS a reconexão não reabre a mensagem.
+        val late = lc.onWanFrame("message_result", messageResultFrame(rid, ok = true, content = "memórias"), "env")
+        assertTrue(late is WanTurnAction.Ignore)
+        assertEquals(MessageStatus.ERROR, msgs.single { it.id == aid }.status)
+    }
+
+    // 19. Fase 29 — `failTurn` é idempotente: segundo encerramento devolve false
+    //     e não corrompe correlações de OUTROS turnos.
+    @Test
+    fun failTurnIsIdempotentAndScopedToItsTurn() {
+        val lc = lc(); val msgs = freshMessages()
+        val (_, aid) = send(msgs, "um")
+        val (_, aidB) = send(msgs, "dois")
+        lc.beginConversation()
+        lc.registerTurn("r1", aid)
+        lc.registerTurn("r2", aidB)
+
+        assertTrue(lc.failTurn(aid))
+        assertFalse(lc.failTurn(aid))
+        assertNull(lc.findAssistant("r1"))
+        assertEquals(aidB, lc.findAssistant("r2"))
+
+        apply(msgs, lc.onWanFrame("message_result", messageResultFrame("r2", ok = true, content = "dois ok"), "env"))
+        assertEquals(MessageStatus.DONE, msgs.single { it.id == aidB }.status)
+    }
 }

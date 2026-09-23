@@ -74,6 +74,21 @@ class TurnLifecycle(
     }
 
     /**
+     * Fase 29 — encerra idempotentemente um turno EM VOO após falha de
+     * transporte (ex.: socket WAN caiu no meio da resposta). Remove a
+     * correlação e marca o request como terminado, de modo que um frame tardio
+     * do MESMO request é descartado e a UI (input/enviar) é liberada.
+     * Devolve `true` apenas se existia um turno correlacionado a este assistant.
+     */
+    @Synchronized
+    fun failTurn(assistantId: Long): Boolean {
+        val requestId = byAssistant.remove(assistantId) ?: return false
+        correlations.remove(requestId)
+        finishedRequests.add(requestId)
+        return true
+    }
+
+    /**
      * Encerra o turno e devolve o assistantId correlacionado.
      * Idempotente: request já encerrado (ou desconhecido) devolve null, então
      * `done`/`message_result` duplicados ou tardios nunca reabrem a mensagem.

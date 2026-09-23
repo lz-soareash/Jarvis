@@ -181,6 +181,46 @@ def test_agent_pending_list_filtered_by_session(client, fake_ai, monkeypatch):
     assert res.status_code == 404
 
 
+def test_pending_list_excludes_expired(client, fake_ai, monkeypatch):
+    """Fase 29 — aprovação expirada NÃO aparece como pendente (responder → 410)."""
+    from app.db.session import SessionLocal
+    from app.models import utcnow
+    from app.services import approvals as approval_service
+
+    _use_note_tool(monkeypatch)
+    sid = create_session(client)["id"]
+    db = SessionLocal()
+    try:
+        fresh = approval_service.create_approval(
+            db,
+            session_id=sid,
+            tool_name="write_note",
+            arguments={"content": "nova"},
+            permission_level=2,
+            risk="medium",
+        )
+        stale = approval_service.create_approval(
+            db,
+            session_id=sid,
+            tool_name="write_note",
+            arguments={"content": "velha"},
+            permission_level=2,
+            risk="medium",
+        )
+        stale.expires_at = utcnow() - timedelta(minutes=1)
+        db.commit()
+        fresh_id, stale_id = fresh.id, stale.id
+    finally:
+        db.close()
+
+    ids = [a["id"] for a in client.get(f"/api/approvals/pending?session_id={sid}").json()]
+    assert fresh_id in ids
+    assert stale_id not in ids
+
+    status, _ = _stream_post(client, f"/api/approvals/{stale_id}/respond", {"approved": True})
+    assert status == 410
+
+
 def test_audit_records_materialized_trace(client, fake_ai, monkeypatch):
     _use_note_tool(monkeypatch)
     plan_call(fake_ai, ToolCall(name="write_note", arguments={"content": "pedra"}))

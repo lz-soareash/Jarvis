@@ -52,9 +52,15 @@ def get_approval(db: OrmSession, approval_id: str) -> ApprovalRequest | None:
 
 
 def pending_for_session(db: OrmSession, session_id: str | None = None) -> list[ApprovalRequest]:
+    # Fase 29 — aprovações que já expiraram NÃO aparecem como pendentes: o
+    # responder as rejeita com 410, então listá-las criaria um "pendente" que
+    # jamais poderá ser decidido (estado inconsistente no mobile/operatório).
     stmt = (
         select(ApprovalRequest)
-        .where(ApprovalRequest.status == ApprovalStatus.PENDING.value)
+        .where(
+            ApprovalRequest.status == ApprovalStatus.PENDING.value,
+            ApprovalRequest.expires_at > _as_naive_utc(datetime.now(timezone.utc)),
+        )
         .order_by(ApprovalRequest.created_at.asc())
     )
     if session_id is not None:
