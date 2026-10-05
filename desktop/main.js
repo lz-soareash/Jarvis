@@ -13,22 +13,26 @@
      * Estados honestos de conexão (● Conectado / ○ Reconectando… /
        ○ Servidor indisponível) no tray e na janela de config.
      * Ícone VEGA (identidade Diamond Core) no .exe, janela e tray.
-     * Fundação de Auto-Update: checagem de metadata (updates.js) que NUNCA
-       baixa nem executa binários; instalação real fica para fase futura.
+     * Auto-Update (Fase 22 §12 + Fase 30): metadata via updates.js em dev/
+       portátil; instalador NSIS agendado em full via electron-updater
+       (baixa em segundo plano e instala no quit).
    - Reconexão automática no bridge.js (backoff), respeitando o Core.
+   - Wake-lock (Fase 30): powerSaveBlocker "prevent-app-suspension" enquanto
+     o agente está ativo no WAN gate (activity.js, grace de idle 90s).
    - single-instance.
 
    Windows: Node 24 + Electron (verificado em Fase 21).
    ============================================================= */
 "use strict";
 
-const { app, BrowserWindow, Tray, Menu, shell, nativeImage, ipcMain } = require("electron");
+const { app, BrowserWindow, Tray, Menu, shell, nativeImage, ipcMain, powerSaveBlocker } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const zlib = require("zlib");
 
 const { DeviceBridge } = require("./bridge");
 const { WanClient } = require("./wan");
+const { createActivityWatch } = require("./activity");
 const config = require("./config");
 const updates = require("./updates");
 const { version: VERSION } = require("./package.json");
@@ -44,6 +48,32 @@ let bridge = null;
 let wan = null;
 let skipDisconnect = false;
 let lastConfig = config.validateConfig({});
+
+// Fase 30 — modo de atualização resolvido uma vez (dev/portable = metadata).
+const updaterMode = updates.resolveUpdateMode({
+  isPackaged: app.isPackaged,
+  isPortable: !!process.env.PORTABLE_EXECUTABLE_DIR,
+});
+let realUpdater = null;
+let downloadedUpdate = null;
+
+// Fase 30 — wake-lock: mantém o Windows acordado durante turnos do agente
+// via WAN gate. O activity watcher só libera on disconnected ou grace idle.
+let wakeLockId = null;
+const activity = createActivityWatch({
+  onChange: (active) => {
+    if (active && wakeLockId == null) {
+      wakeLockId = powerSaveBlocker.start("prevent-app-suspension");
+      if (wakeLockId < 0 || !powerSaveBlocker.isStarted(wakeLockId)) wakeLockId = null;
+      console.info("[vega] wake-lock ativo (agente em atividade)");
+    } else if (!active && wakeLockId != null && powerSaveBlocker.isStarted(wakeLockId)) {
+      powerSaveBlocker.stop(wakeLockId);
+      wakeLockId = null;
+      console.info("[vega] wake-lock liberado");
+    }
+    updateTray();
+  },
+});
 
 /* --------------------------------------------------------------------------
    Store de config (config.json) + credenciais (device.json) em userData.
@@ -209,7 +239,8 @@ function startWan(opts = {}) {
     platform: DEVICE_PLATFORM,
     clientVersion: VERSION,
     capabilities: CAPABILITIES,
-    onState: () => {
+    onState: (state) => {
+      if (state !== "connected") activity.noteIdle();
       broadcastStatus();
       updateTray();
     },
@@ -220,6 +251,11 @@ function startWan(opts = {}) {
       broadcastStatus();
       updateTray();
     },
+    // Fase 30 — qualquer tráfego de agente == atividade (renova o grace):
+    // agent_event (streams em voo) e message_result (fim do turno) marcam
+    // "acordado" até o idle timeout.
+    onAgentEvent: () => activity.noteActivity(),
+    onMessageResult: () => activity.noteActivity(),
   });
   wan.connect();
   return wanStatus();
@@ -408,12 +444,20 @@ function trayLabel() {
 }
 
 function trayMenuTemplate() {
-  return Menu.buildFromTemplate([
+  const items = [
     { label: "Abrir VEGA", click: () => createMainWindow() },
     { label: "Configurações", click: () => createSetupWindow() },
     { type: "separator" },
     { label: trayLabel(), enabled: false },
     { label: "Verificar atualizações", click: () => checkUpdateNow() },
+  ];
+  if (downloadedUpdate && realUpdater) {
+    items.push({
+      label: "Reiniciar para instalar atualização",
+      click: () => realUpdater.quitAndInstall(false, true),
+    });
+  }
+  items.push(
     { label: "Abrir Central (navegador)", click: () => shell.openExternal(lastConfig.coreUrl) },
     { type: "separator" },
     { label: `VEGA ${VERSION}`, enabled: false },
@@ -422,7 +466,8 @@ function trayMenuTemplate() {
       skipDisconnect = true;
       app.quit();
     } },
-  ]);
+  );
+  return Menu.buildFromTemplate(items);
 }
 
 function updateTray() {
@@ -439,14 +484,81 @@ function createTray() {
 }
 
 /* --------------------------------------------------------------------------
-   Auto-update (fundação) — apenas metadata, jamais download/execução.
+   Auto-update (Fase 22 §12 + Fase 30).
+   Metadata (updates.js) é usado em dev/portátil. Instalador NSIS usa
+   electron-updater: baixa em segundo plano e instala no quit, sempre
+   conferindo o latest.yml do GitHub Release (ver pipeline de release).
+   Atualizações aplicáveis SÓ no modo NSIS empacotado.
    -------------------------------------------------------------------------- */
+function initRealUpdater() {
+  const { autoUpdater } = require("electron-updater");
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = null; // silencioso; usamos broadcastUpdate
+  autoUpdater.on("update-available", (info) => {
+    broadcastUpdate({
+      mode: "full",
+      current_version: VERSION,
+      latest_version: info.version,
+      update_available: true,
+      error: null,
+    });
+  });
+  autoUpdater.on("update-not-available", (info) => {
+    broadcastUpdate({
+      mode: "full",
+      current_version: VERSION,
+      latest_version: info.version,
+      update_available: false,
+      error: null,
+    });
+  });
+  autoUpdater.on("error", (err) => {
+    broadcastUpdate({
+      mode: "full",
+      current_version: VERSION,
+      latest_version: null,
+      update_available: false,
+      error: String((err && err.message) || err),
+    });
+  });
+  autoUpdater.on("update-downloaded", (info) => {
+    downloadedUpdate = info;
+    broadcastUpdate({
+      mode: "full",
+      current_version: VERSION,
+      latest_version: info.version,
+      update_available: true,
+      downloaded: true,
+      error: null,
+    });
+    updateTray();
+  });
+  return autoUpdater;
+}
+
 async function checkUpdateNow() {
+  if (updaterMode.mode === updates.UPDATE_MODE_FULL) {
+    try {
+      if (!realUpdater) realUpdater = initRealUpdater();
+      await realUpdater.checkForUpdates();
+      return;
+    } catch (err) {
+      broadcastUpdate({
+        mode: "full",
+        current_version: VERSION,
+        latest_version: null,
+        update_available: false,
+        error: String((err && err.message) || err),
+      });
+      return;
+    }
+  }
   const result = await updates.checkForUpdate({
     currentVersion: VERSION,
     releaseFeedUrl: lastConfig.releaseFeedUrl,
   });
-  broadcastUpdate(result);
+  broadcastUpdate({ mode: updaterMode.mode, ...result });
   return result;
 }
 
@@ -506,7 +618,7 @@ if (!gotLock) {
   registerIpc();
 
   app.whenReady().then(() => {
-    lastConfig = config.loadConfig(configStore());
+    lastConfig = config.applyEnvOverrides(config.loadConfig(configStore()));
     createTray();
     // Primeira experiência: janela de configuração. Já configurado: abre o Core.
     if (lastConfig.firstRun && !creds()) {
@@ -522,6 +634,7 @@ if (!gotLock) {
   });
 
   app.on("before-quit", async (e) => {
+    activity.stop();
     if ((bridge || wan) && !skipDisconnect) {
       e.preventDefault();
       skipDisconnect = true;

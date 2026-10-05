@@ -39,7 +39,9 @@ runs:
         cd dist
         for f in "VEGA-${VERSION}-win-x64.exe" \
                  "VEGA-${VERSION}-win-x64-portable.exe" \
-                 "VEGA-${VERSION}-win-x64-portable.zip"; do
+                 "VEGA-${VERSION}-win-x64-portable.zip" \
+                 "latest.yml" \
+                 "VEGA-${VERSION}-win-x64.exe.blockmap"; do
           test -s "$f" || { echo "FALTA artefato: $f"; exit 1; }
         done
         find . -maxdepth 1 -name 'VEGA-*' -size +5M -exec ls -la {} \;
@@ -58,4 +60,6 @@ runs:
         cp dist/VEGA-${VERSION}-win-x64.exe \
           dist/VEGA-${VERSION}-win-x64-portable.exe \
           dist/VEGA-${VERSION}-win-x64-portable.zip \
+          dist/latest.yml \
+          dist/VEGA-${VERSION}-win-x64.exe.blockmap \
           "$GITHUB_WORKSPACE/${{ inputs.stage-dir }}/"

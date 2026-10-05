@@ -9,6 +9,7 @@ import {
   validateConfig,
   loadConfig,
   saveConfig,
+  applyEnvOverrides,
 } from "./config.js";
 
 const fakeStore = (initial) => ({
@@ -57,4 +58,12 @@ test("saveConfig persiste merge normalizado", () => {
   const reloaded = loadConfig(store);
   assert.equal(reloaded.coreUrl, "http://a:1");
   assert.equal(reloaded.firstRun, false);
+});
+
+test("applyEnvOverrides: sem VEGA_CORE_URL mantém config; com env normaliza e vence", () => {
+  assert.equal(applyEnvOverrides({ coreUrl: "http://a:1" }, {}).coreUrl, "http://a:1");
+  const viaEnv = applyEnvOverrides({ coreUrl: "http://a:1" }, { VEGA_CORE_URL: "10.0.0.5:9000/" });
+  assert.equal(viaEnv.coreUrl, "http://10.0.0.5:9000");
+  const viaEnv2 = applyEnvOverrides({ coreUrl: "http://a:1" }, { VEGA_CORE_URL: "https://core.corp/" });
+  assert.equal(viaEnv2.coreUrl, "https://core.corp");
 });

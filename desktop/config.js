@@ -61,6 +61,15 @@ function saveConfig(store, partial) {
   return merged;
 }
 
+// Fase 30 — VEGA_CORE_URL: overrides de ambiente sobre a config carregada.
+// Útil para gestão centralizada (GPO/sysadmin) ou CI: se a env apontar para
+// outro Core, ele vence a config salva mantendo o normalize usual.
+function applyEnvOverrides(cfg, env = process.env, normalize = normalizeCoreUrl) {
+  const raw = env && env.VEGA_CORE_URL;
+  if (!raw) return cfg;
+  return { ...cfg, coreUrl: normalize(raw) };
+}
+
 module.exports = {
   DEFAULT_CORE_URL,
   DEFAULT_RELEASE_FEED,
@@ -73,4 +82,5 @@ module.exports = {
   validateConfig,
   loadConfig,
   saveConfig,
+  applyEnvOverrides,
 };

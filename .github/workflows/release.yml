@@ -106,6 +106,8 @@ jobs:
           set -euo pipefail
           cd release-artifacts/merged
           find . -mindepth 2 -type f -name 'VEGA-*' -exec mv -f {} . \;
+          # feed do auto-updater (electron-updater): latest.yml + blockmap do NSIS
+          find . -mindepth 2 -type f -name 'latest.yml' -exec mv -f {} . \;
           rm -rf release-windows release-android
           VERSION=$(cat ../../VERSION)
           python ../../scripts/release_checksums.py --version "$VERSION" --out SHA256SUMS.txt VEGA-*.apk VEGA-*.exe VEGA-*.zip
@@ -146,6 +148,14 @@ jobs:
             - Identidade e presença VEGA, Computer Action/Use foundation e Proactive (planejado/limitado)
             - Distribuição automatizada e reproduzível via GitHub Actions (Fase 22)
             - Fase 27.2: credenciais WAN criptografadas (AES/GCM + Android Keystore), allowlist de URL no executor, idempotência de comandos móveis duplicados e gates de qualidade no pipeline
+            - Fase 30: auto-update real no Desktop (instalador NSIS baixa do GitHub Release e instala no quit) e wake-lock durante turnos do agente via WAN
+
+            ### Auto-update (instalador NSIS)
+
+            O instalador `VEGA-x.y.z-win-x64.exe` atualiza a si mesmo: o Desktop
+            consulta o `latest.yml` deste Release e baixa a próxima versão em
+            segundo plano, aplicando no encerramento. A versão portátil não
+            atualiza por si (copie o novo ZIP manualmente).
 
             ### Notas de assinatura
 
@@ -156,4 +166,6 @@ jobs:
             release-artifacts/merged/VEGA-*.apk
             release-artifacts/merged/VEGA-*.exe
             release-artifacts/merged/VEGA-*.zip
+            release-artifacts/merged/VEGA-*.exe.blockmap
+            release-artifacts/merged/latest.yml
             release-artifacts/merged/SHA256SUMS.txt

@@ -1,7 +1,7 @@
 {
   "name": "vega-desktop",
   "productName": "VEGA",
-  "version": "0.25.5",
+  "version": "0.25.6",
   "description": "VEGA Desktop — cliente fino do JARVIS Core (Device Bridge, Fase 21; Distribution & Client Experience, Fase 22). Sem segundo AI Core: toda a inteligência vive no Core em http://127.0.0.1:8100.",
   "main": "main.js",
   "author": "VEGA",
@@ -9,14 +9,19 @@
   "scripts": {
     "start": "electron .",
     "sync:version": "node scripts/sync-version.js",
-    "test": "node --test --test-force-exit bridge.test.mjs && node --test --test-force-exit version.test.mjs && node --test --test-force-exit updates.test.mjs && node --test --test-force-exit config.test.mjs && node --test --test-force-exit wan.test.mjs",
+    "test": "node --test --test-force-exit bridge.test.mjs && node --test --test-force-exit version.test.mjs && node --test --test-force-exit updates.test.mjs && node --test --test-force-exit config.test.mjs && node --test --test-force-exit wan.test.mjs && node --test --test-force-exit activity.test.mjs",
     "dist:packager": "electron-packager . VEGA --platform=win32 --arch=x64 --overwrite --out=dist --app-version=%npm_package_version% --icon=resources/icon.ico --win32metadata.CompanyName=VEGA --win32metadata.FileDescription=VEGA --win32metadata.ProductName=VEGA --win32metadata.OriginalFilename=VEGA.exe",
-    "dist": "npm run sync:version && electron-builder --win nsis portable zip"
+    "dist": "npm run sync:version && electron-builder --win nsis portable zip --publish never"
   },
   "build": {
     "appId": "com.vega.client",
     "productName": "VEGA",
     "afterPack": "scripts/after-pack.js",
+    "publish": {
+      "provider": "github",
+      "owner": "lz-soareash",
+      "repo": "Jarvis"
+    },
     "directories": {
       "output": "dist",
       "buildResources": "resources"
@@ -27,6 +32,7 @@
       "wan.js",
       "config.js",
       "updates.js",
+      "activity.js",
       "renderer/**",
       "resources/icon.png",
       "package.json"
@@ -74,5 +80,8 @@
     "electron-builder": "^24.13.3",
     "electron-packager": "^17.1.2",
     "rcedit": "^5.0.2"
+  },
+  "dependencies": {
+    "electron-updater": "^6.6.2"
   }
 }

@@ -7,6 +7,9 @@ import {
   compareVersions,
   classifyUpdate,
   checkForUpdate,
+  resolveUpdateMode,
+  UPDATE_MODE_FULL,
+  UPDATE_MODE_METADATA,
 } from "./updates.js";
 
 test("parseTag aceita v0.22.0 e rejeita lixo", () => {
@@ -65,4 +68,11 @@ test("checkForUpdate trata resposta não-2xx como indisponível", async () => {
   const out = await checkForUpdate({ currentVersion: "0.22.0", releaseFeedUrl: "x", fetchImpl });
   assert.equal(out.update_available, false);
   assert.equal(out.error, "HTTP 404");
+});
+
+test("resolveUpdateMode: NSIS empacotado => full, dev/portable => metadata", () => {
+  assert.equal(resolveUpdateMode({ isPackaged: true }).mode, UPDATE_MODE_FULL);
+  assert.equal(resolveUpdateMode({ isPackaged: true, isPortable: true }).mode, UPDATE_MODE_METADATA);
+  assert.equal(resolveUpdateMode({ isPackaged: false }).mode, UPDATE_MODE_METADATA);
+  assert.equal(resolveUpdateMode({ isPortable: true }).mode, UPDATE_MODE_METADATA);
 });

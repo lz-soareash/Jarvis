@@ -39,3 +39,9 @@ releases/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Desktop: orquestra o stack local (Core/Relay/cloudflared); não versionar.
+# Config local do Android SDK (caminho da máquina, via local.properties)
+android/local.properties
+desktop/dist/
+Iniciar Jarvis.bat

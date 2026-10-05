@@ -1,13 +1,27 @@
 /* =============================================================
-   VEGA Desktop — fundação de Auto-Update (Fase 22, §12).
+   VEGA Desktop — Auto-Update (Fase 22 §12 + Fase 30).
 
-   SOMENTE METADADOS: este módulo consulta o "latest release" do repositório
-   (GitHub API) e compara com a versão local. NUNCA baixa nem executa
-   binários — a instalação/atualização real é etapa futura, controlada.
+   Dois caminhos, sempre seguros e testáveis:
+   * METADATA (dev / portable): consulta o "latest release" via GitHub API e
+     compara com a versão local. NUNCA baixa nem executa binários.
+   * FULL (instalador NSIS): o main.js usa `electron-updater` (agem no GitHub
+     Release / latest.yml) para baixar em segundo plano e instalar no quit.
+     Decisão de modo resolvida aqui, herméticamente.
 
    Módulo NODE PURO (testável com mock de `fetch`).
    ============================================================= */
 "use strict";
+
+const UPDATE_MODE_FULL = "full";
+const UPDATE_MODE_METADATA = "metadata";
+
+// Portátil NÃO atualiza por si (process.env.PORTABLE_EXECUTABLE_DIR só existe
+// em runs do crate portable; electron-updater não instala nesse modo).
+function resolveUpdateMode({ isPackaged, isPortable } = {}) {
+  if (!isPackaged) return { mode: UPDATE_MODE_METADATA, reason: "dev" };
+  if (isPortable) return { mode: UPDATE_MODE_METADATA, reason: "portable" };
+  return { mode: UPDATE_MODE_FULL, reason: "nsis" };
+}
 
 function parseTag(tag) {
   const v = String(tag || "").trim().replace(/^v/, "");
@@ -71,6 +85,9 @@ async function checkForUpdate({ currentVersion, releaseFeedUrl, fetchImpl } = {}
 }
 
 module.exports = {
+  UPDATE_MODE_FULL,
+  UPDATE_MODE_METADATA,
+  resolveUpdateMode,
   parseTag,
   parseVersion,
   compareVersions,
